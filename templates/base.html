@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Streampeg{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="container">
+        <ul>
+            <li><strong>Streampeg</strong></li>
+        </ul>
+        <ul>
+            <li><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
+            <li><a href="{{ url_for('browse') }}">Radio Browser</a></li>
+            <li><a href="{{ url_for('logs') }}">Logs</a></li>
+            <li><a href="{{ url_for('stream_new') }}">+ Stream</a></li>
+            <li><a href="#" id="restart-service-btn" onclick="restartService(event)" title="Service neu starten">Restart</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <div id="disk-info" class="disk-bar">
+            <small>Worker: <span id="disk-worker">--</span> frei | NAS: <span id="disk-nas">--</span> frei</small>
+        </div>
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+    function restartService(e) {
+        e.preventDefault();
+        if (!confirm('Service wirklich neu starten?')) return;
+        const btn = document.getElementById('restart-service-btn');
+        btn.textContent = '...';
+        fetch('/api/restart-service', {method: 'POST', credentials: 'include'})
+            .then(r => r.json())
+            .then(data => {
+                btn.textContent = data.ok ? 'OK' : 'Fehler';
+                if (data.ok) setTimeout(() => location.reload(), 2000);
+                else { alert(data.error); btn.textContent = 'Restart'; }
+            })
+            .catch(() => { btn.textContent = 'Restart'; alert('Verbindung verloren'); });
+    }
+    </script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
