@@ -168,20 +168,27 @@ class IcyStreamSplitter:
 
             now = time.time()
 
-            # Maintain pre-buffer for negative split_offset (metadata arrives late)
             if self.split_offset < 0:
+                # Negative offset: metadata arrives late, buffer audio and write delayed
                 self._prebuffer.append((now, audio))
                 cutoff = now + self.split_offset  # split_offset is negative
-                while self._prebuffer and self._prebuffer[0][0] < cutoff:
-                    self._prebuffer.popleft()
-
-            # Write audio to current ffmpeg
-            with self._lock:
-                if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
-                    try:
-                        self._ffmpeg_proc.stdin.write(audio)
-                    except (OSError, BrokenPipeError):
-                        break
+                # Write only chunks older than the buffer window to current file
+                with self._lock:
+                    while self._prebuffer and self._prebuffer[0][0] < cutoff:
+                        old_ts, old_chunk = self._prebuffer.popleft()
+                        if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
+                            try:
+                                self._ffmpeg_proc.stdin.write(old_chunk)
+                            except (OSError, BrokenPipeError):
+                                break
+            else:
+                # No negative offset: write audio immediately
+                with self._lock:
+                    if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
+                        try:
+                            self._ffmpeg_proc.stdin.write(audio)
+                        except (OSError, BrokenPipeError):
+                            break
 
             # Read metadata length byte
             meta_len_byte = self._resp.read(1)
@@ -233,6 +240,7 @@ class IcyStreamSplitter:
                         self._ffmpeg_proc.stdin.write(chunk)
                     except (OSError, BrokenPipeError):
                         break
+                self._prebuffer.clear()
 
             if old_track:
                 log_event(self.stream_id, "track",
