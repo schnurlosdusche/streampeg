@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}{{ stream.name }} - Streampeg{% endblock %}
+{% block content %}
+<hgroup>
+    <h2>{{ stream.name }}</h2>
+    <p>{{ stream.url }}</p>
+</hgroup>
+
+<div class="grid">
+    <article>
+        <header>Status</header>
+        <p>
+            <span class="status-badge {{ 'running' if status.running else 'stopped' }}">
+                {{ "Aktiv" if status.running else "Gestoppt" }}
+            </span>
+            {% if status.pid %} (PID {{ status.pid }}){% endif %}
+        </p>
+        {% if status.running %}
+        <p>Uptime: {{ status.uptime_str }}</p>
+        {% endif %}
+        <p>Aktueller Track: <strong>{{ status.current_track or "-" }}</strong></p>
+        <p>Dateien auf Worker: {{ status.file_count }} ({{ status.disk_usage_mb }} MB)</p>
+        <footer>
+            {% if status.running %}
+            <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" class="inline">
+                <button type="submit" class="btn-stop outline">Stop</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('stream_start', stream_id=stream.id) }}" class="inline">
+                <button type="submit" class="btn-start">Start</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('api_sync', stream_id=stream.id) }}" class="inline sync-form">
+                <button type="submit" class="outline btn-small">Jetzt syncen</button>
+            </form>
+            <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" role="button" class="outline secondary btn-small">Bearbeiten</a>
+        </footer>
+    </article>
+</div>
+
+<h3>Aufgenommene Tracks (NAS)</h3>
+{% if tracks %}
+<div class="overflow-auto">
+<table>
+    <thead>
+        <tr>
+            <th>Titel</th>
+            <th>Groesse</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for track in tracks %}
+        <tr>
+            <td>{{ track.name }}</td>
+            <td>{{ track.size_mb }} MB</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="secondary">Noch keine Tracks auf dem NAS.</p>
+{% endif %}
+
+<h3>Ereignisse</h3>
+{% if events %}
+<div class="overflow-auto">
+<table>
+    <thead>
+        <tr><th>Zeit</th><th>Typ</th><th>Nachricht</th></tr>
+    </thead>
+    <tbody>
+        {% for e in events %}
+        <tr>
+            <td><small>{{ e.timestamp }}</small></td>
+            <td><code>{{ e.event_type }}</code></td>
+            <td>{{ e.message }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="secondary">Keine Ereignisse.</p>
+{% endif %}
+
+<h3>Sync-Log</h3>
+{% if sync_logs %}
+<div class="overflow-auto">
+<table>
+    <thead>
+        <tr><th>Zeit</th><th>Status</th><th>Nachricht</th></tr>
+    </thead>
+    <tbody>
+        {% for l in sync_logs %}
+        <tr class="{{ 'sync-ok' if l.success else 'sync-error' }}">
+            <td><small>{{ l.timestamp }}</small></td>
+            <td>{{ "OK" if l.success else "Fehler" }}</td>
+            <td>{{ l.message }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="secondary">Noch keine Sync-Eintraege.</p>
+{% endif %}
+{% endblock %}
