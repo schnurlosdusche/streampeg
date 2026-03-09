@@ -1,0 +1,17 @@
+[Unit]
+Description=Streamripper Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=norman
+Group=norman
+WorkingDirectory=/home/norman/streamripper-ui
+ExecStart=/usr/bin/python3 app.py
+Restart=on-failure
+RestartSec=5
+Environment=SR_UI_PASSWORD=streaming
+
+[Install]
+WantedBy=multi-user.target
