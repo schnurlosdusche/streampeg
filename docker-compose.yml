@@ -4,7 +4,7 @@ services:
     container_name: streampeg
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "5001:5000"
     environment:
       - SR_UI_SECRET=${SR_UI_SECRET:-change-me-in-production}
       - SR_UI_PASSWORD=${SR_UI_PASSWORD:-streaming}
