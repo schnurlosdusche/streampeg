@@ -44,26 +44,21 @@
         <label>Split-Offset</label>
         <input type="hidden" id="split_offset" name="split_offset" value="{{ stream.split_offset if stream and stream.split_offset else 0 }}">
 
-        <div id="split-slider" style="position:relative;height:52px;margin:8px 0 6px;user-select:none;cursor:pointer;touch-action:none;">
+        <div id="split-slider" style="position:relative;height:56px;margin:8px 0 20px;user-select:none;cursor:pointer;touch-action:none;">
             <!-- track line -->
             <div style="position:absolute;left:0;right:0;top:50%;height:2px;background:var(--pico-muted-border-color,#555);"></div>
-            <!-- left end label (seconds) -->
-            <div id="viz-left-sec" style="position:absolute;left:0;bottom:0;font-size:10px;color:var(--pico-muted-color,#888);"></div>
-            <!-- colored bar -->
-            <div id="viz-bar" style="position:absolute;top:6px;bottom:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;pointer-events:none;"></div>
-            <!-- center marker (metadata) -->
-            <div id="viz-center" style="position:absolute;top:0;bottom:14px;display:flex;align-items:center;pointer-events:none;z-index:2;">
-                <div style="display:flex;flex-direction:column;align-items:center;">
-                    <span style="font-size:10px;color:var(--pico-muted-color,#888);white-space:nowrap;">Metadaten</span>
-                    <span style="font-size:10px;color:var(--pico-muted-color,#888);">&#9660;</span>
-                </div>
+            <!-- colored bar with value inside -->
+            <div id="viz-bar" style="position:absolute;top:14px;bottom:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;pointer-events:none;"></div>
+            <!-- center dot (Trackwechsel) - same style as drag handle -->
+            <div id="viz-center-dot" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);pointer-events:none;z-index:2;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
+            <!-- center label below dot, centered -->
+            <div id="viz-center" style="position:absolute;bottom:-14px;transform:translateX(-50%);pointer-events:none;z-index:2;">
+                <span style="font-size:10px;color:var(--pico-muted-color,#888);white-space:nowrap;">Trackwechsel</span>
             </div>
-            <!-- drag handle -->
+            <!-- drag handle (Metadatenwechsel) -->
             <div id="viz-handle" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);z-index:3;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
-            <!-- handle value label -->
-            <div id="viz-handle-label" style="position:absolute;top:0;font-size:11px;font-weight:bold;transform:translateX(-50%);white-space:nowrap;pointer-events:none;z-index:4;"></div>
-            <!-- right end label (seconds) -->
-            <div id="viz-right-sec" style="position:absolute;right:0;bottom:0;font-size:10px;color:var(--pico-muted-color,#888);"></div>
+            <!-- handle label above line -->
+            <div id="viz-handle-label" style="position:absolute;top:-5px;font-size:10px;color:var(--pico-muted-color,#888);transform:translateX(-50%);white-space:nowrap;pointer-events:none;z-index:4;">Metadaten</div>
         </div>
 
         <small id="offset-info" style="display:block;"></small>
@@ -116,58 +111,54 @@ function updateViz() {
     var val = parseInt(document.getElementById('split_offset').value) || 0;
     var bar = document.getElementById('viz-bar');
     var handle = document.getElementById('viz-handle');
-    var handleLabel = document.getElementById('viz-handle-label');
     var center = document.getElementById('viz-center');
-    var leftSec = document.getElementById('viz-left-sec');
-    var rightSec = document.getElementById('viz-right-sec');
+    var centerDot = document.getElementById('viz-center-dot');
 
     var centerPct = valToPercent(0);
     var handlePct = valToPercent(val);
 
-    // Position center marker (metadata)
+    // Position center marker + dot
     center.style.left = centerPct + '%';
     center.style.transform = 'translateX(-50%)';
+    centerDot.style.left = centerPct + '%';
 
-    // Position handle
+    // Position handle + its label
     handle.style.left = handlePct + '%';
+    var handleLabel = document.getElementById('viz-handle-label');
     handleLabel.style.left = handlePct + '%';
-    handleLabel.textContent = (val > 0 ? '+' : '') + val + 's';
 
-    // Seconds from edges to handle
-    leftSec.textContent = Math.abs(val - SPLIT_MIN) + 's';
-    rightSec.textContent = Math.abs(SPLIT_MAX - val) + 's';
+    // Value label inside the bar
+    var label = (val > 0 ? '+' : '') + val + 's';
 
     if (val > 0) {
-        // Positive: bar from center to handle (right)
         bar.style.left = centerPct + '%';
         bar.style.right = (100 - handlePct) + '%';
         bar.style.background = 'rgba(33,150,243,0.3)';
         bar.style.border = '1px solid rgba(33,150,243,0.6)';
-        handleLabel.style.color = '#2196f3';
+        bar.innerHTML = '<span style="font-size:11px;font-weight:bold;color:#2196f3;white-space:nowrap;">' + label + '</span>';
         handle.style.background = '#2196f3';
     } else if (val < 0) {
-        // Negative: bar from handle to center (left)
         bar.style.left = handlePct + '%';
         bar.style.right = (100 - centerPct) + '%';
         bar.style.background = 'rgba(76,175,80,0.3)';
         bar.style.border = '1px solid rgba(76,175,80,0.6)';
-        handleLabel.style.color = '#4caf50';
+        bar.innerHTML = '<span style="font-size:11px;font-weight:bold;color:#4caf50;white-space:nowrap;">' + label + '</span>';
         handle.style.background = '#4caf50';
     } else {
         bar.style.left = centerPct + '%';
         bar.style.right = (100 - centerPct) + '%';
         bar.style.background = 'none';
         bar.style.border = 'none';
-        handleLabel.style.color = 'var(--pico-muted-color,#888)';
+        bar.innerHTML = '';
         handle.style.background = 'var(--pico-primary-background)';
     }
 
     var info = document.getElementById('offset-info');
     if (val > 0) {
-        info.textContent = 'Metadaten wechseln vor dem Trackwechsel — Split wird ' + val + 's verzoegert';
+        info.textContent = 'Trackwechsel ' + val + 's nach Metadatenwechsel';
         info.style.color = '#2196f3';
     } else if (val < 0) {
-        info.textContent = 'Metadaten wechseln nach dem Trackwechsel — Pre-Buffer von ' + Math.abs(val) + 's';
+        info.textContent = 'Trackwechsel ' + Math.abs(val) + 's vor Metadatenwechsel';
         info.style.color = '#4caf50';
     } else {
         info.textContent = 'Kein Offset — Split erfolgt sofort bei Metadaten-Wechsel';
