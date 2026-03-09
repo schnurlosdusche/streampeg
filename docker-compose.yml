@@ -1,0 +1,22 @@
+services:
+  streampeg:
+    build: .
+    container_name: streampeg
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - SR_UI_SECRET=${SR_UI_SECRET:-change-me-in-production}
+      - SR_UI_PASSWORD=${SR_UI_PASSWORD:-streaming}
+      - SR_UI_DB_PATH=/data/streampeg.db
+      - RUNNING_IN_DOCKER=1
+    volumes:
+      - ./data:/data
+      - /recording:/recording
+      - /mnt/unraid-streams:/mnt/unraid-streams:rshared
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
