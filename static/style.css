@@ -1,0 +1,70 @@
+.container {
+    max-width: 100%;
+    padding-left: 2%;
+    padding-right: 2%;
+}
+
+.disk-bar {
+    text-align: right;
+    margin-bottom: 1rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.status-running {
+    color: #4caf50;
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+.status-stopped {
+    color: #f44336;
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+.status-cell { white-space: nowrap; }
+
+.inline {
+    display: inline-block;
+    margin: 0 0.1rem 0 0;
+}
+
+.inline button {
+    margin-bottom: 0;
+}
+
+.btn-icon {
+    padding: 0.15rem 0.35rem !important;
+    font-size: 0.9rem !important;
+    margin-bottom: 0 !important;
+    line-height: 1 !important;
+    min-width: 0 !important;
+}
+
+.actions-cell { white-space: nowrap; }
+
+.btn-start {
+    --pico-background-color: #2d6a2d;
+    --pico-border-color: #2d6a2d;
+}
+
+.btn-stop {
+    --pico-color: #e6a8a8 !important;
+    --pico-border-color: #6a2d2d !important;
+}
+
+.btn-delete {
+    --pico-color: #e6a8a8 !important;
+    --pico-border-color: #6a2d2d !important;
+}
+
+.sync-ok td:nth-child(3) { color: #a8e6a8; }
+.sync-error td:nth-child(3) { color: #e6a8a8; font-weight: bold; }
+
+.track-cell { word-break: break-word; }
+.status-icon { text-align: center; width: 2rem; }
+
+table { font-size: 0.9rem; }
+
+.secondary { color: var(--pico-muted-color); }
