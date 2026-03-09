@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}{{ "Bearbeiten" if stream else "Neuer Stream" }} - Streampeg{% endblock %}
+{% block content %}
+<h2>{{ "Stream bearbeiten" if stream else "Neuer Stream" }}</h2>
+
+<form method="post" action="{{ url_for('stream_edit', stream_id=stream.id) if stream else url_for('stream_new') }}">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" value="{{ stream.name if stream else request.args.get('name', '') }}" required placeholder="z.B. Reggae Radio">
+
+    <label for="url">Stream URL</label>
+    <div class="grid">
+        <input type="url" id="url" name="url" value="{{ stream.url if stream else request.args.get('url', '') }}" required placeholder="https://...">
+        <button type="button" id="test-btn" class="outline" onclick="testStream()">Testen</button>
+    </div>
+    <small id="test-result" style="display:none;"></small>
+
+    <label for="dest_subdir">Verzeichnisname (optional)</label>
+    <input type="text" id="dest_subdir" name="dest_subdir" value="{{ stream.dest_subdir if stream else '' }}" placeholder="Wird automatisch aus dem Namen erzeugt">
+    <small>Unterverzeichnis in /recording/ und auf dem NAS</small>
+
+    <label for="user_agent">User-Agent</label>
+    <select id="user_agent" name="user_agent">
+        {% for key, value in user_agents.items() %}
+        <option value="{{ key }}" {{ 'selected' if (stream and stream.user_agent == key) or (not stream and key == default_ua) }}>{{ key|capitalize }} &mdash; {{ value[:60] }}{{ '...' if value|length > 60 }}</option>
+        {% endfor %}
+    </select>
+    <small>User-Agent der beim Verbinden mit dem Stream gesendet wird</small>
+
+    <label for="record_mode">Aufnahmemodus</label>
+    <select id="record_mode" name="record_mode" onchange="toggleMetadataUrl()">
+        <option value="streamripper" {{ 'selected' if not stream or stream.record_mode == 'streamripper' }}>Streamripper (ICY-Metadaten)</option>
+        <option value="ffmpeg_icy" {{ 'selected' if stream and stream.record_mode == 'ffmpeg_icy' }}>FFmpeg + ICY-Metadaten (bei HTTPS-Redirects)</option>
+        <option value="ffmpeg_api" {{ 'selected' if stream and stream.record_mode == 'ffmpeg_api' }}>FFmpeg + Shoutcast-API (kein ICY)</option>
+    </select>
+    <small id="mode-hint">Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen</small>
+
+    <div id="metadata-url-group" style="{{ '' if stream and stream.record_mode == 'ffmpeg_api' else 'display:none;' }}">
+        <label for="metadata_url">Metadata-URL (optional)</label>
+        <input type="url" id="metadata_url" name="metadata_url" value="{{ stream.metadata_url if stream else '' }}" placeholder="Wird automatisch aus der Stream-URL abgeleitet">
+        <small>Shoutcast /currentsong Endpoint - leer lassen fuer automatische Erkennung</small>
+    </div>
+
+    <div id="offset-group">
+        <label>Split-Offset</label>
+        <input type="hidden" id="split_offset" name="split_offset" value="{{ stream.split_offset if stream and stream.split_offset else 0 }}">
+
+        <div id="split-slider" style="position:relative;height:52px;margin:8px 0 6px;user-select:none;cursor:pointer;touch-action:none;">
+            <!-- track line -->
+            <div style="position:absolute;left:0;right:0;top:50%;height:2px;background:var(--pico-muted-border-color,#555);"></div>
+            <!-- left end label (seconds) -->
+            <div id="viz-left-sec" style="position:absolute;left:0;bottom:0;font-size:10px;color:var(--pico-muted-color,#888);"></div>
+            <!-- colored bar -->
+            <div id="viz-bar" style="position:absolute;top:6px;bottom:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;pointer-events:none;"></div>
+            <!-- center marker (metadata) -->
+            <div id="viz-center" style="position:absolute;top:0;bottom:14px;display:flex;align-items:center;pointer-events:none;z-index:2;">
+                <div style="display:flex;flex-direction:column;align-items:center;">
+                    <span style="font-size:10px;color:var(--pico-muted-color,#888);white-space:nowrap;">Metadaten</span>
+                    <span style="font-size:10px;color:var(--pico-muted-color,#888);">&#9660;</span>
+                </div>
+            </div>
+            <!-- drag handle -->
+            <div id="viz-handle" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);z-index:3;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
+            <!-- handle value label -->
+            <div id="viz-handle-label" style="position:absolute;top:0;font-size:11px;font-weight:bold;transform:translateX(-50%);white-space:nowrap;pointer-events:none;z-index:4;"></div>
+            <!-- right end label (seconds) -->
+            <div id="viz-right-sec" style="position:absolute;right:0;bottom:0;font-size:10px;color:var(--pico-muted-color,#888);"></div>
+        </div>
+
+        <small id="offset-info" style="display:block;"></small>
+        <small id="offset-mode-hint" style="display:block;margin-top:4px;color:var(--pico-muted-color,#888);"></small>
+    </div>
+
+    <label for="min_size_mb">Mindestgroesse (MB)</label>
+    <input type="number" id="min_size_mb" name="min_size_mb" value="{{ stream.min_size_mb if stream else 2 }}" min="1" max="50">
+    <small>Dateien kleiner als dieser Wert werden automatisch geloescht</small>
+
+    <div class="grid">
+        <button type="submit">{{ "Speichern" if stream else "Erstellen" }}</button>
+        <a href="{{ url_for('dashboard') }}" role="button" class="outline secondary">Abbrechen</a>
+    </div>
+</form>
+
+{% if stream %}
+<hr>
+<form method="post" action="{{ url_for('stream_delete', stream_id=stream.id) }}" onsubmit="return confirm('Stream wirklich loeschen?')">
+    <button type="submit" class="outline" style="--pico-color: var(--pico-color-red-500);">Stream loeschen</button>
+</form>
+{% endif %}
+
+<script>
+function toggleMetadataUrl() {
+    var mode = document.getElementById('record_mode').value;
+    document.getElementById('metadata-url-group').style.display = mode === 'ffmpeg_api' ? '' : 'none';
+    // offset-group is always visible
+    updateViz();
+    var hint = document.getElementById('offset-mode-hint');
+    if (mode === 'streamripper') {
+        hint.textContent = 'Hinweis: Streamripper verwendet eigene Split-Logik. Offset wird ignoriert.';
+    } else if (mode === 'ffmpeg_icy') {
+        hint.textContent = '';
+    } else {
+        hint.textContent = 'Nur positive Werte (Metadaten zu frueh) werden im API-Modus unterstuetzt.';
+    }
+}
+
+var SPLIT_MIN = -120, SPLIT_MAX = 120;
+
+function valToPercent(v) {
+    return (v - SPLIT_MIN) / (SPLIT_MAX - SPLIT_MIN) * 100;
+}
+function percentToVal(pct) {
+    return Math.round(pct / 100 * (SPLIT_MAX - SPLIT_MIN) + SPLIT_MIN);
+}
+
+function updateViz() {
+    var val = parseInt(document.getElementById('split_offset').value) || 0;
+    var bar = document.getElementById('viz-bar');
+    var handle = document.getElementById('viz-handle');
+    var handleLabel = document.getElementById('viz-handle-label');
+    var center = document.getElementById('viz-center');
+    var leftSec = document.getElementById('viz-left-sec');
+    var rightSec = document.getElementById('viz-right-sec');
+
+    var centerPct = valToPercent(0);
+    var handlePct = valToPercent(val);
+
+    // Position center marker (metadata)
+    center.style.left = centerPct + '%';
+    center.style.transform = 'translateX(-50%)';
+
+    // Position handle
+    handle.style.left = handlePct + '%';
+    handleLabel.style.left = handlePct + '%';
+    handleLabel.textContent = (val > 0 ? '+' : '') + val + 's';
+
+    // Seconds from edges to handle
+    leftSec.textContent = Math.abs(val - SPLIT_MIN) + 's';
+    rightSec.textContent = Math.abs(SPLIT_MAX - val) + 's';
+
+    if (val > 0) {
+        // Positive: bar from center to handle (right)
+        bar.style.left = centerPct + '%';
+        bar.style.right = (100 - handlePct) + '%';
+        bar.style.background = 'rgba(33,150,243,0.3)';
+        bar.style.border = '1px solid rgba(33,150,243,0.6)';
+        handleLabel.style.color = '#2196f3';
+        handle.style.background = '#2196f3';
+    } else if (val < 0) {
+        // Negative: bar from handle to center (left)
+        bar.style.left = handlePct + '%';
+        bar.style.right = (100 - centerPct) + '%';
+        bar.style.background = 'rgba(76,175,80,0.3)';
+        bar.style.border = '1px solid rgba(76,175,80,0.6)';
+        handleLabel.style.color = '#4caf50';
+        handle.style.background = '#4caf50';
+    } else {
+        bar.style.left = centerPct + '%';
+        bar.style.right = (100 - centerPct) + '%';
+        bar.style.background = 'none';
+        bar.style.border = 'none';
+        handleLabel.style.color = 'var(--pico-muted-color,#888)';
+        handle.style.background = 'var(--pico-primary-background)';
+    }
+
+    var info = document.getElementById('offset-info');
+    if (val > 0) {
+        info.textContent = 'Metadaten wechseln vor dem Trackwechsel — Split wird ' + val + 's verzoegert';
+        info.style.color = '#2196f3';
+    } else if (val < 0) {
+        info.textContent = 'Metadaten wechseln nach dem Trackwechsel — Pre-Buffer von ' + Math.abs(val) + 's';
+        info.style.color = '#4caf50';
+    } else {
+        info.textContent = 'Kein Offset — Split erfolgt sofort bei Metadaten-Wechsel';
+        info.style.color = 'var(--pico-muted-color,#888)';
+    }
+}
+
+(function() {
+    var dragging = false;
+    var slider = null;
+
+    function getValFromEvent(e) {
+        var rect = slider.getBoundingClientRect();
+        var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        var pct = Math.max(0, Math.min(100, x / rect.width * 100));
+        return percentToVal(pct);
+    }
+
+    function onMove(e) {
+        if (!dragging) return;
+        e.preventDefault();
+        var v = getValFromEvent(e);
+        // Snap to 0 when close
+        if (Math.abs(v) <= 2) v = 0;
+        document.getElementById('split_offset').value = v;
+        updateViz();
+    }
+
+    function onUp() {
+        dragging = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+        var handle = document.getElementById('viz-handle');
+        if (handle) handle.style.cursor = 'grab';
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        slider = document.getElementById('split-slider');
+        updateViz();
+
+        slider.addEventListener('mousedown', function(e) {
+            dragging = true;
+            var handle = document.getElementById('viz-handle');
+            if (handle) handle.style.cursor = 'grabbing';
+            onMove(e);
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+        slider.addEventListener('touchstart', function(e) {
+            dragging = true;
+            onMove(e);
+            document.addEventListener('touchmove', onMove, {passive: false});
+            document.addEventListener('touchend', onUp);
+        }, {passive: true});
+    });
+})();
+
+function testStream() {
+    var url = document.getElementById('url').value;
+    var ua = document.getElementById('user_agent').value;
+    if (!url) return;
+
+    var btn = document.getElementById('test-btn');
+    var result = document.getElementById('test-result');
+    btn.textContent = 'Teste...';
+    btn.disabled = true;
+    result.style.display = 'none';
+
+    fetch('/api/test-stream?url=' + encodeURIComponent(url) + '&user_agent=' + ua, {credentials: 'include'})
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        result.style.display = 'block';
+        if (data.ok) {
+            result.style.color = 'var(--pico-color-green-500, green)';
+            result.textContent = data.message;
+
+            if (data.metadata) {
+                var modeSelect = document.getElementById('record_mode');
+                var hint = document.getElementById('mode-hint');
+                var mode = data.metadata.recommended_mode;
+
+                modeSelect.value = mode;
+                toggleMetadataUrl();
+
+                if (mode === 'streamripper') {
+                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> ICY-Metadaten vorhanden, Streamripper funktioniert.';
+                    hint.style.color = 'var(--pico-color-green-500, green)';
+                } else if (mode === 'ffmpeg_icy') {
+                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> ICY-Metadaten vorhanden, aber Streamripper kann nicht verbinden (HTTPS-Redirect). FFmpeg+ICY wird verwendet.';
+                    hint.style.color = 'var(--pico-color-amber-500, orange)';
+                } else if (mode === 'ffmpeg_api') {
+                    if (data.metadata.metadata_url) {
+                        document.getElementById('metadata_url').value = data.metadata.metadata_url;
+                    }
+                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> Keine ICY-Metadaten, aber Shoutcast-API verfuegbar. FFmpeg+API wird verwendet.';
+                    hint.style.color = 'var(--pico-color-amber-500, orange)';
+                }
+            }
+        } else {
+            result.style.color = 'var(--pico-color-red-500, red)';
+            result.textContent = data.error;
+        }
+        btn.textContent = 'Testen';
+        btn.disabled = false;
+    })
+    .catch(function() {
+        result.style.display = 'block';
+        result.style.color = 'var(--pico-color-red-500, red)';
+        result.textContent = 'Verbindungsfehler';
+        btn.textContent = 'Testen';
+        btn.disabled = false;
+    });
+}
+</script>
+{% endblock %}
