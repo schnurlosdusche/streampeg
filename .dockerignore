@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite3
+.git/
+.gitignore
+*.service
+sudoers-*
+data/
+*.md
+.env
