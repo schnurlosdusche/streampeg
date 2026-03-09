@@ -41,24 +41,28 @@
     </div>
 
     <div id="offset-group">
-        <label>Split-Offset</label>
+        <label>Split-Offset <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">Zeitdifferenz zwischen Stream Trackwechsel und Metadaten des neuen Tracks verfügbar</span></label>
         <input type="hidden" id="split_offset" name="split_offset" value="{{ stream.split_offset if stream and stream.split_offset else 0 }}">
 
-        <div id="split-slider" style="position:relative;height:56px;margin:8px 0 20px;user-select:none;cursor:pointer;touch-action:none;">
+        <div id="split-slider" style="position:relative;height:56px;margin:18px 0 20px;user-select:none;cursor:pointer;touch-action:none;">
+            <!-- Equalizer waveform behind slider -->
+            <canvas id="eq-canvas" style="position:absolute;left:0;right:0;top:0;bottom:0;width:100%;height:100%;pointer-events:none;z-index:0;"></canvas>
             <!-- track line -->
-            <div style="position:absolute;left:0;right:0;top:50%;height:2px;background:var(--pico-muted-border-color,#555);"></div>
+            <div style="position:absolute;left:0;right:0;top:50%;height:2px;background:var(--pico-muted-border-color,#555);z-index:1;"></div>
             <!-- colored bar with value inside -->
-            <div id="viz-bar" style="position:absolute;top:14px;bottom:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;pointer-events:none;"></div>
+            <div id="viz-bar" style="position:absolute;top:14px;bottom:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:1;"></div>
             <!-- center dot (Trackwechsel) - same style as drag handle -->
             <div id="viz-center-dot" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);pointer-events:none;z-index:2;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
             <!-- center label below dot, centered -->
-            <div id="viz-center" style="position:absolute;bottom:-14px;transform:translateX(-50%);pointer-events:none;z-index:2;">
-                <span style="font-size:10px;color:var(--pico-muted-color,#888);white-space:nowrap;">Trackwechsel</span>
+            <div id="viz-center" style="position:absolute;bottom:-16px;transform:translateX(-50%);pointer-events:none;z-index:2;">
+                <span style="font-size:12px;color:var(--pico-muted-color,#888);white-space:nowrap;">Trackwechsel</span>
             </div>
             <!-- drag handle (Metadatenwechsel) -->
             <div id="viz-handle" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);z-index:3;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
-            <!-- handle label above line -->
-            <div id="viz-handle-label" style="position:absolute;top:-5px;font-size:10px;color:var(--pico-muted-color,#888);transform:translateX(-50%);white-space:nowrap;pointer-events:none;z-index:4;">Metadaten</div>
+            <!-- handle label above line with Titel A / Titel B -->
+            <div id="viz-handle-label" style="position:absolute;top:-18px;font-size:15px;font-weight:normal;color:#fff;transform:translateX(-50%);white-space:nowrap;pointer-events:none;z-index:4;">
+                <span id="viz-label-a" style="font-size:10px;font-weight:normal;margin-right:10px;color:#4caf50;">Track A INFO</span>Metadaten<span id="viz-label-b" style="font-size:10px;font-weight:normal;margin-left:10px;color:#2196f3;">Track B INFO</span>
+            </div>
         </div>
 
         <small id="offset-info" style="display:block;"></small>
@@ -107,6 +111,52 @@ function percentToVal(pct) {
     return Math.round(pct / 100 * (SPLIT_MAX - SPLIT_MIN) + SPLIT_MIN);
 }
 
+function drawEqualizer() {
+    var canvas = document.getElementById('eq-canvas');
+    if (!canvas) return;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.offsetWidth * dpr;
+    canvas.height = canvas.offsetHeight * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    var w = canvas.offsetWidth, h = canvas.offsetHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    var val = parseInt(document.getElementById('split_offset').value) || 0;
+    var centerX = w * valToPercent(0) / 100;
+    var handleX = w * valToPercent(val) / 100;
+    var splitX = val !== 0 ? handleX : centerX;
+
+    // Generate pseudo-random but deterministic bars
+    var barW = 3, gap = 1, total = Math.floor(w / (barW + gap));
+    var seed = 42;
+    function rand() { seed = (seed * 16807 + 11) % 2147483647; return (seed & 0xffff) / 0xffff; }
+
+    for (var i = 0; i < total; i++) {
+        var x = i * (barW + gap);
+        var xCenter = x + barW / 2;
+        // Distance to center (trackwechsel) normalized 0-1
+        var distToCenter = Math.abs(xCenter - centerX) / (w * 0.15);
+        // Fade out toward center: amplitude dips to ~0.1 at center
+        var fade = Math.min(1, distToCenter);
+        fade = 0.1 + 0.9 * fade * fade;
+
+        var amplitude = (0.3 + 0.7 * rand()) * fade;
+        var barH = Math.max(1, amplitude * (h - 4));
+        var y = (h - barH) / 2;
+
+        // Color: left of center = green (Titel A), right of center = blue (Titel B)
+        if (xCenter < centerX - 1) {
+            ctx.fillStyle = 'rgba(76,175,80,0.5)';
+        } else if (xCenter > centerX + 1) {
+            ctx.fillStyle = 'rgba(33,150,243,0.5)';
+        } else {
+            ctx.fillStyle = 'rgba(128,128,128,0.3)';
+        }
+        ctx.fillRect(x, y, barW, barH);
+    }
+}
+
 function updateViz() {
     var val = parseInt(document.getElementById('split_offset').value) || 0;
     var bar = document.getElementById('viz-bar');
@@ -135,14 +185,14 @@ function updateViz() {
         bar.style.right = (100 - handlePct) + '%';
         bar.style.background = 'rgba(33,150,243,0.3)';
         bar.style.border = '1px solid rgba(33,150,243,0.6)';
-        bar.innerHTML = '<span style="font-size:11px;font-weight:bold;color:#2196f3;white-space:nowrap;">' + label + '</span>';
+        bar.innerHTML = '<span style="font-size:14px;font-weight:bold;color:#fff;white-space:nowrap;">' + label + '</span>';
         handle.style.background = '#2196f3';
     } else if (val < 0) {
         bar.style.left = handlePct + '%';
         bar.style.right = (100 - centerPct) + '%';
         bar.style.background = 'rgba(76,175,80,0.3)';
         bar.style.border = '1px solid rgba(76,175,80,0.6)';
-        bar.innerHTML = '<span style="font-size:11px;font-weight:bold;color:#4caf50;white-space:nowrap;">' + label + '</span>';
+        bar.innerHTML = '<span style="font-size:14px;font-weight:bold;color:#fff;white-space:nowrap;">' + label + '</span>';
         handle.style.background = '#4caf50';
     } else {
         bar.style.left = centerPct + '%';
@@ -155,15 +205,33 @@ function updateViz() {
 
     var info = document.getElementById('offset-info');
     if (val > 0) {
-        info.textContent = 'Trackwechsel ' + val + 's nach Metadatenwechsel';
+        info.textContent = 'Trackwechsel ' + val + 's vor Metadatenwechsel';
         info.style.color = '#2196f3';
     } else if (val < 0) {
-        info.textContent = 'Trackwechsel ' + Math.abs(val) + 's vor Metadatenwechsel';
+        info.textContent = 'Trackwechsel ' + Math.abs(val) + 's nach Metadatenwechsel';
         info.style.color = '#4caf50';
     } else {
         info.textContent = 'Kein Offset — Split erfolgt sofort bei Metadaten-Wechsel';
         info.style.color = 'var(--pico-muted-color,#888)';
     }
+
+    // Update Titel A / Titel B labels
+    var labelA = document.getElementById('viz-label-a');
+    var labelB = document.getElementById('viz-label-b');
+    if (val > 0) {
+        // Handle is right of center: Titel A left, Titel B right
+        labelA.style.display = '';
+        labelB.style.display = '';
+    } else if (val < 0) {
+        // Handle is left of center: Titel A left, Titel B right
+        labelA.style.display = '';
+        labelB.style.display = '';
+    } else {
+        labelA.style.display = 'none';
+        labelB.style.display = 'none';
+    }
+
+    drawEqualizer();
 }
 
 (function() {
