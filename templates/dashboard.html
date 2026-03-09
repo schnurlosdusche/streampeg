@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Streampeg{% endblock %}
+{% block content %}
+<h2>Streams</h2>
+
+{% if not streams %}
+<p>Keine Streams konfiguriert. <a href="{{ url_for('stream_new') }}">Stream hinzufuegen</a></p>
+{% else %}
+<div class="overflow-auto">
+<table id="streams-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Aktueller Track</th>
+            <th>Dateien</th>
+            <th>Uptime</th>
+            <th>Aktionen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for stream in streams %}
+        {% set st = statuses[stream.id] %}
+        <tr data-stream-id="{{ stream.id }}">
+            <td>
+                <a href="{{ url_for('stream_detail', stream_id=stream.id) }}">{{ stream.name }}</a>
+            </td>
+            <td class="status-cell">
+                {% if st.running %}
+                    <span class="status-running">running</span>
+                {% else %}
+                    <span class="status-stopped">stop</span>
+                {% endif %}
+            </td>
+            <td class="track-cell">{{ st.current_track or "-" }}</td>
+            <td class="files-cell">{{ st.file_count }}</td>
+            <td class="uptime-cell">{{ st.uptime_str }}</td>
+            <td class="actions-cell">
+                {% if st.running %}
+                <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" class="inline">
+                    <button type="submit" class="btn-icon btn-stop outline" title="Stop">&#9632;</button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ url_for('stream_start', stream_id=stream.id) }}" class="inline">
+                    <button type="submit" class="btn-icon btn-start" title="Start">&#9654;</button>
+                </form>
+                {% endif %}
+                <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" role="button" class="outline secondary btn-icon" title="Bearbeiten">&#9998;</a>
+                <form method="post" action="{{ url_for('api_sync', stream_id=stream.id) }}" class="inline sync-form">
+                    <button type="submit" class="outline btn-icon" title="Sync">&#8635;</button>
+                </form>
+                <form method="post" action="{{ url_for('stream_delete', stream_id=stream.id) }}" class="inline" onsubmit="return confirm('Stream wirklich entfernen?')">
+                    <button type="submit" class="outline btn-icon btn-delete" title="Loeschen">&#10005;</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}
