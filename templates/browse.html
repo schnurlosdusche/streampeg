@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Radio Browser - Streampeg{% endblock %}
+{% block content %}
+<h2>Radio Browser</h2>
+
+<div class="grid">
+    <div>
+        <input type="text" id="search-name" placeholder="Sender suchen..." autocomplete="off">
+    </div>
+    <div>
+        <select id="genre-select">
+            <option value="">Genre waehlen...</option>
+        </select>
+    </div>
+</div>
+
+<div id="loading" style="display:none;" aria-busy="true">Lade Sender...</div>
+
+<div id="stations-container" style="display:none;">
+    <p id="station-count" class="secondary"></p>
+    <div class="overflow-auto">
+    <table id="stations-table">
+        <thead>
+            <tr>
+                <th>Sender</th>
+                <th>Land</th>
+                <th>Codec</th>
+                <th>Bitrate</th>
+                <th>Tags</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody id="stations-body"></tbody>
+    </table>
+    </div>
+</div>
+
+<script>
+const genreSelect = document.getElementById('genre-select');
+const searchInput = document.getElementById('search-name');
+const stationsBody = document.getElementById('stations-body');
+const stationsContainer = document.getElementById('stations-container');
+const stationCount = document.getElementById('station-count');
+const loading = document.getElementById('loading');
+let searchTimeout = null;
+
+// Load genres
+fetch('/api/browse/tags', {credentials: 'include'})
+    .then(r => r.json())
+    .then(tags => {
+        if (Array.isArray(tags)) {
+            tags.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.name;
+                opt.textContent = t.name + ' (' + t.stationcount + ')';
+                genreSelect.appendChild(opt);
+            });
+        }
+    });
+
+// Genre selection
+genreSelect.addEventListener('change', function() {
+    if (this.value) {
+        searchInput.value = '';
+        loadStations('tag', this.value);
+    }
+});
+
+// Name search with debounce
+searchInput.addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    const val = this.value.trim();
+    if (val.length >= 2) {
+        genreSelect.value = '';
+        searchTimeout = setTimeout(() => loadStations('name', val), 400);
+    }
+});
+
+function loadStations(type, value) {
+    loading.style.display = 'block';
+    stationsContainer.style.display = 'none';
+    stationsBody.innerHTML = '';
+
+    const param = type === 'tag' ? 'tag=' : 'name=';
+    fetch('/api/browse/search?' + param + encodeURIComponent(value) + '&limit=100', {credentials: 'include'})
+        .then(r => r.json())
+        .then(stations => {
+            loading.style.display = 'none';
+
+            if (!Array.isArray(stations) || stations.length === 0) {
+                stationCount.textContent = 'Keine Sender gefunden.';
+                stationsContainer.style.display = 'block';
+                return;
+            }
+
+            stationCount.textContent = stations.length + ' Sender gefunden';
+            stations.forEach(s => {
+                const tr = document.createElement('tr');
+                const tagsShort = s.tags ? s.tags.split(',').slice(0, 3).join(', ') : '';
+                tr.innerHTML =
+                    '<td>' + escHtml(s.name) + '</td>' +
+                    '<td><small>' + escHtml(s.country) + '</small></td>' +
+                    '<td><small>' + escHtml(s.codec) + '</small></td>' +
+                    '<td><small>' + (s.bitrate || '-') + '</small></td>' +
+                    '<td><small>' + escHtml(tagsShort) + '</small></td>' +
+                    '<td class="action-cell">' +
+                        '<button class="outline btn-small test-btn" data-url="' + escAttr(s.url) + '">Test</button> ' +
+                        '<a href="/stream/new?name=' + encodeURIComponent(s.name) +
+                        '&url=' + encodeURIComponent(s.url) +
+                        '" role="button" class="outline btn-small add-btn" style="display:none">+ Hinzufuegen</a>' +
+                    '</td>';
+                stationsBody.appendChild(tr);
+            });
+            stationsContainer.style.display = 'block';
+        })
+        .catch(() => {
+            loading.style.display = 'none';
+            stationCount.textContent = 'Fehler beim Laden.';
+            stationsContainer.style.display = 'block';
+        });
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function escAttr(s) {
+    return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Event delegation for test buttons
+document.getElementById('stations-body').addEventListener('click', function(e) {
+    const btn = e.target.closest('.test-btn');
+    if (!btn) return;
+
+    const url = btn.getAttribute('data-url');
+    const cell = btn.closest('.action-cell');
+    const addBtn = cell.querySelector('.add-btn');
+    btn.textContent = '...';
+    btn.disabled = true;
+
+    fetch('/api/test-stream?url=' + encodeURIComponent(url), {credentials: 'include'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                btn.textContent = 'OK';
+                btn.style.color = '#a8e6a8';
+                btn.style.borderColor = '#2d6a2d';
+                if (addBtn) addBtn.style.display = 'inline-block';
+            } else {
+                btn.textContent = 'Fail';
+                btn.style.color = '#e6a8a8';
+                btn.style.borderColor = '#6a2d2d';
+                btn.title = data.error || 'Stream nicht erreichbar';
+                if (addBtn) addBtn.style.display = 'none';
+            }
+            setTimeout(() => { btn.disabled = false; }, 3000);
+        })
+        .catch(() => {
+            btn.textContent = 'Err';
+            btn.disabled = false;
+        });
+});
+</script>
+{% endblock %}
