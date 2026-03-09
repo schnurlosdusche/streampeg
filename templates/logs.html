@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Logs - Streampeg{% endblock %}
+{% block content %}
+<h2>Sync-Log</h2>
+{% if sync_logs %}
+<div class="overflow-auto">
+<table>
+    <thead>
+        <tr><th>Zeit</th><th>Stream</th><th>Status</th><th>Nachricht</th><th>Dateien</th></tr>
+    </thead>
+    <tbody>
+        {% for l in sync_logs %}
+        <tr class="{{ 'sync-ok' if l.success else 'sync-error' }}">
+            <td><small>{{ l.timestamp }}</small></td>
+            <td>{{ l.stream_name }}</td>
+            <td>{{ "OK" if l.success else "Fehler" }}</td>
+            <td>{{ l.message }}</td>
+            <td>{{ l.files_synced }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="secondary">Noch keine Sync-Eintraege.</p>
+{% endif %}
+
+<h2>Ereignisse</h2>
+{% if events %}
+<div class="overflow-auto">
+<table>
+    <thead>
+        <tr><th>Zeit</th><th>Stream</th><th>Typ</th><th>Nachricht</th></tr>
+    </thead>
+    <tbody>
+        {% for e in events %}
+        <tr>
+            <td><small>{{ e.timestamp }}</small></td>
+            <td>{{ e.stream_name }}</td>
+            <td><code>{{ e.event_type }}</code></td>
+            <td>{{ e.message }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="secondary">Keine Ereignisse.</p>
+{% endif %}
+{% endblock %}
