@@ -30,10 +30,13 @@ function updateStatus() {
                 if (track) track.textContent = s.current_track || '-';
 
                 const files = row.querySelector('.files-cell');
-                if (files) files.textContent = s.file_count;
-
-                const uptime = row.querySelector('.uptime-cell');
-                if (uptime) uptime.textContent = s.uptime_str;
+                if (files) {
+                    var filesHtml = s.file_count;
+                    if (s.yt_stats) {
+                        filesHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + s.yt_stats.downloaded + ' YT / ' + s.yt_stats.not_found + ' miss</small>';
+                    }
+                    files.innerHTML = filesHtml;
+                }
             });
         }
     })

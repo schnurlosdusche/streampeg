@@ -20,6 +20,9 @@
         {% endif %}
         <p>Aktueller Track: <strong>{{ status.current_track or "-" }}</strong></p>
         <p>Dateien auf Worker: {{ status.file_count }} ({{ status.disk_usage_mb }} MB)</p>
+        {% if status.yt_stats %}
+        <p>YouTube: <strong>{{ status.yt_stats.downloaded }}</strong> geladen, <strong>{{ status.yt_stats.not_found }}</strong> nicht gefunden, {{ status.yt_stats.total }} gesamt</p>
+        {% endif %}
         <footer>
             {% if status.running %}
             <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" class="inline">

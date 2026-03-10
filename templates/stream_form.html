@@ -31,6 +31,7 @@
         <option value="streamripper" {{ 'selected' if not stream or stream.record_mode == 'streamripper' }}>Streamripper (ICY-Metadaten)</option>
         <option value="ffmpeg_icy" {{ 'selected' if stream and stream.record_mode == 'ffmpeg_icy' }}>FFmpeg + ICY-Metadaten (bei HTTPS-Redirects)</option>
         <option value="ffmpeg_api" {{ 'selected' if stream and stream.record_mode == 'ffmpeg_api' }}>FFmpeg + Shoutcast-API (kein ICY)</option>
+        <option value="youtube" {{ 'selected' if stream and stream.record_mode == 'youtube' }}>YouTube-Download (ICY-Metadaten als Trigger)</option>
     </select>
     <small id="mode-hint">Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen</small>
 
@@ -90,15 +91,25 @@
 function toggleMetadataUrl() {
     var mode = document.getElementById('record_mode').value;
     document.getElementById('metadata-url-group').style.display = mode === 'ffmpeg_api' ? '' : 'none';
-    // offset-group is always visible
+    // Hide offset and min_size for youtube mode (not relevant)
+    var isYoutube = mode === 'youtube';
+    document.getElementById('offset-group').style.display = isYoutube ? 'none' : '';
+    if (isYoutube) document.getElementById('split_offset').value = 0;
     updateViz();
     var hint = document.getElementById('offset-mode-hint');
     if (mode === 'streamripper') {
         hint.textContent = 'Hinweis: Streamripper verwendet eigene Split-Logik. Offset wird ignoriert.';
     } else if (mode === 'ffmpeg_icy') {
         hint.textContent = '';
+    } else if (mode === 'youtube') {
+        hint.textContent = '';
     } else {
         hint.textContent = 'Nur positive Werte (Metadaten zu frueh) werden im API-Modus unterstuetzt.';
+    }
+    var modeHint = document.getElementById('mode-hint');
+    if (mode === 'youtube') {
+        modeHint.innerHTML = 'ICY-Metadaten werden als Trigger genutzt. Songs werden von YouTube geladen (yt-dlp).';
+        modeHint.style.color = 'var(--pico-color-green-500, green)';
     }
 }
 

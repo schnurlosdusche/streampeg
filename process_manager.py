@@ -6,6 +6,7 @@ import signal
 from config import RECORDING_BASE, SMB_TARGET, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT
 from db import log_event
 from ffmpeg_recorder import FfmpegRecorder
+from youtube_recorder import YouTubeRecorder
 
 # In-memory process registry: stream_id -> {proc, start_time}
 _processes = {}
@@ -20,6 +21,13 @@ def start_stream(stream):
     os.makedirs(dest, exist_ok=True)
 
     record_mode = stream["record_mode"] if "record_mode" in stream.keys() else "streamripper"
+
+    if record_mode == "youtube":
+        recorder = YouTubeRecorder(stream, dest)
+        recorder.start()
+        _processes[stream_id] = {"proc": recorder, "start_time": time.time(), "mode": "youtube"}
+        return recorder.pid
+
 
     if record_mode in ("ffmpeg_api", "ffmpeg_icy"):
         recorder = FfmpegRecorder(stream, dest)
@@ -50,7 +58,7 @@ def stop_stream(stream_id):
     proc = info["proc"]
     mode = info.get("mode", "streamripper")
 
-    if mode in ("ffmpeg_api", "ffmpeg_icy"):
+    if mode in ("ffmpeg_api", "ffmpeg_icy", "youtube"):
         proc.stop()
     else:
         pid = proc.pid
@@ -108,13 +116,13 @@ def get_status(stream):
         pid = info["proc"].pid
         uptime = int(time.time() - info["start_time"])
 
-    # For ffmpeg modes, get current track from the recorder
-    if info and info.get("mode") in ("ffmpeg_api", "ffmpeg_icy") and hasattr(info["proc"], "get_current_track"):
+    # For ffmpeg/youtube modes, get current track from the recorder
+    if info and info.get("mode") in ("ffmpeg_api", "ffmpeg_icy", "youtube") and hasattr(info["proc"], "get_current_track"):
         current_track = info["proc"].get_current_track()
         if current_track:
             worker_count, worker_size = _count_audio_files(dest)
             nas_count, nas_size = _count_audio_files(nas_dest)
-            return {
+            result = {
                 "running": running,
                 "pid": pid,
                 "uptime": uptime,
@@ -123,6 +131,10 @@ def get_status(stream):
                 "file_count": worker_count + nas_count,
                 "disk_usage_mb": round((worker_size + nas_size) / (1024 * 1024), 1),
             }
+            # YouTube mode: add download stats
+            if info.get("mode") == "youtube" and hasattr(info["proc"], "get_stats"):
+                result["yt_stats"] = info["proc"].get_stats()
+            return result
 
     # Current track from incomplete directory
     current_track = None

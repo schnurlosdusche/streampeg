@@ -51,7 +51,7 @@ def stream_new():
         if user_agent not in USER_AGENTS:
             user_agent = DEFAULT_USER_AGENT
         record_mode = request.form.get("record_mode", "streamripper")
-        if record_mode not in ("streamripper", "ffmpeg_api", "ffmpeg_icy"):
+        if record_mode not in ("streamripper", "ffmpeg_api", "ffmpeg_icy", "youtube"):
             record_mode = "streamripper"
         metadata_url = request.form.get("metadata_url", "").strip()
         split_offset = int(request.form.get("split_offset", 0))
@@ -75,7 +75,7 @@ def stream_edit(stream_id):
         if user_agent not in USER_AGENTS:
             user_agent = DEFAULT_USER_AGENT
         record_mode = request.form.get("record_mode", "streamripper")
-        if record_mode not in ("streamripper", "ffmpeg_api", "ffmpeg_icy"):
+        if record_mode not in ("streamripper", "ffmpeg_api", "ffmpeg_icy", "youtube"):
             record_mode = "streamripper"
         metadata_url = request.form.get("metadata_url", "").strip()
         split_offset = int(request.form.get("split_offset", 0))
