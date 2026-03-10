@@ -2,7 +2,39 @@ import os
 import glob
 import subprocess
 from config import RECORDING_BASE, SMB_TARGET
-from db import log_sync
+from db import log_sync, log_event
+
+
+def sync_file(filepath, stream):
+    """Sync a single file to NAS and remove locally. Called after download/recording."""
+    if not filepath or not os.path.exists(filepath):
+        return False
+
+    if not os.path.ismount(SMB_TARGET):
+        return False
+
+    dst_dir = os.path.join(SMB_TARGET, stream["dest_subdir"])
+    os.makedirs(dst_dir, exist_ok=True)
+
+    dst = os.path.join(dst_dir, os.path.basename(filepath))
+    if os.path.exists(dst):
+        name, ext = os.path.splitext(os.path.basename(filepath))
+        dst = os.path.join(dst_dir, f"{name}_{int(os.path.getmtime(filepath))}{ext}")
+
+    try:
+        result = subprocess.run(
+            ["rsync", "-aq", "--remove-source-files", filepath, dst],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            log_event(stream["id"], "sync", f"Sync: {os.path.basename(filepath)}")
+            return True
+        else:
+            log_event(stream["id"], "sync_error",
+                      f"Sync-Fehler: {result.stderr.strip()[:100]}")
+    except Exception as e:
+        log_event(stream["id"], "sync_error", f"Sync-Fehler: {str(e)[:100]}")
+    return False
 
 
 def _convert_to_mp3(src_dir):

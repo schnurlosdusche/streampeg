@@ -302,56 +302,125 @@ function testStream() {
     var ua = document.getElementById('user_agent').value;
     if (!url) return;
 
-    var btn = document.getElementById('test-btn');
-    var result = document.getElementById('test-result');
-    btn.textContent = 'Teste...';
-    btn.disabled = true;
-    result.style.display = 'none';
+    // Open modal
+    var modal = document.getElementById('test-modal');
+    var log = document.getElementById('test-log');
+    var closeBtn = document.getElementById('test-close');
+    var applyBtn = document.getElementById('test-apply');
+    log.innerHTML = '';
+    closeBtn.style.display = 'none';
+    applyBtn.style.display = 'none';
+    applyBtn.onclick = null;
+    modal.setAttribute('open', '');
 
-    fetch('/api/test-stream?url=' + encodeURIComponent(url) + '&user_agent=' + ua, {credentials: 'include'})
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        result.style.display = 'block';
-        if (data.ok) {
-            result.style.color = 'var(--pico-color-green-500, green)';
-            result.textContent = data.message;
+    var stepLabels = {1:'HTTP-Verbindung', 2:'ICY-Metadaten (Deep)', 3:'Shoutcast API', 4:'Icecast API', 5:'TuneIn', 6:'Streamripper', 7:'FFmpeg'};
 
-            if (data.metadata) {
-                var modeSelect = document.getElementById('record_mode');
-                var hint = document.getElementById('mode-hint');
-                var mode = data.metadata.recommended_mode;
+    // Create step rows
+    for (var i = 1; i <= 7; i++) {
+        var row = document.createElement('div');
+        row.id = 'test-step-' + i;
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--pico-muted-border-color,#333);';
+        row.innerHTML = '<span class="test-icon" style="width:22px;text-align:center;font-size:16px;">&#9711;</span>'
+            + '<span class="test-label" style="flex:1;">' + stepLabels[i] + '</span>'
+            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">wartend</span>';
+        log.appendChild(row);
+    }
 
-                modeSelect.value = mode;
-                toggleMetadataUrl();
+    // Result area
+    var resultDiv = document.createElement('div');
+    resultDiv.id = 'test-result-area';
+    resultDiv.style.cssText = 'margin-top:16px;padding:12px;border-radius:6px;';
+    log.appendChild(resultDiv);
 
-                if (mode === 'streamripper') {
-                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> ICY-Metadaten vorhanden, Streamripper funktioniert.';
-                    hint.style.color = 'var(--pico-color-green-500, green)';
-                } else if (mode === 'ffmpeg_icy') {
-                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> ICY-Metadaten vorhanden, aber Streamripper kann nicht verbinden (HTTPS-Redirect). FFmpeg+ICY wird verwendet.';
-                    hint.style.color = 'var(--pico-color-amber-500, orange)';
-                } else if (mode === 'ffmpeg_api') {
-                    if (data.metadata.metadata_url) {
-                        document.getElementById('metadata_url').value = data.metadata.metadata_url;
-                    }
-                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> Keine ICY-Metadaten, aber Shoutcast-API verfuegbar. FFmpeg+API wird verwendet.';
-                    hint.style.color = 'var(--pico-color-amber-500, orange)';
+    var source = new EventSource('/api/test-stream?url=' + encodeURIComponent(url) + '&user_agent=' + ua);
+    var bestMode = null;
+
+    source.onmessage = function(e) {
+        var data = JSON.parse(e.data);
+
+        if (data.step && data.label) {
+            // Step starting
+            var row = document.getElementById('test-step-' + data.step);
+            if (row) {
+                row.querySelector('.test-icon').innerHTML = '<span aria-busy="true" style="display:inline-block;width:16px;height:16px;"></span>';
+                row.querySelector('.test-label').textContent = data.label;
+                row.querySelector('.test-status').textContent = 'laeuft...';
+                row.querySelector('.test-status').style.color = 'var(--pico-muted-color,#888)';
+            }
+        }
+
+        if (data.step && data.result) {
+            // Step result
+            var row = document.getElementById('test-step-' + data.step);
+            if (row) {
+                var icon = data.ok ? '&#9989;' : (data.result === 'Teilweise' ? '&#9888;' : '&#10060;');
+                row.querySelector('.test-icon').innerHTML = icon;
+                row.querySelector('.test-label').textContent = stepLabels[data.step];
+                var statusEl = row.querySelector('.test-status');
+                statusEl.innerHTML = '<strong>' + data.result + '</strong>';
+                statusEl.style.color = data.ok ? 'var(--pico-color-green-500,green)' : 'var(--pico-color-red-500,red)';
+                if (data.detail) {
+                    var detail = document.createElement('small');
+                    detail.style.cssText = 'display:block;color:var(--pico-muted-color,#888);font-size:12px;margin-top:2px;';
+                    detail.textContent = data.detail;
+                    row.querySelector('.test-label').appendChild(detail);
                 }
             }
-        } else {
-            result.style.color = 'var(--pico-color-red-500, red)';
-            result.textContent = data.error;
         }
-        btn.textContent = 'Testen';
-        btn.disabled = false;
-    })
-    .catch(function() {
-        result.style.display = 'block';
-        result.style.color = 'var(--pico-color-red-500, red)';
-        result.textContent = 'Verbindungsfehler';
-        btn.textContent = 'Testen';
-        btn.disabled = false;
-    });
+
+        if (data.done) {
+            source.close();
+            closeBtn.style.display = '';
+            var area = document.getElementById('test-result-area');
+
+            if (data.suitable) {
+                bestMode = data.best_mode;
+                area.style.background = 'rgba(76,175,80,0.1)';
+                area.style.border = '1px solid rgba(76,175,80,0.4)';
+                var html = '<strong style="color:var(--pico-color-green-500,green);">Empfehlung:</strong><br>';
+                data.recommendation.forEach(function(r, i) {
+                    var star = i === 0 ? ' &#11088;' : '';
+                    html += '<div style="padding:4px 0;' + (i === 0 ? 'font-weight:bold;' : '') + '">'
+                        + r.mode + star + ' <small style="color:var(--pico-muted-color,#888);">(Score ' + r.score + ')</small><br>'
+                        + '<small>' + r.reason + '</small></div>';
+                });
+                area.innerHTML = html;
+                applyBtn.style.display = '';
+                applyBtn.textContent = 'Modus "' + bestMode + '" uebernehmen';
+                applyBtn.onclick = function() {
+                    document.getElementById('record_mode').value = bestMode;
+                    toggleMetadataUrl();
+                    modal.removeAttribute('open');
+                    var hint = document.getElementById('mode-hint');
+                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> ' + bestMode;
+                    hint.style.color = 'var(--pico-color-green-500, green)';
+                };
+            } else {
+                area.style.background = 'rgba(244,67,54,0.1)';
+                area.style.border = '1px solid rgba(244,67,54,0.4)';
+                area.innerHTML = '<strong style="color:var(--pico-color-red-500,red);">' + data.recommendation + '</strong>';
+            }
+        }
+    };
+
+    source.onerror = function() {
+        source.close();
+        closeBtn.style.display = '';
+    };
 }
 </script>
+
+<!-- Test Modal -->
+<dialog id="test-modal">
+    <article style="max-width:550px;">
+        <header>
+            <h3 style="margin:0;">Stream-Test</h3>
+        </header>
+        <div id="test-log"></div>
+        <footer style="display:flex;gap:8px;justify-content:flex-end;">
+            <button id="test-apply" class="contrast" style="display:none;">Uebernehmen</button>
+            <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">Schliessen</button>
+        </footer>
+    </article>
+</dialog>
 {% endblock %}

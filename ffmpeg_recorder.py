@@ -20,6 +20,7 @@ import urllib.request
 import urllib.parse
 from config import METADATA_POLL_INTERVAL, USER_AGENTS, DEFAULT_USER_AGENT
 from db import log_event
+from sync import sync_file
 
 
 def _sanitize_filename(name):
@@ -59,11 +60,12 @@ class IcyStreamSplitter:
     On track change: clean split — stop old ffmpeg, start new one for new track.
     """
 
-    def __init__(self, stream_url, ua, dest, stream_id, split_offset=0):
+    def __init__(self, stream_url, ua, dest, stream_id, split_offset=0, stream=None):
         self.stream_url = stream_url
         self.ua = ua
         self.dest = dest
         self.stream_id = stream_id
+        self.stream = stream
         self.split_offset = split_offset  # positive = metadata early (delay split), negative = metadata late (pre-buffer)
         self._current_track = None
         self._current_file = None
@@ -317,6 +319,8 @@ class IcyStreamSplitter:
             target = os.path.join(self.dest, f"{name}_{int(time.time())}{ext}")
         try:
             os.rename(self._current_file, target)
+            if self.stream:
+                sync_file(target, self.stream)
         except OSError:
             pass
 
@@ -441,7 +445,7 @@ class FfmpegRecorder:
             split_offset = self.stream["split_offset"] if "split_offset" in self.stream.keys() else 0
             self._splitter = IcyStreamSplitter(
                 self.stream_url, self.ua, self.dest, self.stream_id,
-                split_offset=split_offset)
+                split_offset=split_offset, stream=self.stream)
             self._splitter.start()
             self.pid = self._splitter.pid
             self.start_time = self._splitter.start_time
@@ -539,6 +543,7 @@ class FfmpegRecorder:
             target = os.path.join(self.dest, f"{name}_{int(time.time())}{ext}")
         try:
             os.rename(self._current_file, target)
+            sync_file(target, self.stream)
         except OSError:
             pass
 

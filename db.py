@@ -46,6 +46,19 @@ def init_db():
             key TEXT PRIMARY KEY,
             value TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS metadata_methods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stream_host TEXT NOT NULL,
+            stream_path TEXT DEFAULT '',
+            method TEXT NOT NULL,
+            method_url TEXT DEFAULT '',
+            has_titles INTEGER DEFAULT 0,
+            sample_title TEXT DEFAULT '',
+            tested_at TEXT DEFAULT (datetime('now')),
+            notes TEXT DEFAULT '',
+            UNIQUE(stream_host, stream_path, method)
+        );
     """)
     # Migrate: add columns if missing
     cursor = conn.execute("PRAGMA table_info(streams)")

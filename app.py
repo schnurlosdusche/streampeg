@@ -147,130 +147,124 @@ def logs():
 
 # --- Stream Test ---
 
-def _detect_stream_metadata(stream_url, ua):
-    """Detect metadata capabilities of a stream.
-
-    Returns dict with:
-      - has_icy_metadata: bool (inline ICY metadata via icy-metaint)
-      - has_shoutcast_api: bool (Shoutcast v2 /currentsong endpoint)
-      - streamripper_ok: bool (streamripper can connect)
-      - metadata_url: str (Shoutcast API URL if available)
-      - current_song: str (current song if available)
-      - recommended_mode: "streamripper" | "ffmpeg_api" | "ffmpeg_icy"
-    """
-    result = {
-        "has_icy_metadata": False,
-        "has_shoutcast_api": False,
-        "streamripper_ok": False,
-        "metadata_url": "",
-        "current_song": "",
-        "recommended_mode": "streamripper",
-    }
-
-    # 1. Check for inline ICY metadata
-    try:
-        req = urllib.request.Request(stream_url, method="GET",
-                                      headers={"User-Agent": ua, "Icy-MetaData": "1"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            icy_metaint = resp.headers.get("icy-metaint")
-            if icy_metaint:
-                result["has_icy_metadata"] = True
-            resp.read(1024)
-    except Exception:
-        pass
-
-    # 2. Check Shoutcast v2 API
-    parsed = urllib.parse.urlparse(stream_url)
-    base = f"{parsed.scheme}://{parsed.hostname}"
-    if parsed.port:
-        base += f":{parsed.port}"
-    currentsong_url = f"{base}/currentsong?sid=1"
-
-    try:
-        req = urllib.request.Request(currentsong_url, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            song = resp.read().decode("utf-8", errors="replace").strip()
-            if song and len(song) < 500:
-                result["has_shoutcast_api"] = True
-                result["metadata_url"] = currentsong_url
-                result["current_song"] = song
-    except Exception:
-        pass
-
-    # 3. Quick streamripper connectivity check
-    import subprocess
-    try:
-        sr_result = subprocess.run(
-            ["streamripper", stream_url, "-d", "/tmp", "-l", "3",
-             "--quiet", "-o", "never", "-u", ua],
-            capture_output=True, text=True, timeout=10,
-        )
-        result["streamripper_ok"] = (sr_result.returncode == 0 or sr_result.returncode == 2)
-    except Exception:
-        pass
-    # Cleanup
-    subprocess.run(["rm", "-rf", "/tmp/sr_test.mp3"], capture_output=True, timeout=3)
-
-    # 4. Determine recommended mode
-    if result["has_icy_metadata"] and result["streamripper_ok"]:
-        result["recommended_mode"] = "streamripper"
-    elif result["has_icy_metadata"] and not result["streamripper_ok"]:
-        result["recommended_mode"] = "ffmpeg_icy"
-    elif result["has_shoutcast_api"]:
-        result["recommended_mode"] = "ffmpeg_api"
-    else:
-        result["recommended_mode"] = "streamripper"
-
-    return result
-
+from flask import Response
 
 @app.route("/api/test-stream")
 @require_auth
 def api_test_stream():
-    """Test if a stream URL is reachable and recordable, detect metadata capabilities."""
+    """Stream-Tester mit Server-Sent Events für Live-Updates."""
     url = request.args.get("url", "")
     if not url:
         return jsonify({"ok": False, "error": "Keine URL angegeben"})
 
-    import subprocess
     ua_key = request.args.get("user_agent", DEFAULT_USER_AGENT)
     ua = USER_AGENTS.get(ua_key, USER_AGENTS[DEFAULT_USER_AGENT])
 
-    try:
-        # First: check if stream is reachable at all
-        req = urllib.request.Request(url, method="GET",
-                                      headers={"User-Agent": ua, "Icy-MetaData": "1"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            icy_name = resp.headers.get("icy-name", "")
-            chunk = resp.read(4096)
-            if len(chunk) == 0 or not ("audio" in content_type or "mpegurl" in content_type
-                                        or "ogg" in content_type or icy_name):
-                return jsonify({"ok": False, "error": f"Kein Audio-Stream ({content_type})"})
+    def generate():
+        import urllib.parse as _up
+        from stream_tester import (_test_http, _test_icy_deep, _test_shoutcast_api,
+                                   _test_icecast_api, _test_tunein,
+                                   _test_streamripper, _test_ffmpeg, _recommend,
+                                   _save_method, _get_known_methods)
 
-        # Stream is reachable — now detect metadata capabilities
-        meta = _detect_stream_metadata(url, ua)
+        def send(data):
+            return f"data: {json.dumps(data)}\n\n"
 
-        message = f"Stream erreichbar: {icy_name or content_type}"
-        if meta["recommended_mode"] == "streamripper":
-            message += " | ICY-Metadaten vorhanden, Streamripper OK"
-        elif meta["recommended_mode"] == "ffmpeg_icy":
-            message += " | ICY-Metadaten vorhanden, aber Streamripper scheitert (HTTPS-Redirect?) - FFmpeg+ICY empfohlen"
-        elif meta["recommended_mode"] == "ffmpeg_api":
-            message += f" | Keine ICY-Metadaten, Shoutcast-API verfuegbar: {meta['current_song']}"
+        parsed = _up.urlparse(url)
+        stream_host = parsed.hostname or ""
+        stream_path = parsed.path or ""
+
+        # Step 1: HTTP
+        yield send({"step": 1, "label": "HTTP-Verbindung testen...", "total": 7})
+        http = _test_http(url, ua, 15)
+        effective_url = http.get("effective_url", url)
+        detail = ""
+        if http.get("redirected"):
+            detail += "Redirect, "
+        if http.get("https"):
+            detail += "HTTPS, "
+        if http.get("content_type"):
+            detail += http["content_type"]
+        yield send({"step": 1, "result": "OK" if http.get("ok") else "Fehler", "detail": detail.strip(", "), "ok": http.get("ok", False)})
+
+        if not http.get("ok"):
+            yield send({"done": True, "recommendation": "FEHLER: Stream nicht erreichbar", "suitable": False})
+            return
+
+        # Step 2: ICY (deep probe)
+        yield send({"step": 2, "label": "ICY-Metadaten (Deep Probe, bis 30s)...", "total": 7})
+        icy = _test_icy_deep(effective_url, ua)
+        if icy.get("title"):
+            detail = f"Title: {icy['title'][:50]}"
+        elif icy.get("has_metaint"):
+            detail = f"{icy.get('blocks_read', 0)} Blöcke in {icy.get('seconds', 0)}s - kein Titel"
         else:
-            message += " | Keine Metadaten erkannt"
+            detail = icy.get("error", "nicht verfügbar")
+        yield send({"step": 2, "result": "OK" if icy.get("title") else ("Kein Titel" if icy.get("has_metaint") else "Fehlt"), "detail": detail, "ok": bool(icy.get("title"))})
+        _save_method(stream_host, stream_path, "icy", effective_url,
+                     has_titles=bool(icy.get("title")), sample_title=icy.get("title", ""))
 
-        return jsonify({
-            "ok": True,
-            "message": message,
-            "content_type": content_type,
-            "icy_name": icy_name,
-            "metadata": meta,
-        })
+        # Step 3: Shoutcast API
+        yield send({"step": 3, "label": "Shoutcast API prüfen...", "total": 7})
+        api_result = _test_shoutcast_api(effective_url, ua)
+        detail = api_result.get("title", "") if api_result.get("ok") else "nicht verfügbar"
+        yield send({"step": 3, "result": "OK" if api_result.get("ok") else "Fehlt", "detail": detail[:60], "ok": api_result.get("ok", False)})
 
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        # Step 4: Icecast API
+        yield send({"step": 4, "label": "Icecast Status-API prüfen...", "total": 7})
+        eff_parsed = _up.urlparse(effective_url)
+        icecast = _test_icecast_api(effective_url, eff_parsed.path, ua)
+        if icecast.get("ok"):
+            detail = f"Title: {icecast.get('title', '')[:50]}"
+        elif icecast.get("mountpoint"):
+            detail = f"Mountpoint '{icecast['mountpoint']}', kein Titel"
+        else:
+            detail = "nicht verfügbar"
+        yield send({"step": 4, "result": "OK" if icecast.get("ok") else "Fehlt", "detail": detail, "ok": icecast.get("ok", False)})
+
+        # Step 5: TuneIn
+        yield send({"step": 5, "label": "TuneIn Now-Playing prüfen...", "total": 7})
+        tunein = _test_tunein(url, http.get("icy_name", ""))
+        if tunein.get("ok"):
+            detail = f"{tunein.get('station_name', '')}: {tunein.get('title', '')[:40]}"
+        elif tunein.get("station_id"):
+            detail = f"Station gefunden, {tunein.get('note', 'kein Titel')}"
+        else:
+            detail = tunein.get("error", "nicht gefunden")
+        yield send({"step": 5, "result": "OK" if tunein.get("ok") else "Fehlt", "detail": detail[:60], "ok": tunein.get("ok", False)})
+
+        # Step 6: Streamripper
+        yield send({"step": 6, "label": "Streamripper testen (10s)...", "total": 7})
+        sr = _test_streamripper(url, ua)
+        detail = f"{sr.get('files_created', 0)} Dateien" if sr.get("ok") else sr.get("error", "fehlgeschlagen")[:60]
+        yield send({"step": 6, "result": "OK" if sr.get("ok") else "Fehler", "detail": detail, "ok": sr.get("ok", False)})
+
+        # Step 7: FFmpeg
+        yield send({"step": 7, "label": "FFmpeg testen (10s)...", "total": 7})
+        ffmpeg = _test_ffmpeg(effective_url, ua)
+        if ffmpeg.get("ok"):
+            detail = f"{round(ffmpeg.get('file_size', 0) / 1024)} KB in 10s"
+        else:
+            detail = ffmpeg.get("error", "fehlgeschlagen")[:60]
+        yield send({"step": 7, "result": "OK" if ffmpeg.get("ok") else "Fehler", "detail": detail, "ok": ffmpeg.get("ok", False)})
+
+        # Recommendation
+        known = _get_known_methods(stream_host)
+        results = {
+            "url": url, "host": stream_host,
+            "tests": {"http": http, "icy": icy, "api": api_result, "icecast": icecast,
+                       "tunein": tunein, "streamripper": sr, "ffmpeg": ffmpeg},
+            "known_methods": known,
+        }
+        rec = _recommend(results)
+
+        if isinstance(rec, str):
+            yield send({"done": True, "recommendation": rec, "suitable": False})
+        else:
+            modes = [{"mode": r["mode"], "score": r["score"], "reason": r["reason"]} for r in rec]
+            yield send({"done": True, "recommendation": modes, "suitable": True, "best_mode": rec[0]["mode"]})
+
+    return Response(generate(), mimetype="text/event-stream")
 
 
 # --- Radio Browser ---

@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 import time
 import glob
 import signal
@@ -7,6 +8,7 @@ from config import RECORDING_BASE, SMB_TARGET, STREAMRIPPER_BIN, USER_AGENTS, DE
 from db import log_event
 from ffmpeg_recorder import FfmpegRecorder
 from youtube_recorder import YouTubeRecorder
+from sync import sync_file
 
 # In-memory process registry: stream_id -> {proc, start_time}
 _processes = {}
@@ -45,7 +47,9 @@ def start_stream(stream):
         start_new_session=True,
     )
 
-    _processes[stream_id] = {"proc": proc, "start_time": time.time(), "mode": "streamripper"}
+    watcher = _FileWatcher(dest, stream)
+    watcher.start()
+    _processes[stream_id] = {"proc": proc, "start_time": time.time(), "mode": "streamripper", "watcher": watcher}
     log_event(stream_id, "start", f"Gestartet (PID {proc.pid})")
     return proc.pid
 
@@ -79,6 +83,9 @@ def stop_stream(stream_id):
                     proc.kill()
                 proc.wait()
 
+    watcher = info.get("watcher")
+    if watcher:
+        watcher.stop()
     del _processes[stream_id]
     log_event(stream_id, "stop", "Gestoppt")
     return True
@@ -264,6 +271,51 @@ class _PidWrapper:
                 return self.returncode
             time.sleep(0.2)
         raise subprocess.TimeoutExpired(cmd="streamripper", timeout=timeout)
+
+
+class _FileWatcher:
+    """Watches a directory for new audio files and syncs them to NAS."""
+
+    def __init__(self, directory, stream, interval=10):
+        self.directory = directory
+        self.stream = stream
+        self.interval = interval
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._known_files = set()
+        # Seed with existing files so we don't sync old ones
+        for ext in ("*.mp3", "*.ogg", "*.aac"):
+            for f in glob.glob(os.path.join(directory, ext)):
+                self._known_files.add(f)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._watch_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _watch_loop(self):
+        while not self._stop_event.is_set():
+            self._stop_event.wait(self.interval)
+            if self._stop_event.is_set():
+                break
+            try:
+                current_files = set()
+                for ext in ("*.mp3", "*.ogg", "*.aac"):
+                    current_files.update(glob.glob(os.path.join(self.directory, ext)))
+
+                new_files = current_files - self._known_files
+                for filepath in new_files:
+                    # Skip files in incomplete/
+                    if "/incomplete/" in filepath:
+                        continue
+                    sync_file(filepath, self.stream)
+                self._known_files = current_files
+            except Exception:
+                pass
 
 
 def _format_uptime(seconds):

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from config import USER_AGENTS, DEFAULT_USER_AGENT, RECORDING_BASE
 from db import log_event
+from sync import sync_file
 
 # Local data directory for YouTube song DBs (not on NAS/SMB)
 YT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -357,6 +358,7 @@ class YouTubeRecorder:
                 log_event(self.stream_id, "download",
                           f"Download OK: {os.path.basename(filepath)} "
                           f"(DB: {self._stats_cache['downloaded']} Songs)")
+                sync_file(filepath, self.stream)
                 return
 
             # Fallback: check for recently created mp3
@@ -377,6 +379,7 @@ class YouTubeRecorder:
                         self._stats_cache = self._song_db.stats()
                         log_event(self.stream_id, "download",
                                   f"Download OK: {f.name}")
+                        sync_file(str(f), self.stream)
                         return
             except Exception:
                 pass
