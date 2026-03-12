@@ -13,6 +13,7 @@ import db
 import process_manager
 import cleanup
 import sync
+import module_manager
 from scheduler import SyncScheduler
 
 app = Flask(__name__)
@@ -35,7 +36,8 @@ def dashboard():
     statuses = {}
     for s in streams:
         statuses[s["id"]] = process_manager.get_status(s)
-    return render_template("dashboard.html", streams=streams, statuses=statuses)
+    return render_template("dashboard.html", streams=streams, statuses=statuses,
+                           module_icons=module_manager.get_module_icons())
 
 
 # --- Stream CRUD ---
@@ -51,7 +53,7 @@ def stream_new():
         if user_agent not in USER_AGENTS:
             user_agent = DEFAULT_USER_AGENT
         record_mode = request.form.get("record_mode", "streamripper")
-        if record_mode not in ("streamripper", "ffmpeg_api", "ffmpeg_icy", "youtube"):
+        if record_mode not in module_manager.get_all_record_modes():
             record_mode = "streamripper"
         metadata_url = request.form.get("metadata_url", "").strip()
         split_offset = int(request.form.get("split_offset", 0))
@@ -66,7 +68,10 @@ def stream_new():
         "url": request.args.get("url", ""),
         "record_mode": request.args.get("record_mode", ""),
     }
-    return render_template("stream_form.html", stream=None, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT, prefill=prefill)
+    return render_template("stream_form.html", stream=None, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT,
+                           prefill=prefill, module_options=module_manager.get_module_form_options(),
+                           module_hints=module_manager.get_module_form_hints(),
+                           module_hide_fields=module_manager.get_module_hide_fields())
 
 
 @app.route("/stream/<int:stream_id>/edit", methods=["GET", "POST"])
@@ -83,7 +88,7 @@ def stream_edit(stream_id):
         if user_agent not in USER_AGENTS:
             user_agent = DEFAULT_USER_AGENT
         record_mode = request.form.get("record_mode", "streamripper")
-        if record_mode not in ("streamripper", "ffmpeg_api", "ffmpeg_icy", "youtube"):
+        if record_mode not in module_manager.get_all_record_modes():
             record_mode = "streamripper"
         metadata_url = request.form.get("metadata_url", "").strip()
         split_offset = int(request.form.get("split_offset", 0))
@@ -95,7 +100,10 @@ def stream_edit(stream_id):
         db.update_stream(stream_id, name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
                          trim_start, trim_end, skip_words)
         return redirect(url_for("dashboard"))
-    return render_template("stream_form.html", stream=stream, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT)
+    return render_template("stream_form.html", stream=stream, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT,
+                           module_options=module_manager.get_module_form_options(),
+                           module_hints=module_manager.get_module_form_hints(),
+                           module_hide_fields=module_manager.get_module_hide_fields())
 
 
 @app.route("/stream/<int:stream_id>/delete", methods=["POST"])
@@ -379,6 +387,26 @@ def api_browse_search():
         return jsonify({"error": str(e)}), 502
 
 
+# --- Settings ---
+
+@app.route("/settings")
+def settings():
+    all_modules = module_manager.get_all_modules()
+    enabled = {name: module_manager._is_enabled(name) for name in all_modules}
+    return render_template("settings.html", modules=all_modules, enabled=enabled,
+                           builtin_modes=sorted(module_manager.BUILTIN_MODES))
+
+
+@app.route("/settings/module/<name>/toggle", methods=["POST"])
+def settings_module_toggle(name):
+    all_modules = module_manager.get_all_modules()
+    if name not in all_modules:
+        return jsonify({"ok": False, "error": "Module not found"}), 404
+    currently_enabled = module_manager._is_enabled(name)
+    module_manager.set_module_enabled(name, not currently_enabled)
+    return jsonify({"ok": True, "enabled": not currently_enabled})
+
+
 # --- API ---
 
 @app.route("/api/status")
@@ -482,6 +510,7 @@ def _shutdown():
 
 if __name__ == "__main__":
     db.init_db()
+    module_manager.discover_modules()
 
     # Register shutdown handler
     atexit.register(_shutdown)

@@ -8,7 +8,7 @@ import urllib.request
 from config import RECORDING_BASE, SMB_TARGET, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 from db import log_event, get_track_stats
 from ffmpeg_recorder import FfmpegRecorder, _trim_audio_file, _title_matches_skip_words
-from youtube_recorder import YouTubeRecorder
+from module_manager import get_recorder_class
 from sync import sync_file
 
 # In-memory process registry: stream_id -> {proc, start_time}
@@ -54,12 +54,13 @@ def start_stream(stream):
 
     record_mode = stream["record_mode"] if "record_mode" in stream.keys() else "streamripper"
 
-    if record_mode == "youtube":
-        recorder = YouTubeRecorder(stream, dest)
+    # Check if a module provides this record mode
+    recorder_cls = get_recorder_class(record_mode)
+    if recorder_cls:
+        recorder = recorder_cls(stream, dest)
         recorder.start()
-        _processes[stream_id] = {"proc": recorder, "start_time": time.time(), "mode": "youtube"}
+        _processes[stream_id] = {"proc": recorder, "start_time": time.time(), "mode": record_mode}
         return recorder.pid
-
 
     # Check stream bitrate before starting streamripper/ffmpeg recorders
     ua_key = stream["user_agent"] if "user_agent" in stream.keys() else DEFAULT_USER_AGENT
@@ -99,7 +100,7 @@ def stop_stream(stream_id):
     proc = info["proc"]
     mode = info.get("mode", "streamripper")
 
-    if mode in ("ffmpeg_api", "ffmpeg_icy", "youtube"):
+    if hasattr(proc, 'stop'):
         proc.stop()
     else:
         pid = proc.pid
@@ -197,16 +198,12 @@ def get_status(stream):
         pid = info["proc"].pid
         uptime = int(time.time() - info["start_time"])
 
-    # For ffmpeg/youtube modes, get current track from the recorder (not from filesystem)
-    if info and info.get("mode") in ("ffmpeg_api", "ffmpeg_icy", "youtube") and hasattr(info["proc"], "get_current_track"):
+    # For recorder objects (ffmpeg, module-provided), get status from the recorder
+    if info and hasattr(info["proc"], "get_current_track"):
         current_track = info["proc"].get_current_track()
         total_count, total_size = _get_cached_file_counts(stream_id, dest, nas_dest)
-        bitrate = None
-        if info.get("mode") != "youtube" and hasattr(info["proc"], "get_bitrate"):
-            bitrate = info["proc"].get_bitrate()
-        rec_state = None
-        if hasattr(info["proc"], "get_state"):
-            rec_state = info["proc"].get_state()
+        bitrate = info["proc"].get_bitrate() if hasattr(info["proc"], "get_bitrate") else None
+        rec_state = info["proc"].get_state() if hasattr(info["proc"], "get_state") else None
         track_stats = get_track_stats(stream_id)
         result = {
             "running": running,
@@ -220,7 +217,7 @@ def get_status(stream):
             "rec_state": rec_state,
             "rec_pct": track_stats["rec_pct"],
         }
-        if info.get("mode") == "youtube" and hasattr(info["proc"], "get_stats"):
+        if hasattr(info["proc"], "get_stats"):
             result["yt_stats"] = info["proc"].get_stats()
         return result
 

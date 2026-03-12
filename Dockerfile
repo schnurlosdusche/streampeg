@@ -9,9 +9,12 @@ RUN apt-get update && \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# yt-dlp (latest binary, updates often)
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
+# yt-dlp: only needed if YouTube module is installed
+ARG INSTALL_YTDLP=true
+RUN if [ "$INSTALL_YTDLP" = "true" ]; then \
+        curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+        chmod a+rx /usr/local/bin/yt-dlp; \
+    fi
 
 WORKDIR /app
 
@@ -21,6 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 COPY templates/ ./templates/
 COPY static/ ./static/
+COPY modules/ ./modules/
 
 RUN mkdir -p /recording /data
 

@@ -23,7 +23,9 @@ from db import log_event
 from sync import sync_file
 
 # Local data directory for YouTube song DBs (not on NAS/SMB)
-YT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# Use project root's data/ directory (parent of modules/)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+YT_DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
 os.makedirs(YT_DATA_DIR, exist_ok=True)
 
 # yt-dlp binary — use full path since systemd may not have ~/.local/bin in PATH
@@ -508,3 +510,39 @@ class YouTubeRecorder:
         # All queries failed — no DB entry, will retry next time the song plays
         log_event(self.stream_id, "download_fail",
                   f"Nicht gefunden (kein DB-Eintrag): {artist} - {title}")
+
+
+def cleanup_youtube_db(stream, dest, nas_dest):
+    """Cleanup missing files from YouTube song DB. Called by scheduler."""
+    db_name = f"yt_songs_{stream['dest_subdir']}.db"
+    db_path = os.path.join(YT_DATA_DIR, db_name)
+    if os.path.exists(db_path):
+        song_db = YouTubeSongDB(db_path)
+        removed = song_db.cleanup_missing(dest, nas_dest)
+        if removed:
+            from db import log_event as _log
+            _log(stream["id"], "cleanup",
+                 f"DB bereinigt: {removed} fehlende Dateien entfernt")
+
+
+# --- Module registration ---
+
+MODULE_INFO = {
+    "name": "youtube",
+    "label": "YouTube-Download",
+    "description": "ICY-Metadaten als Trigger, Songs von YouTube laden (yt-dlp erforderlich)",
+    "record_modes": ["youtube"],
+    "recorder_class": YouTubeRecorder,
+    "icon_html": '<svg title="YouTube-Download" width="18" height="13" viewBox="0 0 24 17" style="vertical-align:middle;">'
+                 '<path d="M23.5 2.5A3 3 0 0 0 21.4.4C19.5 0 12 0 12 0S4.5 0 2.6.4A3 3 0 0 0 .5 2.5 31.5 31.5 0 0 0 0 8.5a31.5 31.5 0 0 0 .5 6A3 3 0 0 0 2.6 16.6C4.5 17 12 17 12 17s7.5 0 9.4-.4a3 3 0 0 0 2.1-2.1 31.5 31.5 0 0 0 .5-6 31.5 31.5 0 0 0-.5-6z" fill="#FF0000"/>'
+                 '<path d="M9.6 12.2l6.3-3.7-6.3-3.7z" fill="#fff"/></svg>',
+    "form_option": {
+        "value": "youtube",
+        "label": "YouTube-Download (ICY-Metadaten als Trigger)",
+    },
+    "form_hints": {
+        "youtube": "ICY-Metadaten werden als Trigger genutzt. Songs werden von YouTube geladen (yt-dlp).",
+    },
+    "hide_fields": ["offset-group", "trim-group"],
+    "cleanup_fn": cleanup_youtube_db,
+}

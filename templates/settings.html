@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Settings - Streampeg{% endblock %}
+{% block content %}
+<h2>Settings</h2>
+
+<h4>Aufnahmemodi</h4>
+
+<table>
+    <thead>
+        <tr>
+            <th>Modus</th>
+            <th>Typ</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for mode in builtin_modes %}
+        <tr>
+            <td>
+                {% if mode == 'streamripper' %}
+                    <span style="font-size:15px;">&#127911;</span> Streamripper (ICY-Metadaten)
+                {% elif mode == 'ffmpeg_icy' %}
+                    <span style="font-size:15px;">&#127897;&#65039;</span> FFmpeg + ICY-Metadaten
+                {% elif mode == 'ffmpeg_api' %}
+                    <span style="font-size:15px;">&#128225;</span> FFmpeg + Shoutcast-API
+                {% else %}
+                    {{ mode }}
+                {% endif %}
+            </td>
+            <td><small>Built-in</small></td>
+            <td><span style="color:var(--pico-color-green-500,green);">Aktiv</span></td>
+        </tr>
+        {% endfor %}
+        {% for name, mod in modules.items() %}
+        <tr>
+            <td>
+                {% if mod.icon_html %}{{ mod.icon_html|safe }}{% endif %}
+                <strong>{{ mod.label }}</strong>
+                {% if mod.description %}<br><small style="color:var(--pico-muted-color,#888);">{{ mod.description }}</small>{% endif %}
+            </td>
+            <td><small>Modul</small></td>
+            <td>
+                <button class="outline btn-icon module-toggle" data-module="{{ name }}"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if enabled[name] else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ "Aktiviert" if enabled[name] else "Deaktiviert" }}
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+        {% if not modules %}
+        <tr>
+            <td colspan="3"><small style="color:var(--pico-muted-color,#888);">Keine Module installiert. Module koennen im <code>modules/</code> Verzeichnis abgelegt werden.</small></td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<small style="color:var(--pico-muted-color,#888);">Nach Installation oder Entfernung von Modulen ist ein Neustart erforderlich.</small>
+
+<script>
+document.querySelectorAll('.module-toggle').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var name = this.dataset.module;
+        var self = this;
+        fetch('/settings/module/' + name + '/toggle', {method: 'POST', credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.ok) {
+                    if (data.enabled) {
+                        self.textContent = 'Aktiviert';
+                        self.style.color = 'var(--pico-color-green-500,green)';
+                        self.style.borderColor = 'var(--pico-color-green-500,green)';
+                    } else {
+                        self.textContent = 'Deaktiviert';
+                        self.style.color = 'var(--pico-color-red-500,red)';
+                        self.style.borderColor = 'var(--pico-color-red-500,red)';
+                    }
+                }
+            });
+    });
+});
+</script>
+{% endblock %}

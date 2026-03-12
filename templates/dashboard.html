@@ -28,8 +28,8 @@
                 <a href="{{ url_for('stream_detail', stream_id=stream.id) }}">{{ stream.name }}</a>
             </td>
             <td class="mode-cell" style="text-align:center;">
-                {% if stream.record_mode == 'youtube' %}
-                    <svg title="YouTube-Download" width="18" height="13" viewBox="0 0 24 17" style="vertical-align:middle;"><path d="M23.5 2.5A3 3 0 0 0 21.4.4C19.5 0 12 0 12 0S4.5 0 2.6.4A3 3 0 0 0 .5 2.5 31.5 31.5 0 0 0 0 8.5a31.5 31.5 0 0 0 .5 6A3 3 0 0 0 2.6 16.6C4.5 17 12 17 12 17s7.5 0 9.4-.4a3 3 0 0 0 2.1-2.1 31.5 31.5 0 0 0 .5-6 31.5 31.5 0 0 0-.5-6z" fill="#FF0000"/><path d="M9.6 12.2l6.3-3.7-6.3-3.7z" fill="#fff"/></svg>
+                {% if stream.record_mode in module_icons %}
+                    {{ module_icons[stream.record_mode]|safe }}
                 {% elif stream.record_mode == 'ffmpeg_icy' %}
                     <span title="FFmpeg + ICY" style="font-size:15px;">&#127897;&#65039;</span>
                 {% elif stream.record_mode == 'ffmpeg_api' %}

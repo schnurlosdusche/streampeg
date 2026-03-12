@@ -40,7 +40,9 @@
         <option value="streamripper" {{ 'selected' if cur_mode == 'streamripper' }}>Streamripper (ICY-Metadaten)</option>
         <option value="ffmpeg_icy" {{ 'selected' if cur_mode == 'ffmpeg_icy' }}>FFmpeg + ICY-Metadaten (bei HTTPS-Redirects)</option>
         <option value="ffmpeg_api" {{ 'selected' if cur_mode == 'ffmpeg_api' }}>FFmpeg + Shoutcast-API (kein ICY)</option>
-        <option value="youtube" {{ 'selected' if cur_mode == 'youtube' }}>YouTube-Download (ICY-Metadaten als Trigger)</option>
+        {% for opt in module_options %}
+        <option value="{{ opt.value }}" {{ 'selected' if cur_mode == opt.value }}>{{ opt.label }}</option>
+        {% endfor %}
     </select>
     <small id="mode-hint">Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen</small>
 
@@ -126,33 +128,44 @@
 {% endif %}
 
 <script>
+var MODULE_HIDE_FIELDS = {{ module_hide_fields|default({})|tojson }};
+var MODULE_HINTS = {{ module_hints|default({})|tojson }};
+
 function toggleMetadataUrl() {
     var mode = document.getElementById('record_mode').value;
     document.getElementById('metadata-url-group').style.display = mode === 'ffmpeg_api' ? '' : 'none';
-    // Hide offset and min_size for youtube mode (not relevant)
-    var isYoutube = mode === 'youtube';
-    document.getElementById('offset-group').style.display = isYoutube ? 'none' : '';
-    document.getElementById('trim-group').style.display = isYoutube ? 'none' : '';
-    if (isYoutube) {
-        document.getElementById('split_offset').value = 0;
+
+    // Hide fields specified by module
+    var hideFields = MODULE_HIDE_FIELDS[mode] || [];
+    var shouldHideOffset = hideFields.indexOf('offset-group') >= 0;
+    var shouldHideTrim = hideFields.indexOf('trim-group') >= 0;
+    document.getElementById('offset-group').style.display = shouldHideOffset ? 'none' : '';
+    document.getElementById('trim-group').style.display = shouldHideTrim ? 'none' : '';
+    if (shouldHideOffset) document.getElementById('split_offset').value = 0;
+    if (shouldHideTrim) {
         document.getElementById('trim_start').value = 0;
         document.getElementById('trim_end').value = 0;
     }
     updateViz();
+
     var hint = document.getElementById('offset-mode-hint');
     if (mode === 'streamripper') {
         hint.textContent = 'Hinweis: Streamripper verwendet eigene Split-Logik. Offset wird ignoriert.';
     } else if (mode === 'ffmpeg_icy') {
         hint.textContent = '';
-    } else if (mode === 'youtube') {
-        hint.textContent = '';
-    } else {
+    } else if (mode === 'ffmpeg_api') {
         hint.textContent = 'Nur positive Werte (Metadaten zu frueh) werden im API-Modus unterstuetzt.';
+    } else {
+        hint.textContent = '';
     }
+
     var modeHint = document.getElementById('mode-hint');
-    if (mode === 'youtube') {
-        modeHint.innerHTML = 'ICY-Metadaten werden als Trigger genutzt. Songs werden von YouTube geladen (yt-dlp).';
+    if (MODULE_HINTS[mode]) {
+        modeHint.innerHTML = MODULE_HINTS[mode];
         modeHint.style.color = 'var(--pico-color-green-500, green)';
+    } else {
+        modeHint.textContent = 'Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen';
+        modeHint.style.color = '';
     }
 }
 

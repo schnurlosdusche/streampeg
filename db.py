@@ -241,3 +241,13 @@ def get_setting(key):
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     conn.close()
     return row["value"] if row else None
+
+
+def set_setting(key, value):
+    conn = get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (key, str(value)),
+    )
+    conn.commit()
+    conn.close()

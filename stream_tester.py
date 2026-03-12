@@ -548,8 +548,9 @@ def _recommend(results):
             "reason": f"FFmpeg + {meta_src} API: schneidet Stream anhand API-Titel",
         })
 
-    # Priority 4: YouTube (last resort, but highest quality per song)
-    if has_icy_titles or has_tunein_titles:
+    # Priority 4: YouTube (last resort, but highest quality per song) — only if module installed
+    from module_manager import is_mode_available
+    if is_mode_available("youtube") and (has_icy_titles or has_tunein_titles):
         title_src = "ICY" if has_icy_titles else "TuneIn"
         reasons.append({
             "mode": "youtube",
