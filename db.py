@@ -79,6 +79,12 @@ def init_db():
     migrate_split_offset = "split_offset" not in columns
     if migrate_split_offset:
         conn.execute("ALTER TABLE streams ADD COLUMN split_offset INTEGER DEFAULT 0")
+    if "trim_start" not in columns:
+        conn.execute("ALTER TABLE streams ADD COLUMN trim_start INTEGER DEFAULT 0")
+    if "trim_end" not in columns:
+        conn.execute("ALTER TABLE streams ADD COLUMN trim_end INTEGER DEFAULT 0")
+    if "skip_words" not in columns:
+        conn.execute("ALTER TABLE streams ADD COLUMN skip_words TEXT DEFAULT ''")
     conn.commit()
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
@@ -117,12 +123,13 @@ def get_stream(stream_id):
 
 
 def create_stream(name, url, dest_subdir, min_size_mb=2, user_agent=DEFAULT_USER_AGENT,
-                   record_mode="streamripper", metadata_url="", split_offset=0):
+                   record_mode="streamripper", metadata_url="", split_offset=0,
+                   trim_start=0, trim_end=0, skip_words=""):
     conn = get_db()
     conn.execute(
-        "INSERT INTO streams (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset),
+        "INSERT INTO streams (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words),
     )
     conn.commit()
     stream_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -131,11 +138,12 @@ def create_stream(name, url, dest_subdir, min_size_mb=2, user_agent=DEFAULT_USER
 
 
 def update_stream(stream_id, name, url, dest_subdir, min_size_mb=2, user_agent=DEFAULT_USER_AGENT,
-                  record_mode="streamripper", metadata_url="", split_offset=0):
+                  record_mode="streamripper", metadata_url="", split_offset=0,
+                  trim_start=0, trim_end=0, skip_words=""):
     conn = get_db()
     conn.execute(
-        "UPDATE streams SET name=?, url=?, dest_subdir=?, min_size_mb=?, user_agent=?, record_mode=?, metadata_url=?, split_offset=? WHERE id=?",
-        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, stream_id),
+        "UPDATE streams SET name=?, url=?, dest_subdir=?, min_size_mb=?, user_agent=?, record_mode=?, metadata_url=?, split_offset=?, trim_start=?, trim_end=?, skip_words=? WHERE id=?",
+        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words, stream_id),
     )
     conn.commit()
     conn.close()
@@ -204,6 +212,28 @@ def get_events(stream_id=None, limit=50):
         ).fetchall()
     conn.close()
     return rows
+
+
+def get_track_stats(stream_id):
+    """Return recorded/skipped counts from events table."""
+    conn = get_db()
+    row = conn.execute(
+        """SELECT
+            COUNT(CASE WHEN message LIKE 'Neuer Track:%' OR message LIKE 'Neu:%' THEN 1 END) as recorded,
+            COUNT(CASE WHEN message LIKE 'Übersprungen%' OR message LIKE 'Bekannt%' THEN 1 END) as skipped
+        FROM events
+        WHERE stream_id = ? AND event_type = 'track'""",
+        (stream_id,),
+    ).fetchone()
+    conn.close()
+    recorded = row["recorded"]
+    skipped = row["skipped"]
+    total = recorded + skipped
+    return {
+        "recorded": recorded,
+        "skipped": skipped,
+        "rec_pct": round(recorded / total * 100) if total > 0 else 0,
+    }
 
 
 def get_setting(key):

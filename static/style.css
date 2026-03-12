@@ -12,14 +12,27 @@
 }
 
 .status-running {
+    color: #ff9800;
+    font-weight: bold;
+}
+
+.status-recording {
     color: #4caf50;
-    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+.status-waiting {
+    color: #ff9800;
+    font-weight: bold;
+}
+
+.status-skipping {
+    color: #ff9800;
     font-weight: bold;
 }
 
 .status-stopped {
-    color: #f44336;
-    font-size: 0.8rem;
+    color: #9e9e9e;
     font-weight: bold;
 }
 
@@ -36,7 +49,7 @@
 
 .btn-icon {
     padding: 0.15rem 0.35rem !important;
-    font-size: 0.9rem !important;
+    font-size: 0.85rem !important;
     margin-bottom: 0 !important;
     line-height: 1 !important;
     min-width: 0 !important;
@@ -65,6 +78,48 @@
 .track-cell { word-break: break-word; }
 .status-icon { text-align: center; width: 2rem; }
 
-table { font-size: 0.9rem; }
-
 .secondary { color: var(--pico-muted-color); }
+
+/* Dashboard table: fixed column widths, smaller font, full width with margins */
+#streams-table {
+    font-size: 0.78rem;
+    table-layout: fixed;
+    width: calc(100vw - 200px);
+    margin-left: calc((100% - (100vw - 200px)) / 2);
+}
+#streams-table th,
+#streams-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0.35rem 0.5rem;
+}
+#streams-table th:nth-child(1),
+#streams-table td:nth-child(1) { width: 15%; }     /* Name */
+#streams-table th:nth-child(2),
+#streams-table td:nth-child(2) { width: 5%; text-align: center; }  /* Modus */
+#streams-table th:nth-child(3),
+#streams-table td:nth-child(3) { width: 8%; }       /* Status */
+#streams-table th:nth-child(4),
+#streams-table td:nth-child(4) { width: auto; overflow: visible; white-space: normal; word-break: break-word; }  /* Track */
+#streams-table th:nth-child(5),
+#streams-table td:nth-child(5) { width: 8%; text-align: right; }  /* Dateien */
+#streams-table th:nth-child(6),
+#streams-table td:nth-child(6) { width: 80px; text-align: right; }  /* % rec */
+#streams-table th:nth-child(7),
+#streams-table td:nth-child(7) { width: 180px; white-space: nowrap; }  /* Actions */
+
+button.btn-listen {
+    --pico-color: #888 !important;
+    --pico-border-color: #555 !important;
+    margin-right: 4px;
+}
+button.btn-listen.listening,
+button.btn-listen.listening:hover,
+button.btn-listen.listening:focus {
+    --pico-color: #4caf50 !important;
+    --pico-border-color: #4caf50 !important;
+    color: #4caf50 !important;
+    border-color: #4caf50 !important;
+}
+button.btn-listen .listen-waves { display: none; }
+button.btn-listen.listening .listen-waves { display: inline; }

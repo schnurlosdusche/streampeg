@@ -9,13 +9,16 @@ RUN apt-get update && \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
+# yt-dlp (latest binary, updates often)
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
+
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py config.py db.py auth.py process_manager.py sync.py \
-     scheduler.py ffmpeg_recorder.py cleanup.py ./
+COPY *.py ./
 COPY templates/ ./templates/
 COPY static/ ./static/
 

@@ -18,7 +18,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from config import USER_AGENTS, DEFAULT_USER_AGENT, RECORDING_BASE
+from config import USER_AGENTS, DEFAULT_USER_AGENT, RECORDING_BASE, MIN_BITRATE
 from db import log_event
 from sync import sync_file
 
@@ -39,8 +39,22 @@ YT_DLP = next((p for p in _yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
 YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 
+def _extract_stream_title(meta):
+    """Extract StreamTitle from ICY metadata, handling apostrophes in titles."""
+    idx = meta.find("StreamTitle='")
+    if idx < 0:
+        return None
+    start = idx + len("StreamTitle='")
+    end = meta.find("';", start)
+    if end < 0:
+        end = meta.rfind("'", start)
+    if end <= start:
+        return None
+    return meta[start:end].strip() or None
+
+
 def _sanitize_filename(name):
-    s = re.sub(r'[<>:"/\\|?*]', '_', name).strip()
+    s = re.sub(r'[<>:"/\\|?*\'\u2019]', '_', name).strip()
     s = re.sub(r'[_\s]+', ' ', s)
     return s.strip('. ')[:200] or "unknown"
 
@@ -67,6 +81,22 @@ def _parse_icy_title(title):
     if len(parts) == 2:
         return parts[0].strip(), parts[1].strip()
     return "", title.strip()
+
+
+def _get_file_bitrate(filepath):
+    """Get audio bitrate of a file in kbps using ffprobe. Returns None on error."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "a:0",
+             "-show_entries", "stream=bit_rate", "-of", "csv=p=0", filepath],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            bps = int(result.stdout.strip())
+            return bps // 1000  # Convert to kbps
+    except Exception:
+        pass
+    return None
 
 
 class YouTubeSongDB:
@@ -127,7 +157,36 @@ class YouTubeSongDB:
             not_found = conn.execute(
                 "SELECT COUNT(*) FROM yt_songs WHERE status = 'not_found'"
             ).fetchone()[0]
-            return {"total": total, "downloaded": downloaded, "not_found": not_found}
+            total_plays = conn.execute(
+                "SELECT COALESCE(SUM(play_count), 0) FROM yt_songs"
+            ).fetchone()[0]
+            rec_pct = round(downloaded / total_plays * 100) if total_plays > 0 else 0
+            return {"total": total, "downloaded": downloaded, "not_found": not_found,
+                    "total_plays": total_plays, "rec_pct": rec_pct}
+
+    def cleanup_missing(self, dest_dir, nas_dir=None):
+        """Remove DB entries where file no longer exists on disk or NAS.
+        Returns number of entries removed."""
+        removed = 0
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT id, filename, filepath FROM yt_songs WHERE status = 'downloaded' AND filename != ''"
+            ).fetchall()
+            for row_id, filename, filepath in rows:
+                exists = False
+                # Check original filepath
+                if filepath and os.path.exists(filepath):
+                    exists = True
+                # Check dest dir
+                if not exists and filename and os.path.exists(os.path.join(dest_dir, filename)):
+                    exists = True
+                # Check NAS dir
+                if not exists and nas_dir and filename and os.path.exists(os.path.join(nas_dir, filename)):
+                    exists = True
+                if not exists:
+                    conn.execute("DELETE FROM yt_songs WHERE id = ?", (row_id,))
+                    removed += 1
+        return removed
 
 
 class YouTubeRecorder:
@@ -148,6 +207,8 @@ class YouTubeRecorder:
         db_name = f"yt_songs_{stream['dest_subdir']}.db"
         self._song_db = YouTubeSongDB(os.path.join(YT_DATA_DIR, db_name))
         self._current_track = None
+        self._state = "waiting"  # "waiting", "recording", "skipping"
+        self._waiting_for_new_track = True
         self._stop_event = threading.Event()
         self._thread = None
         self._download_thread = None
@@ -180,6 +241,9 @@ class YouTubeRecorder:
     def get_current_track(self):
         return self._current_track
 
+    def get_state(self):
+        return self._state
+
     def get_stats(self):
         return self._stats_cache
 
@@ -208,6 +272,7 @@ class YouTubeRecorder:
             return
 
         metaint = int(metaint_str)
+
         log_event(self.stream_id, "start", f"ICY-Stream verbunden (metaint={metaint})")
 
         current_icy = None
@@ -228,20 +293,25 @@ class YouTubeRecorder:
                 if not meta_raw:
                     break
                 meta = meta_raw.decode("utf-8", errors="replace").rstrip("\x00")
-                m = re.search(r"StreamTitle='([^']*)'", meta)
-                if m:
-                    title = m.group(1).strip()
-                    if title and title != current_icy:
+                title = _extract_stream_title(meta)
+                if title and title != current_icy:
                         current_icy = title
                         self._handle_new_title(title)
 
         resp.close()
 
     def _handle_new_title(self, icy_title):
-        # Skip station idents
+        # Skip station idents + user-configured skip words
         lower = icy_title.lower()
-        skip_words = ["bigfm", "big fm", "jingle", "werbung", "commercial"]
+        skip_words = ["jingle", "werbung", "commercial"]
+        user_skip = self.stream.get("skip_words", "") if hasattr(self.stream, "get") else (self.stream["skip_words"] if "skip_words" in self.stream.keys() else "")
+        if user_skip:
+            skip_words += [w.strip().lower() for w in user_skip.split(";") if w.strip()]
         if any(w in lower for w in skip_words):
+            self._current_track = icy_title
+            self._state = "skipping"
+            log_event(self.stream_id, "track",
+                      f"Übersprungen (Skip-Wort): {icy_title}")
             return
 
         artist_raw, title_raw = _parse_icy_title(icy_title)
@@ -252,13 +322,27 @@ class YouTubeRecorder:
         title = _title_case(title_raw)
         self._current_track = f"{artist} - {title}"
 
+        # First track after start — skip partial track
+        if self._waiting_for_new_track:
+            self._waiting_for_new_track = False
+            # Still check if known to set correct state
+            if self._song_db.is_known(artist_raw, title_raw):
+                self._state = "skipping"
+                log_event(self.stream_id, "track",
+                          f"Bekannt (Start übersprungen): {artist} - {title}")
+                return
+            # First real track after start — proceed to download
+            self._state = "recording"
+
         # Already known?
-        if self._song_db.is_known(artist_raw, title_raw):
+        elif self._song_db.is_known(artist_raw, title_raw):
+            self._state = "skipping"
             log_event(self.stream_id, "track",
                       f"Bekannt: {artist} - {title}")
             return
 
         # Download in background thread (don't block metadata reading)
+        self._state = "recording"
         log_event(self.stream_id, "track",
                   f"Neu: {artist} - {title} -> YouTube-Download")
 
@@ -267,7 +351,7 @@ class YouTubeRecorder:
             # Queue would be better, but for simplicity just skip
             log_event(self.stream_id, "track",
                       f"Download laeuft noch, ueberspringe: {artist} - {title}")
-            self._song_db.add_song(artist_raw, title_raw, icy_title, status="skipped")
+            # No DB entry — will retry next time the song plays
             return
 
         self._download_thread = threading.Thread(
@@ -307,6 +391,7 @@ class YouTubeRecorder:
                     "--extract-audio",
                     "--audio-format", "mp3",
                     "--audio-quality", "0",
+                    "--format", "bestaudio",
                     "--embed-thumbnail",
                     "--no-playlist",
                     "--max-downloads", "1",
@@ -339,15 +424,38 @@ class YouTubeRecorder:
                     continue
                 break
 
-            # Parse filepath from output
+            # Parse filepath from output — only accept MP3
             filepath = None
             for line in result.stdout.strip().split("\n"):
                 line = line.strip()
-                if line and (line.endswith(".mp3") or line.endswith(".m4a")):
+                if line and line.endswith(".mp3"):
                     filepath = line
                     break
 
+            # Clean up any non-mp3 files that yt-dlp may have created
+            if not filepath:
+                try:
+                    for ext in ("*.m4a", "*.webm", "*.mp4", "*.ogg", "*.opus", "*.wav"):
+                        for f in Path(self.dest).glob(ext):
+                            if time.time() - f.stat().st_mtime < 60:
+                                f.unlink()
+                except Exception:
+                    pass
+
             if filepath and os.path.exists(filepath):
+                # Check bitrate — reject files below minimum
+                file_br = _get_file_bitrate(filepath)
+                if file_br is not None and file_br < MIN_BITRATE:
+                    log_event(self.stream_id, "download_fail",
+                              f"Bitrate zu niedrig ({file_br} kbps < {MIN_BITRATE} kbps), "
+                              f"gelöscht: {os.path.basename(filepath)}")
+                    try:
+                        os.remove(filepath)
+                    except OSError:
+                        pass
+                    # No DB entry — will retry next time
+                    return
+
                 self._song_db.add_song(
                     artist_raw, title_raw, icy_title,
                     filename=os.path.basename(filepath),
@@ -371,6 +479,19 @@ class YouTubeRecorder:
                 now = time.time()
                 for f in recent:
                     if now - f.stat().st_mtime < 60:
+                        # Check bitrate — reject files below minimum
+                        file_br = _get_file_bitrate(str(f))
+                        if file_br is not None and file_br < MIN_BITRATE:
+                            log_event(self.stream_id, "download_fail",
+                                      f"Bitrate zu niedrig ({file_br} kbps < {MIN_BITRATE} kbps), "
+                                      f"gelöscht: {f.name}")
+                            try:
+                                f.unlink()
+                            except OSError:
+                                pass
+                            # No DB entry — will retry next time
+                            return
+
                         self._song_db.add_song(
                             artist_raw, title_raw, icy_title,
                             filename=f.name, filepath=str(f),
@@ -384,8 +505,6 @@ class YouTubeRecorder:
             except Exception:
                 pass
 
-        # All queries failed
-        self._song_db.add_song(artist_raw, title_raw, icy_title, status="not_found")
-        self._stats_cache = self._song_db.stats()
+        # All queries failed — no DB entry, will retry next time the song plays
         log_event(self.stream_id, "download_fail",
-                  f"Nicht gefunden: {artist} - {title}")
+                  f"Nicht gefunden (kein DB-Eintrag): {artist} - {title}")

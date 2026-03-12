@@ -1,3 +1,5 @@
+## Unraid-spezifische Konfiguration
+## Nutzung: docker compose -f docker-compose.unraid.yml up -d
 services:
   streampeg:
     build: .
@@ -11,9 +13,9 @@ services:
       - SR_UI_DB_PATH=/data/streampeg.db
       - RUNNING_IN_DOCKER=1
     volumes:
-      - ./data:/data                          # DB + persistent state
-      - /recording:/recording                 # temp recording dir
-      - /mnt/unraid-streams:/mnt/unraid-streams:rshared  # NAS target
+      - /mnt/user/appdata/streampeg:/data           # DB auf Unraid appdata
+      - /tmp/streampeg-recording:/recording          # temp Aufnahmen
+      - /mnt/user/streams:/mnt/unraid-streams        # Ziel-Share fuer Songs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s

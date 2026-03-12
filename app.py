@@ -1,16 +1,18 @@
 import os
 import re
 import shutil
+import time
+import atexit
+import signal
 import urllib.request
 import urllib.parse
 import json
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from config import HOST, PORT, SECRET_KEY, RECORDING_BASE, SMB_TARGET, USER_AGENTS, DEFAULT_USER_AGENT
+from config import HOST, PORT, SECRET_KEY, RECORDING_BASE, SMB_TARGET, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 import db
 import process_manager
 import cleanup
 import sync
-from auth import require_auth
 from scheduler import SyncScheduler
 
 app = Flask(__name__)
@@ -28,7 +30,6 @@ def _sanitize_subdir(name):
 # --- Dashboard ---
 
 @app.route("/")
-@require_auth
 def dashboard():
     streams = db.get_all_streams()
     statuses = {}
@@ -40,7 +41,6 @@ def dashboard():
 # --- Stream CRUD ---
 
 @app.route("/stream/new", methods=["GET", "POST"])
-@require_auth
 def stream_new():
     if request.method == "POST":
         name = request.form["name"].strip()
@@ -55,13 +55,21 @@ def stream_new():
             record_mode = "streamripper"
         metadata_url = request.form.get("metadata_url", "").strip()
         split_offset = int(request.form.get("split_offset", 0))
-        db.create_stream(name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset)
+        trim_start = int(request.form.get("trim_start", 0))
+        trim_end = int(request.form.get("trim_end", 0))
+        skip_words = request.form.get("skip_words", "").strip()
+        db.create_stream(name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
+                         trim_start, trim_end, skip_words)
         return redirect(url_for("dashboard"))
-    return render_template("stream_form.html", stream=None, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT)
+    prefill = {
+        "name": request.args.get("name", ""),
+        "url": request.args.get("url", ""),
+        "record_mode": request.args.get("record_mode", ""),
+    }
+    return render_template("stream_form.html", stream=None, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT, prefill=prefill)
 
 
 @app.route("/stream/<int:stream_id>/edit", methods=["GET", "POST"])
-@require_auth
 def stream_edit(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
@@ -79,15 +87,18 @@ def stream_edit(stream_id):
             record_mode = "streamripper"
         metadata_url = request.form.get("metadata_url", "").strip()
         split_offset = int(request.form.get("split_offset", 0))
+        trim_start = int(request.form.get("trim_start", 0))
+        trim_end = int(request.form.get("trim_end", 0))
+        skip_words = request.form.get("skip_words", "").strip()
         # Stop if running before changing config
         process_manager.stop_stream(stream_id)
-        db.update_stream(stream_id, name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset)
+        db.update_stream(stream_id, name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
+                         trim_start, trim_end, skip_words)
         return redirect(url_for("dashboard"))
     return render_template("stream_form.html", stream=stream, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT)
 
 
 @app.route("/stream/<int:stream_id>/delete", methods=["POST"])
-@require_auth
 def stream_delete(stream_id):
     process_manager.stop_stream(stream_id)
     db.delete_stream(stream_id)
@@ -97,18 +108,21 @@ def stream_delete(stream_id):
 # --- Stream Control ---
 
 @app.route("/stream/<int:stream_id>/start", methods=["POST"])
-@require_auth
 def stream_start(stream_id):
     stream = db.get_stream(stream_id)
     if stream:
-        process_manager.start_stream(stream)
+        try:
+            process_manager.start_stream(stream)
+        except process_manager.BitrateError as e:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return redirect(url_for("dashboard"))
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify({"ok": True})
     return redirect(url_for("dashboard"))
 
 
 @app.route("/stream/<int:stream_id>/stop", methods=["POST"])
-@require_auth
 def stream_stop(stream_id):
     process_manager.stop_stream(stream_id)
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
@@ -116,10 +130,45 @@ def stream_stop(stream_id):
     return redirect(url_for("dashboard"))
 
 
+# --- Stream Listen (Proxy) ---
+
+@app.route("/stream/<int:stream_id>/listen")
+def stream_listen_proxy(stream_id):
+    """Proxy the audio stream to avoid CORS issues."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        return "Not found", 404
+
+    ua_key = stream["user_agent"] if stream["user_agent"] else DEFAULT_USER_AGENT
+    ua = USER_AGENTS.get(ua_key, USER_AGENTS[DEFAULT_USER_AGENT])
+
+    def generate():
+        req = urllib.request.Request(stream["url"], headers={"User-Agent": ua, "Icy-MetaData": "0"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=15)
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        except Exception:
+            pass
+
+    # Try to determine content type
+    content_type = "audio/mpeg"
+    url_lower = stream["url"].lower()
+    if ".ogg" in url_lower or "vorbis" in url_lower:
+        content_type = "audio/ogg"
+    elif ".aac" in url_lower or "aacp" in url_lower:
+        content_type = "audio/aac"
+
+    return Response(generate(), mimetype=content_type,
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+
 # --- Stream Detail ---
 
 @app.route("/stream/<int:stream_id>")
-@require_auth
 def stream_detail(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
@@ -138,7 +187,6 @@ def stream_detail(stream_id):
 # --- Logs ---
 
 @app.route("/logs")
-@require_auth
 def logs():
     sync_logs = db.get_sync_logs(limit=100)
     events = db.get_events(limit=100)
@@ -150,7 +198,6 @@ def logs():
 from flask import Response
 
 @app.route("/api/test-stream")
-@require_auth
 def api_test_stream():
     """Stream-Tester mit Server-Sent Events für Live-Updates."""
     url = request.args.get("url", "")
@@ -272,13 +319,11 @@ def api_test_stream():
 RADIO_BROWSER_API = "https://de1.api.radio-browser.info"
 
 @app.route("/browse")
-@require_auth
 def browse():
     return render_template("browse.html")
 
 
 @app.route("/api/browse/tags")
-@require_auth
 def api_browse_tags():
     """Get popular tags/genres from radio-browser.info."""
     try:
@@ -294,7 +339,6 @@ def api_browse_tags():
 
 
 @app.route("/api/browse/search")
-@require_auth
 def api_browse_search():
     """Search stations by tag or name."""
     tag = request.args.get("tag", "")
@@ -313,10 +357,12 @@ def api_browse_search():
         with urllib.request.urlopen(req, timeout=10) as resp:
             stations = json.loads(resp.read())
 
-        # Filter: only stations with a resolved URL and audio codec
+        # Filter: only stations with a resolved URL, audio codec, and sufficient bitrate
         result = []
         for s in stations:
             if not s.get("url_resolved") and not s.get("url"):
+                continue
+            if s.get("bitrate", 0) > 0 and s.get("bitrate", 0) < MIN_BITRATE:
                 continue
             result.append({
                 "name": s.get("name", "").strip(),
@@ -336,7 +382,6 @@ def api_browse_search():
 # --- API ---
 
 @app.route("/api/status")
-@require_auth
 def api_status():
     streams = db.get_all_streams()
     result = []
@@ -350,13 +395,11 @@ def api_status():
 
 
 @app.route("/api/disk")
-@require_auth
 def api_disk():
     return jsonify(_get_disk_info())
 
 
 @app.route("/api/sync/<int:stream_id>", methods=["POST"])
-@require_auth
 def api_sync(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
@@ -371,7 +414,6 @@ def api_sync(stream_id):
 
 
 @app.route("/api/restart-service", methods=["POST"])
-@require_auth
 def api_restart_service():
     """Restart the application. Docker: exit and let restart policy handle it.
        Bare metal: use systemctl."""
@@ -398,7 +440,13 @@ def api_restart_service():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+_disk_cache = {"info": None, "ts": 0}
+
 def _get_disk_info():
+    now = time.time()
+    if _disk_cache["info"] and (now - _disk_cache["ts"]) < 60:
+        return _disk_cache["info"]
+
     info = {}
     try:
         usage = shutil.disk_usage(RECORDING_BASE)
@@ -416,14 +464,34 @@ def _get_disk_info():
         info["nas_free_gb"] = 0
         info["nas_total_gb"] = 0
 
+    _disk_cache["info"] = info
+    _disk_cache["ts"] = now
     return info
+
+
+def _shutdown():
+    """Graceful shutdown: stop all streams, cleanup incomplete files."""
+    print("Shutting down: stopping all streams...")
+    process_manager.stop_all_streams()
+    streams = db.get_all_streams()
+    process_manager.cleanup_incomplete(streams)
+    if scheduler:
+        scheduler.stop()
+    print("Shutdown complete.")
 
 
 if __name__ == "__main__":
     db.init_db()
 
-    # Adopt existing streamripper processes
+    # Register shutdown handler
+    atexit.register(_shutdown)
+    signal.signal(signal.SIGTERM, lambda sig, frame: (atexit._run_exitfuncs(), exit(0)))
+
+    # Cleanup incomplete files from previous run
     streams = db.get_all_streams()
+    process_manager.cleanup_incomplete(streams)
+
+    # Adopt existing streamripper processes
     if streams:
         process_manager.adopt_existing_processes(streams)
 

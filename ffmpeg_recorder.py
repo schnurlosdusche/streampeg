@@ -18,16 +18,81 @@ import threading
 import time
 import urllib.request
 import urllib.parse
-from config import METADATA_POLL_INTERVAL, USER_AGENTS, DEFAULT_USER_AGENT
+from config import METADATA_POLL_INTERVAL, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 from db import log_event
 from sync import sync_file
 
 
+def _extract_stream_title(meta):
+    """Extract StreamTitle from ICY metadata, handling apostrophes in titles."""
+    idx = meta.find("StreamTitle='")
+    if idx < 0:
+        return None
+    start = idx + len("StreamTitle='")
+    # Field ends with '; (next field) or trailing '
+    end = meta.find("';", start)
+    if end < 0:
+        end = meta.rfind("'", start)
+    if end <= start:
+        return None
+    return meta[start:end].strip() or None
+
+
 def _sanitize_filename(name):
     """Create a safe filename from a track title."""
-    s = re.sub(r'[<>:"/\\|?*]', '', name).strip()
+    s = re.sub(r'[<>:"/\\|?*\'\u2019]', '', name).strip()
     s = re.sub(r'\s+', ' ', s)
     return s[:200] or "unknown"
+
+
+def _title_matches_skip_words(title, skip_words_str):
+    """Check if title contains any of the semicolon-separated skip words."""
+    if not skip_words_str or not title:
+        return False
+    lower = title.lower()
+    for word in skip_words_str.split(";"):
+        word = word.strip().lower()
+        if word and word in lower:
+            return True
+    return False
+
+
+def _trim_audio_file(filepath, trim_start, trim_end, stream_id=None):
+    """Trim start/end seconds from an audio file using ffmpeg. Returns new path or original on error."""
+    if not os.path.exists(filepath):
+        return filepath
+    try:
+        # Get duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", filepath],
+            capture_output=True, text=True, timeout=10,
+        )
+        duration = float(probe.stdout.strip()) if probe.returncode == 0 else 0
+        if duration <= (trim_start + trim_end + 1):
+            return filepath  # Too short to trim
+
+        trimmed = filepath + ".trimmed.mp3"
+        cmd = ["ffmpeg", "-y", "-i", filepath]
+        if trim_start > 0:
+            cmd += ["-ss", str(trim_start)]
+        if trim_end > 0:
+            cmd += ["-t", str(duration - trim_start - trim_end)]
+        cmd += ["-c:a", "libmp3lame", "-q:a", "2", trimmed]
+
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        if result.returncode == 0 and os.path.exists(trimmed) and os.path.getsize(trimmed) > 5000:
+            os.replace(trimmed, filepath)
+            if stream_id:
+                log_event(stream_id, "trim",
+                          f"Trimmed: -{trim_start}s Anfang, -{trim_end}s Ende")
+            return filepath
+        # Cleanup on failure
+        if os.path.exists(trimmed):
+            os.remove(trimmed)
+    except Exception:
+        pass
+    return filepath
 
 
 def _detect_metadata_url(stream_url):
@@ -60,18 +125,26 @@ class IcyStreamSplitter:
     On track change: clean split — stop old ffmpeg, start new one for new track.
     """
 
-    def __init__(self, stream_url, ua, dest, stream_id, split_offset=0, stream=None):
+    def __init__(self, stream_url, ua, dest, stream_id, split_offset=0, stream=None,
+                 trim_start=0, trim_end=0):
         self.stream_url = stream_url
         self.ua = ua
         self.dest = dest
         self.stream_id = stream_id
         self.stream = stream
         self.split_offset = split_offset  # positive = metadata early (delay split), negative = metadata late (pre-buffer)
+        self.trim_start = trim_start  # seconds to skip at start of each track
+        self.trim_end = trim_end  # seconds to discard at end of each track
+        self.skip_words = stream["skip_words"] if stream and "skip_words" in stream.keys() else ""
         self._current_track = None
         self._current_file = None
         self._ffmpeg_proc = None
         self._pending_split = None  # {"title": ..., "deadline": ...}
         self._prebuffer = collections.deque()  # (timestamp, audio_chunk) for negative split_offset
+        self._track_start_time = 0  # when current track started (for trim_start)
+        self._trim_end_buf = collections.deque()  # (timestamp, audio_chunk) for trim_end
+        self._waiting_for_new_track = True  # skip partial first track on start
+        self._state = "waiting"  # "waiting", "recording", "skipping"
 
         self._resp = None
         self._thread = None
@@ -79,6 +152,7 @@ class IcyStreamSplitter:
         self._lock = threading.Lock()
         self.pid = None
         self.start_time = time.time()
+        self._bitrate = None
 
     def start(self):
         os.makedirs(self.dest, exist_ok=True)
@@ -116,6 +190,12 @@ class IcyStreamSplitter:
         with self._lock:
             return self._current_track
 
+    def get_bitrate(self):
+        return self._bitrate
+
+    def get_state(self):
+        return self._state
+
     def _run(self):
         """Main loop: connect, read stream, split on metadata."""
         while not self._stop_event.is_set():
@@ -144,6 +224,22 @@ class IcyStreamSplitter:
 
         metaint = int(metaint_str)
 
+        # Capture bitrate from ICY headers
+        icy_br = self._resp.headers.get("icy-br")
+        if icy_br:
+            try:
+                self._bitrate = int(icy_br.split(",")[0])
+            except (ValueError, IndexError):
+                pass
+
+        # Reject streams below minimum bitrate
+        if self._bitrate is not None and self._bitrate < MIN_BITRATE:
+            self._resp.close()
+            log_event(self.stream_id, "error",
+                      f"Bitrate {self._bitrate} kbps unter Minimum ({MIN_BITRATE} kbps) — Aufnahme abgelehnt")
+            self._stop_event.set()
+            return
+
         # Detect input format for ffmpeg
         if "aac" in content_type or "aacp" in content_type:
             input_fmt = "aac"
@@ -152,10 +248,11 @@ class IcyStreamSplitter:
         else:
             input_fmt = "mp3"
 
-        # Start initial ffmpeg (no track title yet, will rename on first metadata)
-        self._start_ffmpeg_pipe(input_fmt)
+        # Don't start ffmpeg yet — wait for first track change to avoid partial tracks
+        self._waiting_for_new_track = True
+        self._state = "waiting"
         log_event(self.stream_id, "start",
-                  f"ICY-Stream verbunden (metaint={metaint}, fmt={input_fmt}, PID {self.pid})")
+                  f"ICY-Stream verbunden (metaint={metaint}, fmt={input_fmt}) — warte auf neuen Track")
 
         while not self._stop_event.is_set():
             # Execute pending delayed split if deadline reached (positive split_offset)
@@ -170,7 +267,22 @@ class IcyStreamSplitter:
 
             now = time.time()
 
-            if self.split_offset < 0:
+            # Don't write audio while waiting for new track or skipping
+            if self._waiting_for_new_track or self._state == "skipping":
+                pass
+            # trim_start: skip audio for the first N seconds of each track
+            elif self.trim_start > 0 and (now - self._track_start_time) < self.trim_start:
+                # Still in trim_start window — read metadata but don't write audio
+                pass
+            elif self.trim_end > 0:
+                # trim_end: buffer last N seconds, only flush older chunks
+                self._trim_end_buf.append((now, audio))
+                cutoff = now - self.trim_end
+                with self._lock:
+                    while self._trim_end_buf and self._trim_end_buf[0][0] < cutoff:
+                        _, delayed_chunk = self._trim_end_buf.popleft()
+                        self._write_audio(delayed_chunk)
+            elif self.split_offset < 0:
                 # Negative offset: metadata arrives late, buffer audio and write delayed
                 self._prebuffer.append((now, audio))
                 cutoff = now + self.split_offset  # split_offset is negative
@@ -178,19 +290,11 @@ class IcyStreamSplitter:
                 with self._lock:
                     while self._prebuffer and self._prebuffer[0][0] < cutoff:
                         old_ts, old_chunk = self._prebuffer.popleft()
-                        if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
-                            try:
-                                self._ffmpeg_proc.stdin.write(old_chunk)
-                            except (OSError, BrokenPipeError):
-                                break
+                        self._write_audio(old_chunk)
             else:
                 # No negative offset: write audio immediately
                 with self._lock:
-                    if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
-                        try:
-                            self._ffmpeg_proc.stdin.write(audio)
-                        except (OSError, BrokenPipeError):
-                            break
+                    self._write_audio(audio)
 
             # Read metadata length byte
             meta_len_byte = self._resp.read(1)
@@ -203,11 +307,10 @@ class IcyStreamSplitter:
                 if not meta_raw:
                     break
                 meta = meta_raw.decode("utf-8", errors="replace").rstrip("\x00")
-                m = re.search(r"StreamTitle='([^']*)'", meta)
-                if m:
-                    title = m.group(1).strip()
+                title = _extract_stream_title(meta)
+                if title:
                     pending_title = self._pending_split["title"] if self._pending_split else None
-                    if title and title != self._current_track and title != pending_title and " - " in title:
+                    if title != self._current_track and title != pending_title and " - " in title:
                         if self.split_offset > 0:
                             # Metadata early: delay split
                             self._pending_split = {
@@ -220,20 +323,70 @@ class IcyStreamSplitter:
 
         self._resp.close()
 
+    def _write_audio(self, chunk):
+        """Write audio chunk to ffmpeg stdin (must hold self._lock or be in locked context)."""
+        if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
+            try:
+                self._ffmpeg_proc.stdin.write(chunk)
+            except (OSError, BrokenPipeError):
+                pass
+
+    def _track_file_exists(self, title):
+        """Check if a file for this track already exists in dest or NAS."""
+        track_name = _sanitize_filename(title)
+        filename = f"{track_name}.mp3"
+        if os.path.exists(os.path.join(self.dest, filename)):
+            return True
+        # Check NAS via stream config
+        if self.stream:
+            from config import SMB_TARGET
+            nas_dest = os.path.join(SMB_TARGET, self.stream["dest_subdir"])
+            if os.path.exists(os.path.join(nas_dest, filename)):
+                return True
+        return False
+
     def _do_split(self, new_title, input_fmt):
         """Handle track change with offset-aware split."""
         with self._lock:
             old_track = self._current_track
             self._current_track = new_title
+            was_waiting = self._waiting_for_new_track
+            self._waiting_for_new_track = False
 
-            # Stop old ffmpeg and finalize its file
-            self._stop_current_ffmpeg()
-            self._finalize_track()
+            # Discard trim_end buffer (these are the last seconds of the old track)
+            self._trim_end_buf.clear()
+
+            # Stop old ffmpeg and finalize its file (skip if was waiting)
+            if not was_waiting:
+                self._stop_current_ffmpeg()
+                self._finalize_track()
+
+            # Check skip words
+            if _title_matches_skip_words(new_title, self.skip_words):
+                self._state = "skipping"
+                self._ffmpeg_proc = None
+                self._current_file = None
+                log_event(self.stream_id, "track",
+                          f"Übersprungen (Skip-Wort): {new_title}")
+                return
+
+            # Check if track already exists on disk
+            if self._track_file_exists(new_title):
+                self._state = "skipping"
+                self._ffmpeg_proc = None
+                self._current_file = None
+                log_event(self.stream_id, "track",
+                          f"Übersprungen (existiert): {new_title}")
+                return
 
             # Start new ffmpeg for the new track
+            self._state = "recording"
             self._ffmpeg_proc = None
             self._current_file = None
             self._start_ffmpeg_pipe(input_fmt)
+
+            # Reset trim_start timer for new track
+            self._track_start_time = time.time()
 
             # Pre-buffer replay: feed buffered audio into new file (negative split_offset = metadata late)
             if self.split_offset < 0 and self._prebuffer and self._ffmpeg_proc:
@@ -305,7 +458,10 @@ class IcyStreamSplitter:
         if not self._current_file or not os.path.exists(self._current_file):
             return
         size = os.path.getsize(self._current_file)
-        if size < 10000:
+        min_bytes = (self.stream["min_size_mb"] if self.stream and "min_size_mb" in self.stream.keys() else 2) * 1024 * 1024
+        if size < min_bytes:
+            log_event(self.stream_id, "cleanup",
+                      f"Zu klein ({size // 1024} KB < {min_bytes // 1024} KB), gelöscht: {os.path.basename(self._current_file)}")
             try:
                 os.remove(self._current_file)
             except OSError:
@@ -393,12 +549,10 @@ class IcyMetadataReader:
                 if not meta_raw:
                     break
                 meta = meta_raw.decode("utf-8", errors="replace").rstrip("\x00")
-                m = re.search(r"StreamTitle='([^']*)'", meta)
-                if m:
-                    title = m.group(1).strip()
-                    if title:
-                        with self._lock:
-                            self._current_title = title
+                title = _extract_stream_title(meta)
+                if title:
+                    with self._lock:
+                        self._current_title = title
         self._resp.close()
 
 
@@ -434,6 +588,8 @@ class FfmpegRecorder:
         self._lock = threading.Lock()
         self.start_time = time.time()
         self.pid = None
+        self._state = "waiting"  # "waiting", "recording", "skipping"
+        self._waiting_for_new_track = True
 
     def start(self):
         """Start recording and polling."""
@@ -443,24 +599,28 @@ class FfmpegRecorder:
         if self.use_icy:
             # Use single-connection splitter for perfect metadata/audio sync
             split_offset = self.stream["split_offset"] if "split_offset" in self.stream.keys() else 0
+            trim_start = self.stream["trim_start"] if "trim_start" in self.stream.keys() else 0
+            trim_end = self.stream["trim_end"] if "trim_end" in self.stream.keys() else 0
             self._splitter = IcyStreamSplitter(
                 self.stream_url, self.ua, self.dest, self.stream_id,
-                split_offset=split_offset, stream=self.stream)
+                split_offset=split_offset, stream=self.stream,
+                trim_start=trim_start, trim_end=trim_end)
             self._splitter.start()
             self.pid = self._splitter.pid
             self.start_time = self._splitter.start_time
             return
 
-        # ffmpeg_api mode: separate ffmpeg + API polling
+        # ffmpeg_api mode: wait for first track change before recording
         self._current_track = _fetch_current_song(self.metadata_url, self.ua)
+        self._waiting_for_new_track = True
+        self._state = "waiting"
         log_msg = f"FFmpeg+API gestartet, Metadata: {self.metadata_url}"
 
-        self._start_ffmpeg()
-
+        # Don't start ffmpeg yet — wait for first track change
         self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._poll_thread.start()
 
-        log_event(self.stream_id, "start", f"{log_msg} (PID {self.pid})")
+        log_event(self.stream_id, "start", f"{log_msg} — warte auf neuen Track")
 
     def _start_ffmpeg(self):
         """Start an ffmpeg process recording to incomplete/ (API mode only)."""
@@ -529,11 +689,24 @@ class FfmpegRecorder:
         if not self._current_file or not os.path.exists(self._current_file):
             return
         size = os.path.getsize(self._current_file)
-        if size < 10000:
+        min_bytes = (self.stream["min_size_mb"] if "min_size_mb" in self.stream.keys() else 2) * 1024 * 1024
+        if size < min_bytes:
+            log_event(self.stream_id, "cleanup",
+                      f"Zu klein ({size // 1024} KB < {min_bytes // 1024} KB), gelöscht: {os.path.basename(self._current_file)}")
             try:
                 os.remove(self._current_file)
             except OSError:
                 pass
+            return
+
+        # Post-process trim for API mode (IcyStreamSplitter handles trim inline)
+        trim_start = self.stream["trim_start"] if "trim_start" in self.stream.keys() else 0
+        trim_end = self.stream["trim_end"] if "trim_end" in self.stream.keys() else 0
+        if trim_start > 0 or trim_end > 0:
+            self._current_file = _trim_audio_file(
+                self._current_file, trim_start, trim_end, self.stream_id)
+
+        if not self._current_file or not os.path.exists(self._current_file):
             return
 
         basename = os.path.basename(self._current_file)
@@ -551,6 +724,18 @@ class FfmpegRecorder:
         """Get the current track title from the API."""
         return _fetch_current_song(self.metadata_url, self.ua)
 
+    def _track_file_exists(self, title):
+        """Check if a file for this track already exists in dest or NAS."""
+        track_name = _sanitize_filename(title)
+        filename = f"{track_name}.mp3"
+        if os.path.exists(os.path.join(self.dest, filename)):
+            return True
+        from config import SMB_TARGET
+        nas_dest = os.path.join(SMB_TARGET, self.stream["dest_subdir"])
+        if os.path.exists(os.path.join(nas_dest, filename)):
+            return True
+        return False
+
     def _poll_loop(self):
         """Poll metadata and split on track change (API mode only)."""
         split_offset = self.stream["split_offset"] if "split_offset" in self.stream.keys() else 0
@@ -563,14 +748,7 @@ class FfmpegRecorder:
 
             # Execute pending delayed split if deadline reached
             if pending_split and time.time() >= pending_split["deadline"]:
-                with self._lock:
-                    old_track = self._current_track
-                    self._current_track = pending_split["title"]
-                    self._stop_ffmpeg()
-                    self._finalize_track()
-                    self._start_ffmpeg()
-                    log_event(self.stream_id, "track",
-                              f"Neuer Track: {pending_split['title']}" + (f" (vorher: {old_track})" if old_track else ""))
+                self._do_api_split(pending_split["title"])
                 pending_split = None
 
             new_track = self._get_new_track()
@@ -584,14 +762,41 @@ class FfmpegRecorder:
                 # Metadata arrives early: delay the split
                 pending_split = {"title": new_track, "deadline": time.time() + split_offset}
             else:
-                with self._lock:
-                    old_track = self._current_track
-                    self._current_track = new_track
-                    self._stop_ffmpeg()
-                    self._finalize_track()
-                    self._start_ffmpeg()
-                    log_event(self.stream_id, "track",
-                              f"Neuer Track: {new_track}" + (f" (vorher: {old_track})" if old_track else ""))
+                self._do_api_split(new_track)
+
+    def _do_api_split(self, new_track):
+        """Handle track change in API mode with wait-for-new-track and skip logic."""
+        with self._lock:
+            old_track = self._current_track
+            was_waiting = self._waiting_for_new_track
+            self._waiting_for_new_track = False
+            self._current_track = new_track
+
+            # Stop old ffmpeg and finalize (skip if was waiting)
+            if not was_waiting:
+                self._stop_ffmpeg()
+                self._finalize_track()
+
+            # Check skip words
+            skip_words = self.stream["skip_words"] if self.stream and "skip_words" in self.stream.keys() else ""
+            if _title_matches_skip_words(new_track, skip_words):
+                self._state = "skipping"
+                log_event(self.stream_id, "track",
+                          f"Übersprungen (Skip-Wort): {new_track}")
+                return
+
+            # Check if track already exists on disk
+            if self._track_file_exists(new_track):
+                self._state = "skipping"
+                log_event(self.stream_id, "track",
+                          f"Übersprungen (existiert): {new_track}")
+                return
+
+            # Start recording new track
+            self._state = "recording"
+            self._start_ffmpeg()
+            log_event(self.stream_id, "track",
+                      f"Neuer Track: {new_track}" + (f" (vorher: {old_track})" if old_track else ""))
 
     def stop(self):
         """Stop recording completely."""
@@ -612,6 +817,8 @@ class FfmpegRecorder:
             return self._splitter.poll()
         if self._ffmpeg_proc:
             return self._ffmpeg_proc.poll()
+        if not self._stop_event.is_set():
+            return None  # Still active (e.g. waiting for new track in API mode)
         return -1
 
     @property
@@ -626,3 +833,13 @@ class FfmpegRecorder:
         if self._splitter:
             return self._splitter.get_current_track()
         return self._current_track
+
+    def get_bitrate(self):
+        if self._splitter:
+            return self._splitter.get_bitrate()
+        return None
+
+    def get_state(self):
+        if self._splitter:
+            return self._splitter.get_state()
+        return self._state

@@ -4,14 +4,44 @@ import threading
 import time
 import glob
 import signal
-from config import RECORDING_BASE, SMB_TARGET, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT
-from db import log_event
-from ffmpeg_recorder import FfmpegRecorder
+import urllib.request
+from config import RECORDING_BASE, SMB_TARGET, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
+from db import log_event, get_track_stats
+from ffmpeg_recorder import FfmpegRecorder, _trim_audio_file, _title_matches_skip_words
 from youtube_recorder import YouTubeRecorder
 from sync import sync_file
 
 # In-memory process registry: stream_id -> {proc, start_time}
 _processes = {}
+
+# Cache for file counts (expensive NAS glob): stream_id -> {count, size, timestamp}
+_file_count_cache = {}
+_FILE_COUNT_TTL = 60  # seconds
+
+
+class BitrateError(Exception):
+    """Raised when stream bitrate is below MIN_BITRATE."""
+    pass
+
+
+def _check_stream_bitrate(url, ua):
+    """Probe stream ICY headers and return bitrate. Raises BitrateError if below MIN_BITRATE."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": ua, "Icy-MetaData": "1"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        icy_br = resp.headers.get("icy-br")
+        resp.close()
+        if icy_br:
+            bitrate = int(icy_br.split(",")[0])
+            if bitrate < MIN_BITRATE:
+                raise BitrateError(
+                    f"Bitrate {bitrate} kbps ist unter dem Minimum von {MIN_BITRATE} kbps")
+            return bitrate
+    except BitrateError:
+        raise
+    except Exception:
+        pass  # Can't determine bitrate — allow (will be checked again at runtime)
+    return None
 
 
 def start_stream(stream):
@@ -31,6 +61,15 @@ def start_stream(stream):
         return recorder.pid
 
 
+    # Check stream bitrate before starting streamripper/ffmpeg recorders
+    ua_key = stream["user_agent"] if "user_agent" in stream.keys() else DEFAULT_USER_AGENT
+    ua = USER_AGENTS.get(ua_key, USER_AGENTS[DEFAULT_USER_AGENT])
+    bitrate = _check_stream_bitrate(stream["url"], ua)
+    if bitrate is not None and bitrate < MIN_BITRATE:
+        msg = f"Abgelehnt: Bitrate {bitrate} kbps < {MIN_BITRATE} kbps Minimum"
+        log_event(stream_id, "error", msg)
+        raise BitrateError(msg)
+
     if record_mode in ("ffmpeg_api", "ffmpeg_icy"):
         recorder = FfmpegRecorder(stream, dest)
         recorder.start()
@@ -38,8 +77,6 @@ def start_stream(stream):
         return recorder.pid
 
     # Default: streamripper
-    ua_key = stream["user_agent"] if "user_agent" in stream.keys() else DEFAULT_USER_AGENT
-    ua = USER_AGENTS.get(ua_key, USER_AGENTS[DEFAULT_USER_AGENT])
     proc = subprocess.Popen(
         [STREAMRIPPER_BIN, stream["url"], "-d", dest, "--quiet", "-u", ua],
         stdout=subprocess.DEVNULL,
@@ -91,6 +128,28 @@ def stop_stream(stream_id):
     return True
 
 
+def stop_all_streams():
+    """Stop all running streams gracefully. Called on shutdown."""
+    stream_ids = list(_processes.keys())
+    for sid in stream_ids:
+        try:
+            stop_stream(sid)
+        except Exception:
+            pass
+
+
+def cleanup_incomplete(streams):
+    """Delete incomplete/ directories left by streamripper after shutdown."""
+    for s in streams:
+        inc_dir = os.path.join(RECORDING_BASE, s["dest_subdir"], "incomplete")
+        if os.path.isdir(inc_dir):
+            for f in glob.glob(os.path.join(inc_dir, "*")):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+
 def _count_audio_files(directory):
     """Count audio files and total size in a directory (excluding incomplete/)."""
     count = 0
@@ -108,6 +167,21 @@ def _count_audio_files(directory):
     return count, size
 
 
+def _get_cached_file_counts(stream_id, dest, nas_dest):
+    """Get file counts with caching to avoid slow NAS glob on every poll."""
+    now = time.time()
+    cached = _file_count_cache.get(stream_id)
+    if cached and (now - cached["ts"]) < _FILE_COUNT_TTL:
+        return cached["count"], cached["size"]
+
+    worker_count, worker_size = _count_audio_files(dest)
+    nas_count, nas_size = _count_audio_files(nas_dest)
+    total_count = worker_count + nas_count
+    total_size = worker_size + nas_size
+    _file_count_cache[stream_id] = {"count": total_count, "size": total_size, "ts": now}
+    return total_count, total_size
+
+
 def get_status(stream):
     stream_id = stream["id"]
     dest = os.path.join(RECORDING_BASE, stream["dest_subdir"])
@@ -123,56 +197,78 @@ def get_status(stream):
         pid = info["proc"].pid
         uptime = int(time.time() - info["start_time"])
 
-    # For ffmpeg/youtube modes, get current track from the recorder
+    # For ffmpeg/youtube modes, get current track from the recorder (not from filesystem)
     if info and info.get("mode") in ("ffmpeg_api", "ffmpeg_icy", "youtube") and hasattr(info["proc"], "get_current_track"):
         current_track = info["proc"].get_current_track()
-        if current_track:
-            worker_count, worker_size = _count_audio_files(dest)
-            nas_count, nas_size = _count_audio_files(nas_dest)
-            result = {
-                "running": running,
-                "pid": pid,
-                "uptime": uptime,
-                "uptime_str": _format_uptime(uptime) if running else "-",
-                "current_track": current_track,
-                "file_count": worker_count + nas_count,
-                "disk_usage_mb": round((worker_size + nas_size) / (1024 * 1024), 1),
-            }
-            # YouTube mode: add download stats
-            if info.get("mode") == "youtube" and hasattr(info["proc"], "get_stats"):
-                result["yt_stats"] = info["proc"].get_stats()
-            return result
+        total_count, total_size = _get_cached_file_counts(stream_id, dest, nas_dest)
+        bitrate = None
+        if info.get("mode") != "youtube" and hasattr(info["proc"], "get_bitrate"):
+            bitrate = info["proc"].get_bitrate()
+        rec_state = None
+        if hasattr(info["proc"], "get_state"):
+            rec_state = info["proc"].get_state()
+        track_stats = get_track_stats(stream_id)
+        result = {
+            "running": running,
+            "pid": pid,
+            "uptime": uptime,
+            "uptime_str": _format_uptime(uptime) if running else "-",
+            "current_track": current_track,
+            "bitrate": bitrate,
+            "file_count": total_count,
+            "disk_usage_mb": round(total_size / (1024 * 1024), 1),
+            "rec_state": rec_state,
+            "rec_pct": track_stats["rec_pct"],
+        }
+        if info.get("mode") == "youtube" and hasattr(info["proc"], "get_stats"):
+            result["yt_stats"] = info["proc"].get_stats()
+        return result
 
-    # Current track from incomplete directory
+    # Current track from incomplete directory (only when running)
     current_track = None
-    incomplete_dirs = glob.glob(os.path.join(dest, "*/incomplete"))
-    if not incomplete_dirs:
-        incomplete_dirs = [os.path.join(dest, "incomplete")]
-    for inc_dir in incomplete_dirs:
-        if os.path.isdir(inc_dir):
-            files = sorted(
-                glob.glob(os.path.join(inc_dir, "*.mp3"))
-                + glob.glob(os.path.join(inc_dir, "*.ogg"))
-                + glob.glob(os.path.join(inc_dir, "*.aac")),
-                key=os.path.getmtime,
-                reverse=True,
-            )
-            if files:
-                current_track = os.path.splitext(os.path.basename(files[0]))[0]
-                break
+    rec_state = None
+    if running:
+        incomplete_dirs = glob.glob(os.path.join(dest, "*/incomplete"))
+        if not incomplete_dirs:
+            incomplete_dirs = [os.path.join(dest, "incomplete")]
+        for inc_dir in incomplete_dirs:
+            if os.path.isdir(inc_dir):
+                files = sorted(
+                    glob.glob(os.path.join(inc_dir, "*.mp3"))
+                    + glob.glob(os.path.join(inc_dir, "*.ogg"))
+                    + glob.glob(os.path.join(inc_dir, "*.aac")),
+                    key=os.path.getmtime,
+                    reverse=True,
+                )
+                if files:
+                    name = os.path.splitext(os.path.basename(files[0]))[0]
+                    if name not in ("recording",):
+                        current_track = name
+                    break
 
-    # File count and disk usage (worker + NAS)
-    worker_count, worker_size = _count_audio_files(dest)
-    nas_count, nas_size = _count_audio_files(nas_dest)
+        # Streamripper: get rec_state and current_track from watcher if available
+        watcher = info.get("watcher") if info else None
+        if watcher:
+            rec_state = watcher.get_state()
+            watcher_track = watcher.get_current_track()
+            if watcher_track:
+                current_track = watcher_track
 
+    # File count and disk usage (cached)
+    total_count, total_size = _get_cached_file_counts(stream_id, dest, nas_dest)
+
+    track_stats = get_track_stats(stream_id)
     return {
         "running": running,
         "pid": pid,
         "uptime": uptime,
         "uptime_str": _format_uptime(uptime) if running else "-",
         "current_track": current_track,
-        "file_count": worker_count + nas_count,
-        "disk_usage_mb": round((worker_size + nas_size) / (1024 * 1024), 1),
+        "bitrate": None,
+        "file_count": total_count,
+        "disk_usage_mb": round(total_size / (1024 * 1024), 1),
+        "rec_state": rec_state,
+        "rec_pct": track_stats["rec_pct"],
     }
 
 
@@ -274,15 +370,23 @@ class _PidWrapper:
 
 
 class _FileWatcher:
-    """Watches a directory for new audio files and syncs them to NAS."""
+    """Watches a directory for new audio files, trims and syncs them to NAS."""
 
     def __init__(self, directory, stream, interval=10):
         self.directory = directory
         self.stream = stream
+        self.stream_id = stream["id"]
+        self.trim_start = stream["trim_start"] if "trim_start" in stream.keys() else 0
+        self.trim_end = stream["trim_end"] if "trim_end" in stream.keys() else 0
+        self.skip_words = stream["skip_words"] if "skip_words" in stream.keys() else ""
+        self.min_size_bytes = (stream["min_size_mb"] if "min_size_mb" in stream.keys() else 2) * 1024 * 1024
         self.interval = interval
         self._stop_event = threading.Event()
         self._thread = None
         self._known_files = set()
+        self._skip_first = True  # Skip first (partial) track after start
+        self._state = "waiting"  # waiting / recording / skipping
+        self._current_track = None
         # Seed with existing files so we don't sync old ones
         for ext in ("*.mp3", "*.ogg", "*.aac"):
             for f in glob.glob(os.path.join(directory, ext)):
@@ -296,6 +400,19 @@ class _FileWatcher:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
+
+    def get_state(self):
+        return self._state
+
+    def get_current_track(self):
+        return self._current_track
+
+    def _track_file_exists(self, filepath):
+        """Check if this track already exists on NAS."""
+        basename = os.path.basename(filepath)
+        from config import SMB_TARGET
+        nas_dest = os.path.join(SMB_TARGET, self.stream["dest_subdir"])
+        return os.path.exists(os.path.join(nas_dest, basename))
 
     def _watch_loop(self):
         while not self._stop_event.is_set():
@@ -311,6 +428,74 @@ class _FileWatcher:
                 for filepath in new_files:
                     # Skip files in incomplete/
                     if "/incomplete/" in filepath:
+                        continue
+
+                    # Rename file if it contains apostrophes (avoid duplicates)
+                    basename = os.path.basename(filepath)
+                    if "'" in basename or "\u2019" in basename:
+                        clean_name = basename.replace("'", "").replace("\u2019", "")
+                        clean_path = os.path.join(os.path.dirname(filepath), clean_name)
+                        try:
+                            os.rename(filepath, clean_path)
+                            filepath = clean_path
+                        except OSError:
+                            pass
+
+                    track_name = os.path.splitext(os.path.basename(filepath))[0]
+                    self._current_track = track_name
+
+                    # Skip first (partial) track after start
+                    if self._skip_first:
+                        self._skip_first = False
+                        self._state = "recording"
+                        log_event(self.stream_id, "track",
+                                  f"Erster Track übersprungen (partiell): {track_name}")
+                        try:
+                            os.remove(filepath)
+                        except OSError:
+                            pass
+                        continue
+
+                    # Skip if title matches skip words
+                    if _title_matches_skip_words(track_name, self.skip_words):
+                        self._state = "skipping"
+                        log_event(self.stream_id, "track",
+                                  f"Übersprungen (Skip-Wort): {track_name}")
+                        try:
+                            os.remove(filepath)
+                        except OSError:
+                            pass
+                        continue
+
+                    # Skip if track already exists on NAS
+                    if self._track_file_exists(filepath):
+                        self._state = "skipping"
+                        log_event(self.stream_id, "track",
+                                  f"Übersprungen (existiert): {track_name}")
+                        try:
+                            os.remove(filepath)
+                        except OSError:
+                            pass
+                        continue
+
+                    self._state = "recording"
+                    # Trim start/end if configured
+                    if self.trim_start > 0 or self.trim_end > 0:
+                        filepath = _trim_audio_file(
+                            filepath, self.trim_start, self.trim_end,
+                            self.stream_id)
+                    # Check min file size before syncing
+                    try:
+                        fsize = os.path.getsize(filepath)
+                    except OSError:
+                        fsize = 0
+                    if fsize < self.min_size_bytes:
+                        log_event(self.stream_id, "cleanup",
+                                  f"Zu klein ({fsize // 1024} KB), gelöscht: {os.path.basename(filepath)}")
+                        try:
+                            os.remove(filepath)
+                        except OSError:
+                            pass
                         continue
                     sync_file(filepath, self.stream)
                 self._known_files = current_files

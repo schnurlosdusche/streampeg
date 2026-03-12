@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>{{ stream.name }}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #1a1a2e; color: #fff; font-family: -apple-system, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100vh; overflow: hidden; user-select: none;
+}
+.name { font-size: 11px; color: #aaa; margin-bottom: 8px; text-align: center; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn {
+    width: 48px; height: 48px; border-radius: 50%; border: none; cursor: pointer;
+    background: #ff9800; color: #fff; font-size: 22px; display: flex; align-items: center; justify-content: center;
+    transition: background 0.2s;
+}
+.btn:hover { background: #e68900; }
+.btn.playing { background: #4caf50; }
+.btn.playing:hover { background: #388e3c; }
+</style>
+</head>
+<body>
+<div class="name">{{ stream.name }}</div>
+<button class="btn" id="playbtn" onclick="toggle()" title="Play/Stop">&#9654;</button>
+<audio id="audio" preload="none"></audio>
+<script>
+var audio = document.getElementById('audio');
+var btn = document.getElementById('playbtn');
+var playing = false;
+var url = {{ stream.url | tojson }};
+
+function toggle() {
+    if (playing) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        btn.innerHTML = '&#9654;';
+        btn.classList.remove('playing');
+        playing = false;
+    } else {
+        audio.src = url;
+        audio.play();
+        btn.innerHTML = '&#9632;';
+        btn.classList.add('playing');
+        playing = true;
+    }
+}
+
+audio.addEventListener('error', function() {
+    btn.innerHTML = '&#9654;';
+    btn.classList.remove('playing');
+    playing = false;
+});
+</script>
+</body>
+</html>

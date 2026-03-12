@@ -1,9 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ "Bearbeiten" if stream else "Neuer Stream" }} - Streampeg{% endblock %}
 {% block content %}
-<h2>{{ "Stream bearbeiten" if stream else "Neuer Stream" }}</h2>
+<h3>{{ "Stream bearbeiten" if stream else "Neuer Stream" }}</h3>
 
-<form method="post" action="{{ url_for('stream_edit', stream_id=stream.id) if stream else url_for('stream_new') }}">
+<style>
+.stream-form label { font-size: 14px; margin-bottom: 2px; }
+.stream-form input, .stream-form select, .stream-form textarea { font-size: 13px; padding: 6px 10px; }
+.stream-form small { font-size: 11px; }
+.stream-form button { font-size: 13px; padding: 8px 16px; }
+.stream-form .grid { gap: 12px; }
+</style>
+
+<form method="post" action="{{ url_for('stream_edit', stream_id=stream.id) if stream else url_for('stream_new') }}" class="stream-form">
     <label for="name">Name</label>
     <input type="text" id="name" name="name" value="{{ stream.name if stream else request.args.get('name', '') }}" required placeholder="z.B. Reggae Radio">
 
@@ -27,11 +35,12 @@
     <small>User-Agent der beim Verbinden mit dem Stream gesendet wird</small>
 
     <label for="record_mode">Aufnahmemodus</label>
+    {% set cur_mode = stream.record_mode if stream else (prefill.record_mode if prefill and prefill.record_mode else 'streamripper') %}
     <select id="record_mode" name="record_mode" onchange="toggleMetadataUrl()">
-        <option value="streamripper" {{ 'selected' if not stream or stream.record_mode == 'streamripper' }}>Streamripper (ICY-Metadaten)</option>
-        <option value="ffmpeg_icy" {{ 'selected' if stream and stream.record_mode == 'ffmpeg_icy' }}>FFmpeg + ICY-Metadaten (bei HTTPS-Redirects)</option>
-        <option value="ffmpeg_api" {{ 'selected' if stream and stream.record_mode == 'ffmpeg_api' }}>FFmpeg + Shoutcast-API (kein ICY)</option>
-        <option value="youtube" {{ 'selected' if stream and stream.record_mode == 'youtube' }}>YouTube-Download (ICY-Metadaten als Trigger)</option>
+        <option value="streamripper" {{ 'selected' if cur_mode == 'streamripper' }}>Streamripper (ICY-Metadaten)</option>
+        <option value="ffmpeg_icy" {{ 'selected' if cur_mode == 'ffmpeg_icy' }}>FFmpeg + ICY-Metadaten (bei HTTPS-Redirects)</option>
+        <option value="ffmpeg_api" {{ 'selected' if cur_mode == 'ffmpeg_api' }}>FFmpeg + Shoutcast-API (kein ICY)</option>
+        <option value="youtube" {{ 'selected' if cur_mode == 'youtube' }}>YouTube-Download (ICY-Metadaten als Trigger)</option>
     </select>
     <small id="mode-hint">Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen</small>
 
@@ -70,6 +79,35 @@
         <small id="offset-mode-hint" style="display:block;margin-top:4px;color:var(--pico-muted-color,#888);"></small>
     </div>
 
+    <div id="trim-group">
+        <label>Trim <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">Anfang und Ende jedes Tracks beschneiden (0–20 Sekunden)</span></label>
+        <input type="hidden" id="trim_start" name="trim_start" value="{{ stream.trim_start if stream and stream.trim_start else 0 }}">
+        <input type="hidden" id="trim_end" name="trim_end" value="{{ stream.trim_end if stream and stream.trim_end else 0 }}">
+        <div id="trim-slider" style="position:relative;height:48px;margin:10px 0 6px;user-select:none;cursor:pointer;touch-action:none;">
+            <!-- track line -->
+            <div style="position:absolute;left:0;right:0;top:50%;height:2px;background:var(--pico-muted-border-color,#555);z-index:1;"></div>
+            <!-- safe zone (uncut middle) -->
+            <div id="trim-safe-bar" style="position:absolute;top:12px;bottom:12px;border-radius:4px;background:rgba(76,175,80,0.15);border:1px solid rgba(76,175,80,0.35);z-index:1;pointer-events:none;"></div>
+            <!-- left cut zone -->
+            <div id="trim-start-bar" style="position:absolute;top:12px;bottom:12px;left:0;border-radius:4px 0 0 4px;background:rgba(255,152,0,0.25);border:1px solid rgba(255,152,0,0.5);z-index:1;pointer-events:none;display:flex;align-items:center;justify-content:center;"></div>
+            <!-- right cut zone -->
+            <div id="trim-end-bar" style="position:absolute;top:12px;bottom:12px;right:0;border-radius:0 4px 4px 0;background:rgba(255,152,0,0.25);border:1px solid rgba(255,152,0,0.5);z-index:1;pointer-events:none;display:flex;align-items:center;justify-content:center;"></div>
+            <!-- left handle (trim start) -->
+            <div id="trim-start-handle" style="position:absolute;top:50%;left:0;width:18px;height:18px;border-radius:50%;background:#ff9800;border:2px solid #e68900;transform:translate(-50%,-50%);z-index:3;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
+            <!-- right handle (trim end) -->
+            <div id="trim-end-handle" style="position:absolute;top:50%;right:0;width:18px;height:18px;border-radius:50%;background:#ff9800;border:2px solid #e68900;transform:translate(50%,-50%);z-index:3;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
+            <!-- left label -->
+            <div id="trim-start-label" style="position:absolute;top:-16px;font-size:11px;color:#ff9800;pointer-events:none;z-index:4;transform:translateX(-50%);white-space:nowrap;"></div>
+            <!-- right label -->
+            <div id="trim-end-label" style="position:absolute;top:-16px;font-size:11px;color:#ff9800;pointer-events:none;z-index:4;transform:translateX(50%);white-space:nowrap;"></div>
+        </div>
+        <small id="trim-info" style="display:block;color:var(--pico-muted-color,#888);"></small>
+    </div>
+
+    <label for="skip_words">Titel-Filter (Skip-Woerter)</label>
+    <textarea id="skip_words" name="skip_words" rows="2" placeholder="advert;sensual lounge;werbung">{{ stream.skip_words if stream and stream.skip_words else '' }}</textarea>
+    <small>Semikolon-getrennte Woerter — Tracks mit diesen Begriffen im Titel werden uebersprungen</small>
+
     <label for="min_size_mb">Mindestgroesse (MB)</label>
     <input type="number" id="min_size_mb" name="min_size_mb" value="{{ stream.min_size_mb if stream else 2 }}" min="1" max="50">
     <small>Dateien kleiner als dieser Wert werden automatisch geloescht</small>
@@ -94,7 +132,12 @@ function toggleMetadataUrl() {
     // Hide offset and min_size for youtube mode (not relevant)
     var isYoutube = mode === 'youtube';
     document.getElementById('offset-group').style.display = isYoutube ? 'none' : '';
-    if (isYoutube) document.getElementById('split_offset').value = 0;
+    document.getElementById('trim-group').style.display = isYoutube ? 'none' : '';
+    if (isYoutube) {
+        document.getElementById('split_offset').value = 0;
+        document.getElementById('trim_start').value = 0;
+        document.getElementById('trim_end').value = 0;
+    }
     updateViz();
     var hint = document.getElementById('offset-mode-hint');
     if (mode === 'streamripper') {
@@ -278,6 +321,7 @@ function updateViz() {
 
     document.addEventListener('DOMContentLoaded', function() {
         slider = document.getElementById('split-slider');
+        toggleMetadataUrl();
         updateViz();
 
         slider.addEventListener('mousedown', function(e) {
@@ -294,6 +338,171 @@ function updateViz() {
             document.addEventListener('touchmove', onMove, {passive: false});
             document.addEventListener('touchend', onUp);
         }, {passive: true});
+    });
+})();
+
+// --- Combined trim slider (0–20s each side) ---
+var TRIM_MAX = 20;
+
+function updateTrimSlider() {
+    var ts = parseInt(document.getElementById('trim_start').value) || 0;
+    var te = parseInt(document.getElementById('trim_end').value) || 0;
+
+    var startPct = (ts / TRIM_MAX) * 50;  // left half: 0-50%
+    var endPct = (te / TRIM_MAX) * 50;    // right half: 0-50% from right
+
+    var startBar = document.getElementById('trim-start-bar');
+    var endBar = document.getElementById('trim-end-bar');
+    var safeBar = document.getElementById('trim-safe-bar');
+    var startHandle = document.getElementById('trim-start-handle');
+    var endHandle = document.getElementById('trim-end-handle');
+    var startLabel = document.getElementById('trim-start-label');
+    var endLabel = document.getElementById('trim-end-label');
+    var info = document.getElementById('trim-info');
+
+    // Left handle + bar
+    startHandle.style.left = startPct + '%';
+    if (ts > 0) {
+        startBar.style.left = '0';
+        startBar.style.width = startPct + '%';
+        startBar.style.display = 'flex';
+        startBar.innerHTML = '<span style="font-size:11px;font-weight:bold;color:#fff;">' + ts + 's</span>';
+        startLabel.textContent = '';
+    } else {
+        startBar.style.width = '0';
+        startBar.style.display = 'none';
+        startBar.innerHTML = '';
+        startLabel.style.left = '12px';
+        startLabel.style.transform = 'none';
+        startLabel.textContent = '0s';
+        startLabel.style.color = '#fff';
+        startLabel.style.top = '50%';
+        startLabel.style.marginTop = '-7px';
+    }
+
+    // Right handle + bar
+    endHandle.style.right = endPct + '%';
+    endHandle.style.left = 'auto';
+    if (te > 0) {
+        endBar.style.right = '0';
+        endBar.style.width = endPct + '%';
+        endBar.style.left = 'auto';
+        endBar.style.display = 'flex';
+        endBar.innerHTML = '<span style="font-size:11px;font-weight:bold;color:#fff;">' + te + 's</span>';
+        endLabel.textContent = '';
+    } else {
+        endBar.style.width = '0';
+        endBar.style.display = 'none';
+        endBar.innerHTML = '';
+        endLabel.style.right = '12px';
+        endLabel.style.left = 'auto';
+        endLabel.style.transform = 'none';
+        endLabel.textContent = '0s';
+        endLabel.style.color = '#fff';
+        endLabel.style.top = '50%';
+        endLabel.style.marginTop = '-7px';
+    }
+
+    // Safe zone (green middle)
+    safeBar.style.left = startPct + '%';
+    safeBar.style.right = endPct + '%';
+
+    // Info text
+    var parts = [];
+    if (ts > 0) parts.push('Anfang: ' + ts + 's');
+    if (te > 0) parts.push('Ende: ' + te + 's');
+    if (parts.length > 0) {
+        info.textContent = parts.join(' | ') + ' werden abgeschnitten';
+        info.style.color = '#ff9800';
+    } else {
+        info.textContent = 'Kein Trim';
+        info.style.color = 'var(--pico-muted-color,#888)';
+    }
+}
+
+(function() {
+    var activeHandle = null; // 'start' or 'end'
+
+    function getHandleFromPos(slider, e) {
+        var rect = slider.getBoundingClientRect();
+        var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        var pct = x / rect.width * 100;
+        var ts = parseInt(document.getElementById('trim_start').value) || 0;
+        var te = parseInt(document.getElementById('trim_end').value) || 0;
+        var startPct = (ts / TRIM_MAX) * 50;
+        var endPct = 100 - (te / TRIM_MAX) * 50;
+        // Pick the closer handle
+        if (Math.abs(pct - startPct) <= Math.abs(pct - endPct)) {
+            return 'start';
+        }
+        return 'end';
+    }
+
+    function getValFromEvent(slider, e, handle) {
+        var rect = slider.getBoundingClientRect();
+        var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        var pct = Math.max(0, Math.min(100, x / rect.width * 100));
+        if (handle === 'start') {
+            // Left half: 0% = 0s, 50% = 20s, clamp to max 50% (minus end zone)
+            var te = parseInt(document.getElementById('trim_end').value) || 0;
+            var maxPct = 50 - (te / TRIM_MAX) * 50;
+            pct = Math.min(pct, maxPct);
+            return Math.round(Math.max(0, Math.min(TRIM_MAX, pct / 50 * TRIM_MAX)));
+        } else {
+            // Right half: 100% = 0s, 50% = 20s
+            var ts = parseInt(document.getElementById('trim_start').value) || 0;
+            var minPct = (ts / TRIM_MAX) * 50;
+            pct = Math.max(pct, minPct);
+            var fromRight = 100 - pct;
+            return Math.round(Math.max(0, Math.min(TRIM_MAX, fromRight / 50 * TRIM_MAX)));
+        }
+    }
+
+    function onMove(e) {
+        if (!activeHandle) return;
+        e.preventDefault();
+        var slider = document.getElementById('trim-slider');
+        var val = getValFromEvent(slider, e, activeHandle);
+        if (activeHandle === 'start') {
+            document.getElementById('trim_start').value = val;
+        } else {
+            document.getElementById('trim_end').value = val;
+        }
+        updateTrimSlider();
+    }
+
+    function onUp() {
+        if (activeHandle) {
+            var h = document.getElementById(activeHandle === 'start' ? 'trim-start-handle' : 'trim-end-handle');
+            if (h) h.style.cursor = 'grab';
+        }
+        activeHandle = null;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var slider = document.getElementById('trim-slider');
+        if (!slider) return;
+
+        slider.addEventListener('mousedown', function(e) {
+            activeHandle = getHandleFromPos(slider, e);
+            var h = document.getElementById(activeHandle === 'start' ? 'trim-start-handle' : 'trim-end-handle');
+            if (h) h.style.cursor = 'grabbing';
+            onMove(e);
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+        slider.addEventListener('touchstart', function(e) {
+            activeHandle = getHandleFromPos(slider, e);
+            onMove(e);
+            document.addEventListener('touchmove', onMove, {passive: false});
+            document.addEventListener('touchend', onUp);
+        }, {passive: true});
+
+        updateTrimSlider();
     });
 })();
 

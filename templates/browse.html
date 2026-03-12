@@ -130,38 +130,136 @@ function escAttr(s) {
     return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+var _testBestMode = null;
+var _testStationName = '';
+var _testStationUrl = '';
+
 // Event delegation for test buttons
 document.getElementById('stations-body').addEventListener('click', function(e) {
     const btn = e.target.closest('.test-btn');
     if (!btn) return;
 
-    const url = btn.getAttribute('data-url');
-    const cell = btn.closest('.action-cell');
-    const addBtn = cell.querySelector('.add-btn');
-    btn.textContent = '...';
-    btn.disabled = true;
+    _testStationUrl = btn.getAttribute('data-url');
+    _testStationName = btn.closest('tr').querySelector('td').textContent.trim();
+    openTestModal(_testStationUrl);
+});
 
-    fetch('/api/test-stream?url=' + encodeURIComponent(url), {credentials: 'include'})
-        .then(r => r.json())
-        .then(data => {
-            if (data.ok) {
-                btn.textContent = 'OK';
-                btn.style.color = '#a8e6a8';
-                btn.style.borderColor = '#2d6a2d';
-                if (addBtn) addBtn.style.display = 'inline-block';
-            } else {
-                btn.textContent = 'Fail';
-                btn.style.color = '#e6a8a8';
-                btn.style.borderColor = '#6a2d2d';
-                btn.title = data.error || 'Stream nicht erreichbar';
-                if (addBtn) addBtn.style.display = 'none';
+function openTestModal(url) {
+    var modal = document.getElementById('test-modal');
+    var log = document.getElementById('test-log');
+    var closeBtn = document.getElementById('test-close');
+    var addBtn = document.getElementById('test-add');
+    log.innerHTML = '';
+    closeBtn.style.display = 'none';
+    addBtn.style.display = 'none';
+    _testBestMode = null;
+    modal.setAttribute('open', '');
+
+    var stepLabels = {1:'HTTP-Verbindung', 2:'ICY-Metadaten (Deep)', 3:'Shoutcast API', 4:'Icecast API', 5:'TuneIn', 6:'Streamripper', 7:'FFmpeg'};
+
+    for (var i = 1; i <= 7; i++) {
+        var row = document.createElement('div');
+        row.id = 'test-step-' + i;
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--pico-muted-border-color,#333);';
+        row.innerHTML = '<span class="test-icon" style="width:22px;text-align:center;font-size:16px;">&#9711;</span>'
+            + '<span class="test-label" style="flex:1;">' + stepLabels[i] + '</span>'
+            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">wartend</span>';
+        log.appendChild(row);
+    }
+
+    var resultDiv = document.createElement('div');
+    resultDiv.id = 'test-result-area';
+    resultDiv.style.cssText = 'margin-top:16px;padding:12px;border-radius:6px;';
+    log.appendChild(resultDiv);
+
+    var source = new EventSource('/api/test-stream?url=' + encodeURIComponent(url));
+
+    source.onmessage = function(e) {
+        var data = JSON.parse(e.data);
+
+        if (data.step && data.label) {
+            var row = document.getElementById('test-step-' + data.step);
+            if (row) {
+                row.querySelector('.test-icon').innerHTML = '<span aria-busy="true" style="display:inline-block;width:16px;height:16px;"></span>';
+                row.querySelector('.test-label').textContent = data.label;
+                row.querySelector('.test-status').textContent = 'laeuft...';
+                row.querySelector('.test-status').style.color = 'var(--pico-muted-color,#888)';
             }
-            setTimeout(() => { btn.disabled = false; }, 3000);
-        })
-        .catch(() => {
-            btn.textContent = 'Err';
-            btn.disabled = false;
-        });
+        }
+
+        if (data.step && data.result) {
+            var row = document.getElementById('test-step-' + data.step);
+            if (row) {
+                var icon = data.ok ? '&#9989;' : (data.result === 'Teilweise' ? '&#9888;' : '&#10060;');
+                row.querySelector('.test-icon').innerHTML = icon;
+                row.querySelector('.test-label').textContent = stepLabels[data.step];
+                var statusEl = row.querySelector('.test-status');
+                statusEl.innerHTML = '<strong>' + data.result + '</strong>';
+                statusEl.style.color = data.ok ? 'var(--pico-color-green-500,green)' : 'var(--pico-color-red-500,red)';
+                if (data.detail) {
+                    var detail = document.createElement('small');
+                    detail.style.cssText = 'display:block;color:var(--pico-muted-color,#888);font-size:12px;margin-top:2px;';
+                    detail.textContent = data.detail;
+                    row.querySelector('.test-label').appendChild(detail);
+                }
+            }
+        }
+
+        if (data.done) {
+            source.close();
+            closeBtn.style.display = '';
+            var area = document.getElementById('test-result-area');
+
+            if (data.suitable) {
+                _testBestMode = data.best_mode;
+                area.style.background = 'rgba(76,175,80,0.1)';
+                area.style.border = '1px solid rgba(76,175,80,0.4)';
+                var html = '<strong style="color:var(--pico-color-green-500,green);">Empfehlung:</strong><br>';
+                data.recommendation.forEach(function(r, i) {
+                    var star = i === 0 ? ' &#11088;' : '';
+                    html += '<div style="padding:4px 0;' + (i === 0 ? 'font-weight:bold;' : '') + '">'
+                        + r.mode + star + ' <small style="color:var(--pico-muted-color,#888);">(Score ' + r.score + ')</small><br>'
+                        + '<small>' + r.reason + '</small></div>';
+                });
+                area.innerHTML = html;
+                addBtn.style.display = '';
+                addBtn.textContent = '+ Hinzufuegen als "' + _testBestMode + '"';
+            } else {
+                area.style.background = 'rgba(244,67,54,0.1)';
+                area.style.border = '1px solid rgba(244,67,54,0.4)';
+                area.innerHTML = '<strong style="color:var(--pico-color-red-500,red);">' + data.recommendation + '</strong>';
+            }
+        }
+    };
+
+    source.onerror = function() {
+        source.close();
+        closeBtn.style.display = '';
+    };
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('test-add').addEventListener('click', function() {
+        if (_testBestMode && _testStationUrl) {
+            window.location.href = '/stream/new?name=' + encodeURIComponent(_testStationName)
+                + '&url=' + encodeURIComponent(_testStationUrl)
+                + '&record_mode=' + encodeURIComponent(_testBestMode);
+        }
+    });
 });
 </script>
+
+<!-- Test Modal -->
+<dialog id="test-modal">
+    <article style="max-width:550px;">
+        <header>
+            <h3 style="margin:0;">Stream-Test</h3>
+        </header>
+        <div id="test-log"></div>
+        <footer style="display:flex;gap:8px;justify-content:flex-end;">
+            <button id="test-add" class="contrast" style="display:none;">+ Hinzufuegen</button>
+            <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">Schliessen</button>
+        </footer>
+    </article>
+</dialog>
 {% endblock %}

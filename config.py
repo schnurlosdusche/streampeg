@@ -20,6 +20,7 @@ USER_AGENTS = {
 DEFAULT_USER_AGENT = "lyrion"
 METADATA_POLL_INTERVAL = 3  # seconds between Shoutcast API polls
 DEFAULT_MIN_SIZE_MB = 2
+MIN_BITRATE = 128  # Minimum stream bitrate in kbps — refuse to record/download below this
 HOST = "0.0.0.0"
 PORT = 5000
 SECRET_KEY = os.environ.get("SR_UI_SECRET", "sr-ui-secret-key-change-me")

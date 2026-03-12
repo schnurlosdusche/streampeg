@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<Container version="2">
+    <Name>streampeg</Name>
+    <Repository>192.168.1.57:3000/martin/streampeg:latest</Repository>
+    <Registry>http://192.168.1.57:3000/martin/-/packages/container/streampeg/latest</Registry>
+    <Branch>
+        <Tag>latest</Tag>
+        <TagDescription>Stable release</TagDescription>
+    </Branch>
+    <Network>bridge</Network>
+    <Privileged>false</Privileged>
+    <Project>http://192.168.1.57:3000/martin/streampeg</Project>
+    <Overview>Stream-Recorder mit Web-UI: Nimmt Internetradio-Streams auf und splittet automatisch in einzelne Songs. Unterstuetzt Streamripper, FFmpeg (ICY/API) und YouTube-Download-Modus.</Overview>
+    <Category>MediaApp:Music</Category>
+    <WebUI>http://[IP]:[PORT:5000]</WebUI>
+    <Icon>http://192.168.1.57:3000/martin/streampeg/raw/branch/main/static/streampeg.png</Icon>
+    <Description>Streampeg - Stream Recording Web UI. Zeichnet Internetradio-Streams auf und splittet sie automatisch in einzelne Songs (MP3). Unterstuetzt vier Modi: Streamripper, FFmpeg+ICY, FFmpeg+API und YouTube-Download. Web-Dashboard mit Live-Status, Browse-Funktion (radio-browser.info) und automatischem NAS-Sync.</Description>
+    <ExtraSearchTerms>radio stream recorder music internet radio streamripper ffmpeg</ExtraSearchTerms>
+
+    <!-- Port -->
+    <Config Name="WebUI Port" Target="5000" Default="5001" Mode="tcp"
+        Description="Port fuer das Web-Interface" Type="Port"
+        Display="always" Required="true" Mask="false"/>
+
+    <!-- Environment Variables -->
+    <Config Name="Passwort" Target="SR_UI_PASSWORD" Default="streaming"
+        Description="Passwort fuer den Login" Type="Variable"
+        Display="always" Required="true" Mask="true"/>
+
+    <Config Name="Secret Key" Target="SR_UI_SECRET" Default="change-me-in-production"
+        Description="Geheimer Schluessel fuer Flask Sessions" Type="Variable"
+        Display="advanced" Required="true" Mask="true"/>
+
+    <Config Name="DB Pfad" Target="SR_UI_DB_PATH" Default="/data/streampeg.db"
+        Description="Pfad zur SQLite-Datenbank im Container" Type="Variable"
+        Display="advanced-hide" Required="true" Mask="false"/>
+
+    <Config Name="Docker Flag" Target="RUNNING_IN_DOCKER" Default="1"
+        Description="Markiert den Container als Docker-Instanz" Type="Variable"
+        Display="advanced-hide" Required="true" Mask="false"/>
+
+    <!-- Volumes -->
+    <Config Name="App-Daten" Target="/data" Default="/mnt/user/appdata/streampeg"
+        Description="Datenbank und persistente Daten" Type="Path"
+        Display="always" Required="true" Mask="false" Mode="rw"/>
+
+    <Config Name="Aufnahme-Verzeichnis" Target="/recording" Default="/mnt/user/appdata/streampeg/recording"
+        Description="Temporaeres Verzeichnis fuer laufende Aufnahmen" Type="Path"
+        Display="always" Required="true" Mask="false" Mode="rw"/>
+
+    <Config Name="NAS-Ziel" Target="/mnt/unraid-streams" Default="/mnt/user/data/streams"
+        Description="Zielverzeichnis fuer fertige Aufnahmen (Unraid-Share)" Type="Path"
+        Display="always" Required="true" Mask="false" Mode="rw"/>
+</Container>
