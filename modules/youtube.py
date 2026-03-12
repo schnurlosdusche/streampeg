@@ -210,7 +210,6 @@ class YouTubeRecorder:
         self._song_db = YouTubeSongDB(os.path.join(YT_DATA_DIR, db_name))
         self._current_track = None
         self._state = "waiting"  # "waiting", "recording", "skipping"
-        self._waiting_for_new_track = True
         self._stop_event = threading.Event()
         self._thread = None
         self._download_thread = None
@@ -324,20 +323,8 @@ class YouTubeRecorder:
         title = _title_case(title_raw)
         self._current_track = f"{artist} - {title}"
 
-        # First track after start — skip partial track
-        if self._waiting_for_new_track:
-            self._waiting_for_new_track = False
-            # Still check if known to set correct state
-            if self._song_db.is_known(artist_raw, title_raw):
-                self._state = "skipping"
-                log_event(self.stream_id, "track",
-                          f"Bekannt (Start übersprungen): {artist} - {title}")
-                return
-            # First real track after start — proceed to download
-            self._state = "recording"
-
         # Already known?
-        elif self._song_db.is_known(artist_raw, title_raw):
+        if self._song_db.is_known(artist_raw, title_raw):
             self._state = "skipping"
             log_event(self.stream_id, "track",
                       f"Bekannt: {artist} - {title}")

@@ -57,6 +57,24 @@
 
 <small style="color:var(--pico-muted-color,#888);">Nach Installation oder Entfernung von Modulen ist ein Neustart erforderlich.</small>
 
+<hr>
+
+<h4>Sync</h4>
+
+<form method="post" action="{{ url_for('settings_sync') }}">
+    <label>
+        <input type="checkbox" name="sync_enabled" value="1" {{ 'checked' if sync_enabled }}>
+        Automatischer Sync aktiviert
+    </label>
+    <small style="display:block;margin-bottom:16px;color:var(--pico-muted-color,#888);">Aufgenommene Dateien werden automatisch zum Zielverzeichnis synchronisiert und lokal geloescht.</small>
+
+    <label for="sync_target">Zielverzeichnis (SMB/NFS Mount)</label>
+    <input type="text" id="sync_target" name="sync_target" value="{{ sync_target }}" placeholder="/mnt/unraid-streams">
+    <small style="display:block;margin-bottom:16px;color:var(--pico-muted-color,#888);">Pfad zum gemounteten Netzwerk-Share (z.B. /mnt/nas/music). Muss als Mountpoint verfuegbar sein.</small>
+
+    <button type="submit" style="width:auto;">Speichern</button>
+</form>
+
 <script>
 document.querySelectorAll('.module-toggle').forEach(function(btn) {
     btn.addEventListener('click', function() {

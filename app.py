@@ -8,7 +8,7 @@ import urllib.request
 import urllib.parse
 import json
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from config import HOST, PORT, SECRET_KEY, RECORDING_BASE, SMB_TARGET, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
+from config import HOST, PORT, SECRET_KEY, RECORDING_BASE, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 import db
 import process_manager
 import cleanup
@@ -165,6 +165,39 @@ def stream_listen_proxy(stream_id):
     # Try to determine content type
     content_type = "audio/mpeg"
     url_lower = stream["url"].lower()
+    if ".ogg" in url_lower or "vorbis" in url_lower:
+        content_type = "audio/ogg"
+    elif ".aac" in url_lower or "aacp" in url_lower:
+        content_type = "audio/aac"
+
+    return Response(generate(), mimetype=content_type,
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+
+@app.route("/api/listen")
+def api_listen_proxy():
+    """Proxy any stream URL for preview listening in Radio Browser."""
+    url = request.args.get("url", "")
+    if not url:
+        return "No URL", 400
+
+    def generate():
+        req = urllib.request.Request(url, headers={
+            "User-Agent": USER_AGENTS[DEFAULT_USER_AGENT],
+            "Icy-MetaData": "0",
+        })
+        try:
+            resp = urllib.request.urlopen(req, timeout=15)
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        except Exception:
+            pass
+
+    content_type = "audio/mpeg"
+    url_lower = url.lower()
     if ".ogg" in url_lower or "vorbis" in url_lower:
         content_type = "audio/ogg"
     elif ".aac" in url_lower or "aacp" in url_lower:
@@ -393,8 +426,11 @@ def api_browse_search():
 def settings():
     all_modules = module_manager.get_all_modules()
     enabled = {name: module_manager._is_enabled(name) for name in all_modules}
+    sync_enabled = sync.is_sync_enabled()
+    sync_target = sync.get_sync_target()
     return render_template("settings.html", modules=all_modules, enabled=enabled,
-                           builtin_modes=sorted(module_manager.BUILTIN_MODES))
+                           builtin_modes=sorted(module_manager.BUILTIN_MODES),
+                           sync_enabled=sync_enabled, sync_target=sync_target)
 
 
 @app.route("/settings/module/<name>/toggle", methods=["POST"])
@@ -405,6 +441,16 @@ def settings_module_toggle(name):
     currently_enabled = module_manager._is_enabled(name)
     module_manager.set_module_enabled(name, not currently_enabled)
     return jsonify({"ok": True, "enabled": not currently_enabled})
+
+
+@app.route("/settings/sync", methods=["POST"])
+def settings_sync():
+    sync_enabled = request.form.get("sync_enabled") == "1"
+    sync_target = request.form.get("sync_target", "").strip()
+    db.set_setting("sync_enabled", "1" if sync_enabled else "0")
+    if sync_target:
+        db.set_setting("sync_target", sync_target)
+    return redirect(url_for("settings"))
 
 
 # --- API ---
@@ -485,7 +531,7 @@ def _get_disk_info():
         info["worker_total_gb"] = 0
 
     try:
-        usage = shutil.disk_usage(SMB_TARGET)
+        usage = shutil.disk_usage(sync.get_sync_target())
         info["nas_free_gb"] = round(usage.free / (1024**3), 1)
         info["nas_total_gb"] = round(usage.total / (1024**3), 1)
     except OSError:

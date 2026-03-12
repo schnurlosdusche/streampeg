@@ -43,13 +43,14 @@ class SyncScheduler:
 
                     # Cleanup
                     import os
-                    from config import RECORDING_BASE, SMB_TARGET
+                    from config import RECORDING_BASE
                     dest = os.path.join(RECORDING_BASE, stream["dest_subdir"])
                     if os.path.isdir(dest):
                         cleanup.run_all(dest, stream["min_size_mb"])
 
-                    # Sync
-                    sync.sync_stream(stream)
+                    # Sync (if enabled)
+                    if sync.is_sync_enabled():
+                        sync.sync_stream(stream)
 
                     # Module cleanup (e.g. YouTube DB cleanup)
                     record_mode = stream["record_mode"] if "record_mode" in stream.keys() else "streamripper"
@@ -58,7 +59,7 @@ class SyncScheduler:
                         cleanup_fn = mod.get("cleanup_fn")
                         if cleanup_fn and record_mode in mod.get("record_modes", []):
                             try:
-                                nas_dest = os.path.join(SMB_TARGET, stream["dest_subdir"])
+                                nas_dest = os.path.join(sync.get_sync_target(), stream["dest_subdir"])
                                 cleanup_fn(stream, dest, nas_dest)
                             except Exception:
                                 pass

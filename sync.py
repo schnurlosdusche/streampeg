@@ -5,15 +5,33 @@ from config import RECORDING_BASE, SMB_TARGET
 from db import log_sync, log_event
 
 
+def is_sync_enabled():
+    """Check if sync is enabled in settings. Default: enabled."""
+    from db import get_setting
+    val = get_setting("sync_enabled")
+    return val != "0"  # enabled by default
+
+
+def get_sync_target():
+    """Return configured sync target path. Falls back to config.py SMB_TARGET."""
+    from db import get_setting
+    val = get_setting("sync_target")
+    return val if val else SMB_TARGET
+
+
 def sync_file(filepath, stream):
     """Sync a single file to NAS and remove locally. Called after download/recording."""
     if not filepath or not os.path.exists(filepath):
         return False
 
-    if not os.path.ismount(SMB_TARGET):
+    if not is_sync_enabled():
         return False
 
-    dst_dir = os.path.join(SMB_TARGET, stream["dest_subdir"])
+    target = get_sync_target()
+    if not os.path.ismount(target):
+        return False
+
+    dst_dir = os.path.join(target, stream["dest_subdir"])
     os.makedirs(dst_dir, exist_ok=True)
 
     dst = os.path.join(dst_dir, os.path.basename(filepath))
@@ -66,15 +84,19 @@ def _convert_to_mp3(src_dir):
 
 def sync_stream(stream):
     """Rsync one stream's recording dir to NAS. Return result dict."""
+    if not is_sync_enabled():
+        return {"success": True, "message": "Sync deaktiviert"}
+
+    target = get_sync_target()
     src = os.path.join(RECORDING_BASE, stream["dest_subdir"]) + "/"
-    dst = os.path.join(SMB_TARGET, stream["dest_subdir"]) + "/"
+    dst = os.path.join(target, stream["dest_subdir"]) + "/"
 
     if not os.path.isdir(src):
         return {"success": False, "message": "Quellverzeichnis nicht vorhanden"}
 
     # Check NAS mount
-    if not os.path.ismount(SMB_TARGET):
-        msg = f"NAS nicht gemountet: {SMB_TARGET}"
+    if not os.path.ismount(target):
+        msg = f"NAS nicht gemountet: {target}"
         log_sync(stream["id"], False, msg)
         return {"success": False, "message": msg}
 
@@ -119,7 +141,7 @@ def sync_stream(stream):
 
 def get_track_history(stream, limit=100):
     """List recorded tracks on NAS for this stream."""
-    dst = os.path.join(SMB_TARGET, stream["dest_subdir"])
+    dst = os.path.join(get_sync_target(), stream["dest_subdir"])
     if not os.path.isdir(dst):
         return []
 

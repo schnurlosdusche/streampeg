@@ -5,11 +5,11 @@ import time
 import glob
 import signal
 import urllib.request
-from config import RECORDING_BASE, SMB_TARGET, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
+from config import RECORDING_BASE, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 from db import log_event, get_track_stats
 from ffmpeg_recorder import FfmpegRecorder, _trim_audio_file, _title_matches_skip_words
 from module_manager import get_recorder_class
-from sync import sync_file
+from sync import sync_file, get_sync_target
 
 # In-memory process registry: stream_id -> {proc, start_time}
 _processes = {}
@@ -186,7 +186,7 @@ def _get_cached_file_counts(stream_id, dest, nas_dest):
 def get_status(stream):
     stream_id = stream["id"]
     dest = os.path.join(RECORDING_BASE, stream["dest_subdir"])
-    nas_dest = os.path.join(SMB_TARGET, stream["dest_subdir"])
+    nas_dest = os.path.join(get_sync_target(), stream["dest_subdir"])
 
     info = _processes.get(stream_id)
     running = False
@@ -407,8 +407,7 @@ class _FileWatcher:
     def _track_file_exists(self, filepath):
         """Check if this track already exists on NAS."""
         basename = os.path.basename(filepath)
-        from config import SMB_TARGET
-        nas_dest = os.path.join(SMB_TARGET, self.stream["dest_subdir"])
+        nas_dest = os.path.join(get_sync_target(), self.stream["dest_subdir"])
         return os.path.exists(os.path.join(nas_dest, basename))
 
     def _watch_loop(self):

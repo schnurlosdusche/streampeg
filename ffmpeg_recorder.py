@@ -309,6 +309,12 @@ class IcyStreamSplitter:
                 meta = meta_raw.decode("utf-8", errors="replace").rstrip("\x00")
                 title = _extract_stream_title(meta)
                 if title:
+                    # First title after start: remember it but keep waiting for actual change
+                    if self._waiting_for_new_track and self._current_track is None:
+                        self._current_track = title
+                        log_event(self.stream_id, "track",
+                                  f"Aktueller Track: {title} — warte auf nächsten")
+                        continue
                     pending_title = self._pending_split["title"] if self._pending_split else None
                     if title != self._current_track and title != pending_title and " - " in title:
                         if self.split_offset > 0:
@@ -339,8 +345,8 @@ class IcyStreamSplitter:
             return True
         # Check NAS via stream config
         if self.stream:
-            from config import SMB_TARGET
-            nas_dest = os.path.join(SMB_TARGET, self.stream["dest_subdir"])
+            from sync import get_sync_target
+            nas_dest = os.path.join(get_sync_target(), self.stream["dest_subdir"])
             if os.path.exists(os.path.join(nas_dest, filename)):
                 return True
         return False
@@ -730,8 +736,8 @@ class FfmpegRecorder:
         filename = f"{track_name}.mp3"
         if os.path.exists(os.path.join(self.dest, filename)):
             return True
-        from config import SMB_TARGET
-        nas_dest = os.path.join(SMB_TARGET, self.stream["dest_subdir"])
+        from sync import get_sync_target
+        nas_dest = os.path.join(get_sync_target(), self.stream["dest_subdir"])
         if os.path.exists(os.path.join(nas_dest, filename)):
             return True
         return False
