@@ -496,6 +496,8 @@ class _FileWatcher:
                         except OSError:
                             pass
                         continue
+                    log_event(self.stream_id, "track",
+                              f"Neuer Track: {os.path.basename(filepath)}")
                     sync_file(filepath, self.stream)
                 self._known_files = current_files
             except Exception:

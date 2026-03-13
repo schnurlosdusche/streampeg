@@ -217,12 +217,13 @@ def get_events(stream_id=None, limit=50):
 
 
 def get_track_stats(stream_id):
-    """Return recorded/skipped counts from events table."""
+    """Return recorded/skipped counts from events table.
+    Skip-word entries are excluded (jingles, ads, not real songs)."""
     conn = get_db()
     row = conn.execute(
         """SELECT
             COUNT(CASE WHEN message LIKE 'Neuer Track:%' OR message LIKE 'Neu:%' THEN 1 END) as recorded,
-            COUNT(CASE WHEN message LIKE 'Übersprungen%' OR message LIKE 'Bekannt%' THEN 1 END) as skipped
+            COUNT(CASE WHEN message LIKE 'Übersprungen (existiert)%' OR message LIKE 'Bekannt%' THEN 1 END) as skipped
         FROM events
         WHERE stream_id = ? AND event_type = 'track'""",
         (stream_id,),
