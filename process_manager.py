@@ -219,6 +219,7 @@ def get_status(stream):
         }
         if hasattr(info["proc"], "get_stats"):
             result["yt_stats"] = info["proc"].get_stats()
+            result["rec_pct"] = result["yt_stats"]["rec_pct"]
         return result
 
     # Current track from incomplete directory (only when running)

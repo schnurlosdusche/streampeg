@@ -125,6 +125,19 @@ class YouTubeSongDB:
                     UNIQUE(artist, title)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS counters (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute("INSERT OR IGNORE INTO counters (key, value) VALUES ('songs_seen', 0)")
+            conn.execute("INSERT OR IGNORE INTO counters (key, value) VALUES ('songs_downloaded', 0)")
+
+    def increment(self, key):
+        """Increment a counter (songs_seen or songs_downloaded)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE counters SET value = value + 1 WHERE key = ?", (key,))
 
     def is_known(self, artist, title):
         with sqlite3.connect(self.db_path) as conn:
@@ -142,12 +155,18 @@ class YouTubeSongDB:
 
     def add_song(self, artist, title, icy_raw, filename="", filepath="", status="downloaded"):
         with sqlite3.connect(self.db_path) as conn:
+            # Preserve play_count on re-download
+            existing = conn.execute(
+                "SELECT play_count FROM yt_songs WHERE artist = ? AND title = ?",
+                (artist.lower().strip(), title.lower().strip()),
+            ).fetchone()
+            play_count = (existing[0] if existing else 0) + 1
             conn.execute(
                 """INSERT OR REPLACE INTO yt_songs
-                   (artist, title, icy_raw, filename, filepath, status, downloaded_at, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+                   (artist, title, icy_raw, filename, filepath, status, downloaded_at, last_seen, play_count)
+                   VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?)""",
                 (artist.lower().strip(), title.lower().strip(), icy_raw,
-                 filename, filepath, status),
+                 filename, filepath, status, play_count),
             )
 
     def stats(self):
@@ -159,12 +178,16 @@ class YouTubeSongDB:
             not_found = conn.execute(
                 "SELECT COUNT(*) FROM yt_songs WHERE status = 'not_found'"
             ).fetchone()[0]
-            total_plays = conn.execute(
-                "SELECT COALESCE(SUM(play_count), 0) FROM yt_songs"
+            songs_seen = conn.execute(
+                "SELECT value FROM counters WHERE key = 'songs_seen'"
             ).fetchone()[0]
-            rec_pct = round(downloaded / total_plays * 100) if total_plays > 0 else 0
+            songs_downloaded = conn.execute(
+                "SELECT value FROM counters WHERE key = 'songs_downloaded'"
+            ).fetchone()[0]
+            rec_pct = round(songs_downloaded / songs_seen * 100) if songs_seen > 0 else 0
             return {"total": total, "downloaded": downloaded, "not_found": not_found,
-                    "total_plays": total_plays, "rec_pct": rec_pct}
+                    "songs_seen": songs_seen, "songs_downloaded": songs_downloaded,
+                    "rec_pct": rec_pct}
 
     def cleanup_missing(self, dest_dir, nas_dir=None):
         """Remove DB entries where file no longer exists on disk or NAS.
@@ -305,7 +328,7 @@ class YouTubeRecorder:
         # Skip station idents + user-configured skip words
         lower = icy_title.lower()
         skip_words = ["jingle", "werbung", "commercial"]
-        user_skip = self.stream.get("skip_words", "") if hasattr(self.stream, "get") else (self.stream["skip_words"] if "skip_words" in self.stream.keys() else "")
+        user_skip = self.stream["skip_words"] if "skip_words" in self.stream.keys() else ""
         if user_skip:
             skip_words += [w.strip().lower() for w in user_skip.split(";") if w.strip()]
         if any(w in lower for w in skip_words):
@@ -322,6 +345,9 @@ class YouTubeRecorder:
         artist = _title_case(artist_raw)
         title = _title_case(title_raw)
         self._current_track = f"{artist} - {title}"
+
+        # Count every valid song that played on the stream
+        self._song_db.increment("songs_seen")
 
         # Already known?
         if self._song_db.is_known(artist_raw, title_raw):
@@ -486,6 +512,7 @@ class YouTubeRecorder:
                     filepath=filepath,
                     status="downloaded",
                 )
+                self._song_db.increment("songs_downloaded")
                 self._stats_cache = self._song_db.stats()
                 log_event(self.stream_id, "download",
                           f"Download OK ({source_name}): {os.path.basename(filepath)} "
@@ -519,6 +546,7 @@ class YouTubeRecorder:
                             filename=f.name, filepath=str(f),
                             status="downloaded",
                         )
+                        self._song_db.increment("songs_downloaded")
                         self._stats_cache = self._song_db.stats()
                         log_event(self.stream_id, "download",
                                   f"Download OK ({source_name}): {f.name}")
