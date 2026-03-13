@@ -54,10 +54,10 @@ function updateStatus() {
                         var sub;
                         if (s.record_mode === 'soundcloud') {
                             sub = s.yt_stats.dl_sc + ' SC';
-                            if (s.yt_stats.dl_yt) sub += ' + ' + s.yt_stats.dl_yt + ' YT';
+                            if (s.dl_fallback) sub += ' + ' + s.yt_stats.dl_yt + ' YT';
                         } else {
                             sub = s.yt_stats.dl_yt + ' YT';
-                            if (s.yt_stats.dl_sc) sub += ' + ' + s.yt_stats.dl_sc + ' SC';
+                            if (s.dl_fallback) sub += ' + ' + s.yt_stats.dl_sc + ' SC';
                         }
                         sub += ' / ' + s.yt_stats.songs_seen + ' gehört';
                         trackHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + sub + '</small>';

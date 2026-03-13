@@ -67,9 +67,9 @@
                 {% else %}-{% endif %}
                 {% if st.yt_stats %}
                 {% if stream.record_mode == 'soundcloud' %}
-                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.dl_sc }} SC{% if st.yt_stats.dl_yt %} + {{ st.yt_stats.dl_yt }} YT{% endif %} / {{ st.yt_stats.songs_seen }} gehört</small>
+                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.dl_sc }} SC{% if stream.dl_fallback %} + {{ st.yt_stats.dl_yt }} YT{% endif %} / {{ st.yt_stats.songs_seen }} gehört</small>
                 {% else %}
-                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.dl_yt }} YT{% if st.yt_stats.dl_sc %} + {{ st.yt_stats.dl_sc }} SC{% endif %} / {{ st.yt_stats.songs_seen }} gehört</small>
+                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.dl_yt }} YT{% if stream.dl_fallback %} + {{ st.yt_stats.dl_sc }} SC{% endif %} / {{ st.yt_stats.songs_seen }} gehört</small>
                 {% endif %}
                 {% elif st.track_stats and st.track_stats.recorded + st.track_stats.skipped > 0 %}
                 <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.track_stats.recorded }} rec / {{ st.track_stats.recorded + st.track_stats.skipped }} gehört</small>
