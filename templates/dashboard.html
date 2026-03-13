@@ -15,7 +15,7 @@
             <th>Status</th>
             <th>Track Info</th>
             <th>Tracks</th>
-            <th>% rec</th>
+            <!-- <th>% rec</th> -->
             <th>Actions</th>
         </tr>
     </thead>
@@ -78,7 +78,7 @@
             <td class="files-cell">
                 {{ st.file_count }}
             </td>
-            <td class="rec-pct-cell">{{ st.rec_pct if st.rec_pct is defined else "-" }}</td>
+            <!-- <td class="rec-pct-cell">{{ st.rec_pct if st.rec_pct is defined else "-" }}</td> -->
             <td class="actions-cell">
                 {% if st.running %}
                 <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" class="inline">

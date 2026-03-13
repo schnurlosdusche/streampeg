@@ -72,10 +72,10 @@ function updateStatus() {
                     files.textContent = s.file_count;
                 }
 
-                const recPct = row.querySelector('.rec-pct-cell');
-                if (recPct) {
-                    recPct.textContent = s.rec_pct !== undefined ? s.rec_pct : '-';
-                }
+                // const recPct = row.querySelector('.rec-pct-cell');
+                // if (recPct) {
+                //     recPct.textContent = s.rec_pct !== undefined ? s.rec_pct : '-';
+                // }
 
                 // Update start/stop button
                 const actions = row.querySelector('.actions-cell');
