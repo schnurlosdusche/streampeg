@@ -66,7 +66,11 @@
                 {% elif st.running %}waiting for next track
                 {% else %}-{% endif %}
                 {% if st.yt_stats %}
-                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.songs_downloaded }} {{ 'SC' if stream.record_mode == 'soundcloud' else 'YT' }} / {{ st.yt_stats.songs_seen }} gehört</small>
+                {% if stream.record_mode == 'soundcloud' %}
+                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.dl_sc }} SC{% if st.yt_stats.dl_yt %} + {{ st.yt_stats.dl_yt }} YT{% endif %} / {{ st.yt_stats.songs_seen }} gehört</small>
+                {% else %}
+                <small style="display:block;color:var(--pico-muted-color,#888);">{{ st.yt_stats.dl_yt }} YT{% if st.yt_stats.dl_sc %} + {{ st.yt_stats.dl_sc }} SC{% endif %} / {{ st.yt_stats.songs_seen }} gehört</small>
+                {% endif %}
                 {% endif %}
             </td>
             <td class="files-cell">

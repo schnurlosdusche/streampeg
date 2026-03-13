@@ -133,6 +133,8 @@ class YouTubeSongDB:
             """)
             conn.execute("INSERT OR IGNORE INTO counters (key, value) VALUES ('songs_seen', 0)")
             conn.execute("INSERT OR IGNORE INTO counters (key, value) VALUES ('songs_downloaded', 0)")
+            conn.execute("INSERT OR IGNORE INTO counters (key, value) VALUES ('dl_yt', 0)")
+            conn.execute("INSERT OR IGNORE INTO counters (key, value) VALUES ('dl_sc', 0)")
 
     def increment(self, key):
         """Increment a counter (songs_seen or songs_downloaded)."""
@@ -178,16 +180,17 @@ class YouTubeSongDB:
             not_found = conn.execute(
                 "SELECT COUNT(*) FROM yt_songs WHERE status = 'not_found'"
             ).fetchone()[0]
-            songs_seen = conn.execute(
-                "SELECT value FROM counters WHERE key = 'songs_seen'"
-            ).fetchone()[0]
-            songs_downloaded = conn.execute(
-                "SELECT value FROM counters WHERE key = 'songs_downloaded'"
-            ).fetchone()[0]
+            counters = {}
+            for row in conn.execute("SELECT key, value FROM counters").fetchall():
+                counters[row[0]] = row[1]
+            songs_seen = counters.get("songs_seen", 0)
+            songs_downloaded = counters.get("songs_downloaded", 0)
+            dl_yt = counters.get("dl_yt", 0)
+            dl_sc = counters.get("dl_sc", 0)
             rec_pct = round(songs_downloaded / songs_seen * 100) if songs_seen > 0 else 0
             return {"total": total, "downloaded": downloaded, "not_found": not_found,
                     "songs_seen": songs_seen, "songs_downloaded": songs_downloaded,
-                    "rec_pct": rec_pct}
+                    "dl_yt": dl_yt, "dl_sc": dl_sc, "rec_pct": rec_pct}
 
     def cleanup_missing(self, dest_dir, nas_dir=None):
         """Remove DB entries where file no longer exists on disk or NAS.
@@ -513,6 +516,7 @@ class YouTubeRecorder:
                     status="downloaded",
                 )
                 self._song_db.increment("songs_downloaded")
+                self._song_db.increment("dl_sc" if is_soundcloud else "dl_yt")
                 self._stats_cache = self._song_db.stats()
                 log_event(self.stream_id, "download",
                           f"Download OK ({source_name}): {os.path.basename(filepath)} "
@@ -547,6 +551,7 @@ class YouTubeRecorder:
                             status="downloaded",
                         )
                         self._song_db.increment("songs_downloaded")
+                        self._song_db.increment("dl_sc" if is_soundcloud else "dl_yt")
                         self._stats_cache = self._song_db.stats()
                         log_event(self.stream_id, "download",
                                   f"Download OK ({source_name}): {f.name}")
