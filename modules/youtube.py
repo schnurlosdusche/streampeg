@@ -332,7 +332,7 @@ class YouTubeRecorder:
 
         # Download in background thread (don't block metadata reading)
         self._state = "recording"
-        record_mode = self.stream.get("record_mode", "youtube") if hasattr(self.stream, "get") else "youtube"
+        record_mode = self.stream["record_mode"] if "record_mode" in self.stream.keys() else "youtube"
         source_label = {"youtube": "YouTube", "soundcloud": "SoundCloud"}.get(record_mode, "YouTube")
         log_event(self.stream_id, "track",
                   f"Neu: {artist} - {title} -> {source_label}-Download")
@@ -360,8 +360,8 @@ class YouTubeRecorder:
         output_template = os.path.join(self.dest, f"{safe_artist} - {safe_title}.%(ext)s")
 
         # Determine sources based on record_mode + dl_fallback
-        record_mode = self.stream.get("record_mode", "youtube") if hasattr(self.stream, "get") else "youtube"
-        dl_fallback = self.stream.get("dl_fallback", 0) if hasattr(self.stream, "get") else 0
+        record_mode = self.stream["record_mode"] if "record_mode" in self.stream.keys() else "youtube"
+        dl_fallback = self.stream["dl_fallback"] if "dl_fallback" in self.stream.keys() else 0
         if record_mode == "soundcloud":
             sources = [("scsearch1", "SoundCloud")]
             if dl_fallback:
