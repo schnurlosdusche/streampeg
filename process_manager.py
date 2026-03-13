@@ -216,6 +216,7 @@ def get_status(stream):
             "disk_usage_mb": round(total_size / (1024 * 1024), 1),
             "rec_state": rec_state,
             "rec_pct": track_stats["rec_pct"],
+            "track_stats": track_stats,
         }
         if hasattr(info["proc"], "get_stats"):
             result["yt_stats"] = info["proc"].get_stats()
@@ -267,6 +268,7 @@ def get_status(stream):
         "disk_usage_mb": round(total_size / (1024 * 1024), 1),
         "rec_state": rec_state,
         "rec_pct": track_stats["rec_pct"],
+        "track_stats": track_stats,
     }
 
 
