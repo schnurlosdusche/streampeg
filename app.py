@@ -60,8 +60,9 @@ def stream_new():
         trim_start = int(request.form.get("trim_start", 0))
         trim_end = int(request.form.get("trim_end", 0))
         skip_words = request.form.get("skip_words", "").strip()
+        dl_fallback = 1 if request.form.get("dl_fallback") else 0
         db.create_stream(name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
-                         trim_start, trim_end, skip_words)
+                         trim_start, trim_end, skip_words, dl_fallback)
         return redirect(url_for("dashboard"))
     prefill = {
         "name": request.args.get("name", ""),
@@ -95,10 +96,11 @@ def stream_edit(stream_id):
         trim_start = int(request.form.get("trim_start", 0))
         trim_end = int(request.form.get("trim_end", 0))
         skip_words = request.form.get("skip_words", "").strip()
+        dl_fallback = 1 if request.form.get("dl_fallback") else 0
         # Stop if running before changing config
         process_manager.stop_stream(stream_id)
         db.update_stream(stream_id, name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
-                         trim_start, trim_end, skip_words)
+                         trim_start, trim_end, skip_words, dl_fallback)
         return redirect(url_for("dashboard"))
     return render_template("stream_form.html", stream=stream, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT,
                            module_options=module_manager.get_module_form_options(),

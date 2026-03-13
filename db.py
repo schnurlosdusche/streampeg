@@ -85,6 +85,8 @@ def init_db():
         conn.execute("ALTER TABLE streams ADD COLUMN trim_end INTEGER DEFAULT 0")
     if "skip_words" not in columns:
         conn.execute("ALTER TABLE streams ADD COLUMN skip_words TEXT DEFAULT ''")
+    if "dl_fallback" not in columns:
+        conn.execute("ALTER TABLE streams ADD COLUMN dl_fallback INTEGER DEFAULT 0")
     conn.commit()
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
@@ -124,12 +126,12 @@ def get_stream(stream_id):
 
 def create_stream(name, url, dest_subdir, min_size_mb=2, user_agent=DEFAULT_USER_AGENT,
                    record_mode="streamripper", metadata_url="", split_offset=0,
-                   trim_start=0, trim_end=0, skip_words=""):
+                   trim_start=0, trim_end=0, skip_words="", dl_fallback=0):
     conn = get_db()
     conn.execute(
-        "INSERT INTO streams (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words),
+        "INSERT INTO streams (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words, dl_fallback) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words, dl_fallback),
     )
     conn.commit()
     stream_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -139,11 +141,11 @@ def create_stream(name, url, dest_subdir, min_size_mb=2, user_agent=DEFAULT_USER
 
 def update_stream(stream_id, name, url, dest_subdir, min_size_mb=2, user_agent=DEFAULT_USER_AGENT,
                   record_mode="streamripper", metadata_url="", split_offset=0,
-                  trim_start=0, trim_end=0, skip_words=""):
+                  trim_start=0, trim_end=0, skip_words="", dl_fallback=0):
     conn = get_db()
     conn.execute(
-        "UPDATE streams SET name=?, url=?, dest_subdir=?, min_size_mb=?, user_agent=?, record_mode=?, metadata_url=?, split_offset=?, trim_start=?, trim_end=?, skip_words=? WHERE id=?",
-        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words, stream_id),
+        "UPDATE streams SET name=?, url=?, dest_subdir=?, min_size_mb=?, user_agent=?, record_mode=?, metadata_url=?, split_offset=?, trim_start=?, trim_end=?, skip_words=?, dl_fallback=? WHERE id=?",
+        (name, url, dest_subdir, min_size_mb, user_agent, record_mode, metadata_url, split_offset, trim_start, trim_end, skip_words, dl_fallback, stream_id),
     )
     conn.commit()
     conn.close()

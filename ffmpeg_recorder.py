@@ -821,10 +821,12 @@ class FfmpegRecorder:
         """Check if recording is still running (subprocess.Popen compatible)."""
         if self._splitter:
             return self._splitter.poll()
-        if self._ffmpeg_proc:
-            return self._ffmpeg_proc.poll()
+        # API mode: the poll_thread is the main loop, not ffmpeg.
+        # ffmpeg may be stopped between tracks (skipping), that's normal.
+        if self._poll_thread and self._poll_thread.is_alive():
+            return None  # Still active
         if not self._stop_event.is_set():
-            return None  # Still active (e.g. waiting for new track in API mode)
+            return None  # Still active (not explicitly stopped)
         return -1
 
     @property

@@ -4,6 +4,10 @@
     padding-right: 2%;
 }
 
+nav.container {
+    padding-top: 2%;
+}
+
 .disk-bar {
     text-align: right;
     margin-bottom: 1rem;
@@ -94,7 +98,7 @@
     padding: 0.35rem 0.5rem;
 }
 #streams-table th:nth-child(1),
-#streams-table td:nth-child(1) { width: 15%; }     /* Name */
+#streams-table td:nth-child(1) { width: 22%; }     /* Name */
 #streams-table th:nth-child(2),
 #streams-table td:nth-child(2) { width: 5%; text-align: center; }  /* Modus */
 #streams-table th:nth-child(3),

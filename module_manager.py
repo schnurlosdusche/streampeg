@@ -82,9 +82,11 @@ def get_module_icons():
     """Return dict {record_mode: icon_html} for all enabled modules."""
     icons = {}
     for mod in get_enabled_modules():
-        html = mod.get("icon_html", "")
+        # Per-mode icons override the single icon_html
+        mode_icons = mod.get("icons", {})
+        default_html = mod.get("icon_html", "")
         for mode in mod.get("record_modes", []):
-            icons[mode] = html
+            icons[mode] = mode_icons.get(mode, default_html)
     return icons
 
 
@@ -92,9 +94,14 @@ def get_module_form_options():
     """Return list of form option dicts for enabled modules."""
     options = []
     for mod in get_enabled_modules():
-        opt = mod.get("form_option")
-        if opt:
-            options.append(opt)
+        # Support both single form_option and list form_options
+        opts = mod.get("form_options")
+        if opts:
+            options.extend(opts)
+        else:
+            opt = mod.get("form_option")
+            if opt:
+                options.append(opt)
     return options
 
 

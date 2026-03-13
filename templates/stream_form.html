@@ -52,6 +52,14 @@
         <small>Shoutcast /currentsong Endpoint - leer lassen fuer automatische Erkennung</small>
     </div>
 
+    <div id="dl-fallback-group" style="{{ '' if stream and stream.record_mode in ('youtube', 'soundcloud') else 'display:none;' }}">
+        <label>
+            <input type="checkbox" id="dl_fallback" name="dl_fallback" value="1" {{ 'checked' if stream and stream.dl_fallback }}>
+            <span id="dl-fallback-label">{{ 'SoundCloud als Fallback' if not stream or stream.record_mode != 'soundcloud' else 'YouTube als Fallback' }}</span>
+        </label>
+        <small id="dl-fallback-hint">Falls die primaere Quelle keinen Treffer liefert, wird die andere Quelle durchsucht</small>
+    </div>
+
     <div id="offset-group">
         <label>Split-Offset <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">Zeitdifferenz zwischen Stream Trackwechsel und Metadaten des neuen Tracks verfügbar</span></label>
         <input type="hidden" id="split_offset" name="split_offset" value="{{ stream.split_offset if stream and stream.split_offset else 0 }}">
@@ -134,6 +142,11 @@ var MODULE_HINTS = {{ module_hints|default({})|tojson }};
 function toggleMetadataUrl() {
     var mode = document.getElementById('record_mode').value;
     document.getElementById('metadata-url-group').style.display = mode === 'ffmpeg_api' ? '' : 'none';
+    var isDl = (mode === 'youtube' || mode === 'soundcloud');
+    document.getElementById('dl-fallback-group').style.display = isDl ? '' : 'none';
+    if (isDl) {
+        document.getElementById('dl-fallback-label').textContent = mode === 'soundcloud' ? 'YouTube als Fallback' : 'SoundCloud als Fallback';
+    }
 
     // Hide fields specified by module
     var hideFields = MODULE_HIDE_FIELDS[mode] || [];

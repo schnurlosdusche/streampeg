@@ -332,8 +332,10 @@ class YouTubeRecorder:
 
         # Download in background thread (don't block metadata reading)
         self._state = "recording"
+        record_mode = self.stream.get("record_mode", "youtube") if hasattr(self.stream, "get") else "youtube"
+        source_label = {"youtube": "YouTube", "soundcloud": "SoundCloud"}.get(record_mode, "YouTube")
         log_event(self.stream_id, "track",
-                  f"Neu: {artist} - {title} -> YouTube-Download")
+                  f"Neu: {artist} - {title} -> {source_label}-Download")
 
         # Only one download at a time
         if self._download_thread and self._download_thread.is_alive():
@@ -357,11 +359,17 @@ class YouTubeRecorder:
         safe_title = re.sub(r'[_\s]+', '_', safe_title)
         output_template = os.path.join(self.dest, f"{safe_artist} - {safe_title}.%(ext)s")
 
-        queries = [
-            f"{artist} - {title}",
-            f"{artist} - {title} audio",
-            f"{artist} {title} official audio",
-        ]
+        # Determine sources based on record_mode + dl_fallback
+        record_mode = self.stream.get("record_mode", "youtube") if hasattr(self.stream, "get") else "youtube"
+        dl_fallback = self.stream.get("dl_fallback", 0) if hasattr(self.stream, "get") else 0
+        if record_mode == "soundcloud":
+            sources = [("scsearch1", "SoundCloud")]
+            if dl_fallback:
+                sources.append(("ytsearch1", "YouTube"))
+        else:
+            sources = [("ytsearch1", "YouTube")]
+            if dl_fallback:
+                sources.append(("scsearch1", "SoundCloud"))
 
         # deno path for yt-dlp
         env = os.environ.copy()
@@ -369,44 +377,72 @@ class YouTubeRecorder:
         if os.path.isdir(deno_path):
             env["PATH"] = f"{deno_path}:{env.get('PATH', '')}"
 
-        for i, query in enumerate(queries):
+        for search_prefix, source_name in sources:
             if self._stop_event.is_set():
                 return
+
+            queries = [
+                f"{artist} - {title}",
+                f"{artist} - {title} audio",
+                f"{artist} {title} official audio",
+            ]
+
+            found = self._try_source(
+                queries, search_prefix, source_name, output_template, env,
+                artist_raw, title_raw, icy_title, artist, title,
+            )
+            if found:
+                return
+
+        # All sources failed — no DB entry, will retry next time the song plays
+        log_event(self.stream_id, "download_fail",
+                  f"Nicht gefunden (kein DB-Eintrag): {artist} - {title}")
+
+    def _try_source(self, queries, search_prefix, source_name, output_template,
+                    env, artist_raw, title_raw, icy_title, artist, title):
+        """Try downloading from a single source. Returns True if successful."""
+        is_soundcloud = search_prefix == "scsearch1"
+
+        for i, query in enumerate(queries):
+            if self._stop_event.is_set():
+                return False
 
             try:
                 cmd = [
                     YT_DLP,
-                    f"ytsearch1:{query}",
+                    f"{search_prefix}:{query}",
                     "--extract-audio",
                     "--audio-format", "mp3",
                     "--audio-quality", "0",
                     "--format", "bestaudio",
-                    "--embed-thumbnail",
+                    "--postprocessor-args", "ffmpeg:-b:a 320k",
                     "--no-playlist",
                     "--max-downloads", "1",
                     "--output", output_template,
                     "--print", "after_move:filepath",
                     "--no-overwrites",
                     "--restrict-filenames",
-                    "--user-agent", YT_UA,
-                    "--remote-components", "ejs:github",
                     "--match-filter", "duration < 600",
                 ]
+                if not is_soundcloud:
+                    cmd += ["--embed-thumbnail"]
+                    cmd += ["--user-agent", YT_UA]
+                    cmd += ["--remote-components", "ejs:github"]
 
                 result = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=120, env=env,
                 )
             except subprocess.TimeoutExpired:
-                log_event(self.stream_id, "yt_error", f"Timeout: {query}")
+                log_event(self.stream_id, "yt_error", f"Timeout ({source_name}): {query}")
                 continue
             except Exception as e:
-                log_event(self.stream_id, "yt_error", f"Exception: {str(e)[:150]}")
+                log_event(self.stream_id, "yt_error", f"Exception ({source_name}): {str(e)[:150]}")
                 continue
 
             if result.returncode not in (0, 101):
                 stderr = result.stderr[:300]
                 log_event(self.stream_id, "yt_error",
-                          f"RC {result.returncode} ({i+1}/3): {stderr[:150]}")
+                          f"RC {result.returncode} ({source_name} {i+1}/3): {stderr[:150]}")
                 if "Sign in to confirm" in stderr or "age" in stderr.lower():
                     continue
                 if i < len(queries) - 1:
@@ -442,8 +478,7 @@ class YouTubeRecorder:
                         os.remove(filepath)
                     except OSError:
                         pass
-                    # No DB entry — will retry next time
-                    return
+                    return False
 
                 self._song_db.add_song(
                     artist_raw, title_raw, icy_title,
@@ -453,10 +488,10 @@ class YouTubeRecorder:
                 )
                 self._stats_cache = self._song_db.stats()
                 log_event(self.stream_id, "download",
-                          f"Download OK: {os.path.basename(filepath)} "
+                          f"Download OK ({source_name}): {os.path.basename(filepath)} "
                           f"(DB: {self._stats_cache['downloaded']} Songs)")
                 sync_file(filepath, self.stream)
-                return
+                return True
 
             # Fallback: check for recently created mp3
             try:
@@ -468,7 +503,6 @@ class YouTubeRecorder:
                 now = time.time()
                 for f in recent:
                     if now - f.stat().st_mtime < 60:
-                        # Check bitrate — reject files below minimum
                         file_br = _get_file_bitrate(str(f))
                         if file_br is not None and file_br < MIN_BITRATE:
                             log_event(self.stream_id, "download_fail",
@@ -478,8 +512,7 @@ class YouTubeRecorder:
                                 f.unlink()
                             except OSError:
                                 pass
-                            # No DB entry — will retry next time
-                            return
+                            return False
 
                         self._song_db.add_song(
                             artist_raw, title_raw, icy_title,
@@ -488,15 +521,13 @@ class YouTubeRecorder:
                         )
                         self._stats_cache = self._song_db.stats()
                         log_event(self.stream_id, "download",
-                                  f"Download OK: {f.name}")
+                                  f"Download OK ({source_name}): {f.name}")
                         sync_file(str(f), self.stream)
-                        return
+                        return True
             except Exception:
                 pass
 
-        # All queries failed — no DB entry, will retry next time the song plays
-        log_event(self.stream_id, "download_fail",
-                  f"Nicht gefunden (kein DB-Eintrag): {artist} - {title}")
+        return False
 
 
 def cleanup_youtube_db(stream, dest, nas_dest):
@@ -514,22 +545,37 @@ def cleanup_youtube_db(stream, dest, nas_dest):
 
 # --- Module registration ---
 
+_YT_ICON = (
+    '<svg title="YouTube-Download" width="18" height="13" viewBox="0 0 24 17" style="vertical-align:middle;">'
+    '<path d="M23.5 2.5A3 3 0 0 0 21.4.4C19.5 0 12 0 12 0S4.5 0 2.6.4A3 3 0 0 0 .5 2.5 31.5 31.5 0 0 0 0 8.5a31.5 31.5 0 0 0 .5 6A3 3 0 0 0 2.6 16.6C4.5 17 12 17 12 17s7.5 0 9.4-.4a3 3 0 0 0 2.1-2.1 31.5 31.5 0 0 0 .5-6 31.5 31.5 0 0 0-.5-6z" fill="#FF0000"/>'
+    '<path d="M9.6 12.2l6.3-3.7-6.3-3.7z" fill="#fff"/></svg>'
+)
+_SC_ICON = (
+    '<svg title="SoundCloud-Download" width="20" height="20" viewBox="0 0 24 24" style="vertical-align:middle;">'
+    '<path d="M1 18.5v-5a.5.5 0 0 1 1 0v5a.5.5 0 0 1-1 0zm3 1v-7a.5.5 0 0 1 1 0v7a.5.5 0 0 1-1 0z'
+    'm3-.5V12a.5.5 0 0 1 1 0v7a.5.5 0 0 1-1 0zm3 .5V10a.5.5 0 0 1 1 0v9.5a.5.5 0 0 1-1 0z" fill="#FF5500"/>'
+    '<path d="M13 9c0-3.3 2.7-6 6-6 2.5 0 4.6 1.5 5.5 3.7.3.1.5.3.5.6V19c0 .6-.4 1-1 1h-11V9z" fill="#FF5500"/></svg>'
+)
+
 MODULE_INFO = {
     "name": "youtube",
-    "label": "YouTube-Download",
-    "description": "ICY-Metadaten als Trigger, Songs von YouTube laden (yt-dlp erforderlich)",
-    "record_modes": ["youtube"],
+    "label": "YouTube / SoundCloud Download",
+    "description": "ICY-Metadaten als Trigger, Songs von YouTube/SoundCloud laden (yt-dlp erforderlich)",
+    "record_modes": ["youtube", "soundcloud"],
     "recorder_class": YouTubeRecorder,
-    "icon_html": '<svg title="YouTube-Download" width="18" height="13" viewBox="0 0 24 17" style="vertical-align:middle;">'
-                 '<path d="M23.5 2.5A3 3 0 0 0 21.4.4C19.5 0 12 0 12 0S4.5 0 2.6.4A3 3 0 0 0 .5 2.5 31.5 31.5 0 0 0 0 8.5a31.5 31.5 0 0 0 .5 6A3 3 0 0 0 2.6 16.6C4.5 17 12 17 12 17s7.5 0 9.4-.4a3 3 0 0 0 2.1-2.1 31.5 31.5 0 0 0 .5-6 31.5 31.5 0 0 0-.5-6z" fill="#FF0000"/>'
-                 '<path d="M9.6 12.2l6.3-3.7-6.3-3.7z" fill="#fff"/></svg>',
-    "form_option": {
-        "value": "youtube",
-        "label": "YouTube-Download (ICY-Metadaten als Trigger)",
+    "icons": {
+        "youtube": _YT_ICON,
+        "soundcloud": _SC_ICON,
     },
+    "form_options": [
+        {"value": "youtube", "label": "YouTube-Download (ICY-Metadaten als Trigger)"},
+        {"value": "soundcloud", "label": "SoundCloud-Download (ICY-Metadaten als Trigger)"},
+    ],
     "form_hints": {
-        "youtube": "ICY-Metadaten werden als Trigger genutzt. Songs werden von YouTube geladen (yt-dlp).",
+        "youtube": "Songs werden von YouTube geladen (yt-dlp).",
+        "soundcloud": "Songs werden von SoundCloud geladen (yt-dlp).",
     },
     "hide_fields": ["offset-group", "trim-group"],
+    "has_fallback": True,
     "cleanup_fn": cleanup_youtube_db,
 }
