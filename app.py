@@ -466,6 +466,7 @@ def api_status():
         st["id"] = s["id"]
         st["name"] = s["name"]
         st["url"] = s["url"]
+        st["record_mode"] = s["record_mode"]
         result.append(st)
     return jsonify({"streams": result, "disk": _get_disk_info()})
 

@@ -39,29 +39,37 @@ function updateStatus() {
                     }
                 }
 
+                // Stats subtitle under track info
                 const track = row.querySelector('.track-cell');
                 if (track) {
-                    var ct = (s.current_track || '').trim();
-                    var hasTrack = ct && ct !== 'recording' && ct !== '-' && ct.replace(/[\s-]/g, '') !== '';
+                    var trackHtml;
                     var rs = s.rec_state || '';
-                    if (rs === 'waiting') {
-                        track.textContent = 'waiting for next track';
-                    } else if (hasTrack) {
-                        track.textContent = ct;
-                    } else if (s.running) {
-                        track.textContent = 'waiting for next track';
-                    } else {
-                        track.textContent = '-';
+                    var ct = s.current_track || '';
+                    var hasTrack = ct && ct !== 'recording' && ct !== '-' && ct.replace(/[\s-]/g, '') !== '';
+                    if (rs === 'waiting') { trackHtml = 'waiting for next track'; }
+                    else if (hasTrack) { trackHtml = ct; }
+                    else if (s.running) { trackHtml = 'waiting for next track'; }
+                    else { trackHtml = '-'; }
+                    if (s.yt_stats) {
+                        var sub;
+                        if (s.record_mode === 'soundcloud') {
+                            sub = s.yt_stats.dl_sc + ' SC';
+                            if (s.yt_stats.dl_yt) sub += ' + ' + s.yt_stats.dl_yt + ' YT';
+                        } else {
+                            sub = s.yt_stats.dl_yt + ' YT';
+                            if (s.yt_stats.dl_sc) sub += ' + ' + s.yt_stats.dl_sc + ' SC';
+                        }
+                        sub += ' / ' + s.yt_stats.songs_seen + ' gehört';
+                        trackHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + sub + '</small>';
+                    } else if (s.track_stats && (s.track_stats.recorded + s.track_stats.skipped) > 0) {
+                        trackHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + s.track_stats.recorded + ' rec / ' + (s.track_stats.recorded + s.track_stats.skipped) + ' gehört</small>';
                     }
+                    track.innerHTML = trackHtml;
                 }
 
                 const files = row.querySelector('.files-cell');
                 if (files) {
-                    var filesHtml = s.file_count;
-                    if (s.yt_stats) {
-                        filesHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + s.yt_stats.downloaded + ' YT / ' + s.yt_stats.not_found + ' miss</small>';
-                    }
-                    files.innerHTML = filesHtml;
+                    files.textContent = s.file_count;
                 }
 
                 const recPct = row.querySelector('.rec-pct-cell');
