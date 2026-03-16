@@ -98,7 +98,7 @@ nav.container {
     padding: 0.35rem 0.5rem;
 }
 #streams-table th:nth-child(1),
-#streams-table td:nth-child(1) { width: 22%; }     /* Name */
+#streams-table td:nth-child(1) { width: 20%; }     /* Name */
 #streams-table th:nth-child(2),
 #streams-table td:nth-child(2) { width: 5%; text-align: center; }  /* Modus */
 #streams-table th:nth-child(3),
@@ -107,10 +107,10 @@ nav.container {
 #streams-table td:nth-child(4) { width: auto; overflow: visible; white-space: normal; word-break: break-word; }  /* Track */
 #streams-table th:nth-child(5),
 #streams-table td:nth-child(5) { width: 8%; text-align: right; }  /* Dateien */
+/* #streams-table th:nth-child(6),
+#streams-table td:nth-child(6) { width: 80px; text-align: right; }   % rec  */
 #streams-table th:nth-child(6),
-#streams-table td:nth-child(6) { width: 80px; text-align: right; }  /* % rec */
-#streams-table th:nth-child(7),
-#streams-table td:nth-child(7) { width: 180px; white-space: nowrap; }  /* Actions */
+#streams-table td:nth-child(6) { width: 180px; white-space: nowrap; }  /* Actions */
 
 button.btn-listen {
     --pico-color: #888 !important;
