@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ "Bearbeiten" if stream else "Neuer Stream" }} - Streampeg{% endblock %}
+{% block title %}{{ t('form.edit_title') if stream else t('form.new_title') }} - Streampeg{% endblock %}
 {% block content %}
-<h3>{{ "Stream bearbeiten" if stream else "Neuer Stream" }}</h3>
+<h3>{{ t('form.edit_stream') if stream else t('form.new_stream') }}</h3>
 
 <style>
 .stream-form label { font-size: 14px; margin-bottom: 2px; }
@@ -13,18 +13,18 @@
 
 <form method="post" action="{{ url_for('stream_edit', stream_id=stream.id) if stream else url_for('stream_new') }}" class="stream-form">
     <label for="name">Name</label>
-    <input type="text" id="name" name="name" value="{{ stream.name if stream else request.args.get('name', '') }}" required placeholder="z.B. Reggae Radio">
+    <input type="text" id="name" name="name" value="{{ stream.name if stream else request.args.get('name', '') }}" required placeholder="{{ t('form.name_placeholder') }}">
 
     <label for="url">Stream URL</label>
     <div class="grid">
         <input type="url" id="url" name="url" value="{{ stream.url if stream else request.args.get('url', '') }}" required placeholder="https://...">
-        <button type="button" id="test-btn" class="outline" onclick="testStream()">Testen</button>
+        <button type="button" id="test-btn" class="outline" onclick="testStream()">{{ t('form.test') }}</button>
     </div>
     <small id="test-result" style="display:none;"></small>
 
-    <label for="dest_subdir">Verzeichnisname (optional)</label>
-    <input type="text" id="dest_subdir" name="dest_subdir" value="{{ stream.dest_subdir if stream else '' }}" placeholder="Wird automatisch aus dem Namen erzeugt">
-    <small>Unterverzeichnis in /recording/ und auf dem NAS</small>
+    <label for="dest_subdir">{{ t('form.dest_subdir') }}</label>
+    <input type="text" id="dest_subdir" name="dest_subdir" value="{{ stream.dest_subdir if stream else '' }}" placeholder="{{ t('form.dest_auto') }}">
+    <small>{{ t('form.dest_hint') }}</small>
 
     <label for="user_agent">User-Agent</label>
     <select id="user_agent" name="user_agent">
@@ -32,36 +32,36 @@
         <option value="{{ key }}" {{ 'selected' if (stream and stream.user_agent == key) or (not stream and key == default_ua) }}>{{ key|capitalize }} &mdash; {{ value[:60] }}{{ '...' if value|length > 60 }}</option>
         {% endfor %}
     </select>
-    <small>User-Agent der beim Verbinden mit dem Stream gesendet wird</small>
+    <small>{{ t('form.user_agent_hint') }}</small>
 
-    <label for="record_mode">Aufnahmemodus</label>
+    <label for="record_mode">{{ t('form.record_mode') }}</label>
     {% set cur_mode = stream.record_mode if stream else (prefill.record_mode if prefill and prefill.record_mode else 'streamripper') %}
     <select id="record_mode" name="record_mode" onchange="toggleMetadataUrl()">
-        <option value="streamripper" {{ 'selected' if cur_mode == 'streamripper' }}>Streamripper (ICY-Metadaten)</option>
-        <option value="ffmpeg_icy" {{ 'selected' if cur_mode == 'ffmpeg_icy' }}>FFmpeg + ICY-Metadaten (bei HTTPS-Redirects)</option>
-        <option value="ffmpeg_api" {{ 'selected' if cur_mode == 'ffmpeg_api' }}>FFmpeg + Shoutcast-API (kein ICY)</option>
+        <option value="streamripper" {{ 'selected' if cur_mode == 'streamripper' }}>{{ t('form.streamripper_opt') }}</option>
+        <option value="ffmpeg_icy" {{ 'selected' if cur_mode == 'ffmpeg_icy' }}>{{ t('form.ffmpeg_icy_opt') }}</option>
+        <option value="ffmpeg_api" {{ 'selected' if cur_mode == 'ffmpeg_api' }}>{{ t('form.ffmpeg_api_opt') }}</option>
         {% for opt in module_options %}
         <option value="{{ opt.value }}" {{ 'selected' if cur_mode == opt.value }}>{{ opt.label }}</option>
         {% endfor %}
     </select>
-    <small id="mode-hint">Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen</small>
+    <small id="mode-hint">{{ t('form.mode_hint') }}</small>
 
     <div id="metadata-url-group" style="{{ '' if stream and stream.record_mode == 'ffmpeg_api' else 'display:none;' }}">
         <label for="metadata_url">Metadata-URL (optional)</label>
         <input type="url" id="metadata_url" name="metadata_url" value="{{ stream.metadata_url if stream else '' }}" placeholder="Wird automatisch aus der Stream-URL abgeleitet">
-        <small>Shoutcast /currentsong Endpoint - leer lassen fuer automatische Erkennung</small>
+        <small>{{ t('form.metadata_hint') }}</small>
     </div>
 
     <div id="dl-fallback-group" style="{{ '' if stream and stream.record_mode in ('youtube', 'soundcloud') else 'display:none;' }}">
         <label>
             <input type="checkbox" id="dl_fallback" name="dl_fallback" value="1" {{ 'checked' if stream and stream.dl_fallback }}>
-            <span id="dl-fallback-label">{{ 'SoundCloud als Fallback' if not stream or stream.record_mode != 'soundcloud' else 'YouTube als Fallback' }}</span>
+            <span id="dl-fallback-label">{{ t('form.sc_fallback') if not stream or stream.record_mode != 'soundcloud' else t('form.yt_fallback') }}</span>
         </label>
-        <small id="dl-fallback-hint">Falls die primaere Quelle keinen Treffer liefert, wird die andere Quelle durchsucht</small>
+        <small id="dl-fallback-hint">{{ t('form.fallback_hint') }}</small>
     </div>
 
     <div id="offset-group">
-        <label>Split-Offset <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">Zeitdifferenz zwischen Stream Trackwechsel und Metadaten des neuen Tracks verfügbar</span></label>
+        <label>{{ t('form.split_offset') }} <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">{{ t('form.split_offset_hint') }}</span></label>
         <input type="hidden" id="split_offset" name="split_offset" value="{{ stream.split_offset if stream and stream.split_offset else 0 }}">
 
         <div id="split-slider" style="position:relative;height:56px;margin:18px 0 20px;user-select:none;cursor:pointer;touch-action:none;">
@@ -75,13 +75,13 @@
             <div id="viz-center-dot" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);pointer-events:none;z-index:2;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
             <!-- center label below dot, centered -->
             <div id="viz-center" style="position:absolute;bottom:-16px;transform:translateX(-50%);pointer-events:none;z-index:2;">
-                <span style="font-size:12px;color:var(--pico-muted-color,#888);white-space:nowrap;">Trackwechsel</span>
+                <span style="font-size:12px;color:var(--pico-muted-color,#888);white-space:nowrap;">{{ t('form.track_change') }}</span>
             </div>
             <!-- drag handle (Metadatenwechsel) -->
             <div id="viz-handle" style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--pico-primary-background);border:2px solid var(--pico-primary-focus);transform:translate(-50%,-50%);z-index:3;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
             <!-- handle label above line with Titel A / Titel B -->
             <div id="viz-handle-label" style="position:absolute;top:-18px;font-size:15px;font-weight:normal;color:#fff;transform:translateX(-50%);white-space:nowrap;pointer-events:none;z-index:4;">
-                <span id="viz-label-a" style="font-size:10px;font-weight:normal;margin-right:10px;color:#4caf50;">Track A INFO</span>Metadaten<span id="viz-label-b" style="font-size:10px;font-weight:normal;margin-left:10px;color:#2196f3;">Track B INFO</span>
+                <span id="viz-label-a" style="font-size:10px;font-weight:normal;margin-right:10px;color:#4caf50;">{{ t('form.track_a') }}</span>{{ t('form.metadata') }}<span id="viz-label-b" style="font-size:10px;font-weight:normal;margin-left:10px;color:#2196f3;">{{ t('form.track_b') }}</span>
             </div>
         </div>
 
@@ -90,7 +90,7 @@
     </div>
 
     <div id="trim-group">
-        <label>Trim <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">Anfang und Ende jedes Tracks beschneiden (0–20 Sekunden)</span></label>
+        <label>Trim <span style="font-size:9px;font-weight:normal;color:var(--pico-muted-color,#888);">{{ t('form.trim_hint') }}</span></label>
         <input type="hidden" id="trim_start" name="trim_start" value="{{ stream.trim_start if stream and stream.trim_start else 0 }}">
         <input type="hidden" id="trim_end" name="trim_end" value="{{ stream.trim_end if stream and stream.trim_end else 0 }}">
         <div id="trim-slider" style="position:relative;height:48px;margin:10px 0 6px;user-select:none;cursor:pointer;touch-action:none;">
@@ -114,24 +114,24 @@
         <small id="trim-info" style="display:block;color:var(--pico-muted-color,#888);"></small>
     </div>
 
-    <label for="skip_words">Titel-Filter (Skip-Woerter)</label>
+    <label for="skip_words">{{ t('form.skip_words') }}</label>
     <textarea id="skip_words" name="skip_words" rows="2" placeholder="advert;sensual lounge;werbung">{{ stream.skip_words if stream and stream.skip_words else '' }}</textarea>
-    <small>Semikolon-getrennte Woerter — Tracks mit diesen Begriffen im Titel werden uebersprungen</small>
+    <small>{{ t('form.skip_words_hint') }}</small>
 
-    <label for="min_size_mb">Mindestgroesse (MB)</label>
+    <label for="min_size_mb">{{ t('form.min_size') }}</label>
     <input type="number" id="min_size_mb" name="min_size_mb" value="{{ stream.min_size_mb if stream else 2 }}" min="1" max="50">
-    <small>Dateien kleiner als dieser Wert werden automatisch geloescht</small>
+    <small>{{ t('form.min_size_hint') }}</small>
 
     <div class="grid">
-        <button type="submit">{{ "Speichern" if stream else "Erstellen" }}</button>
-        <a href="{{ url_for('dashboard') }}" role="button" class="outline secondary">Abbrechen</a>
+        <button type="submit">{{ t('form.save') if stream else t('form.create') }}</button>
+        <a href="{{ url_for('dashboard') }}" role="button" class="outline secondary">{{ t('form.cancel') }}</a>
     </div>
 </form>
 
 {% if stream %}
 <hr>
-<form method="post" action="{{ url_for('stream_delete', stream_id=stream.id) }}" onsubmit="return confirm('Stream wirklich loeschen?')">
-    <button type="submit" class="outline" style="--pico-color: var(--pico-color-red-500);">Stream loeschen</button>
+<form method="post" action="{{ url_for('stream_delete', stream_id=stream.id) }}" onsubmit="return confirm('{{ t('form.delete_confirm') }}')">
+    <button type="submit" class="outline" style="--pico-color: var(--pico-color-red-500);">{{ t('form.delete_stream') }}</button>
 </form>
 {% endif %}
 
@@ -145,7 +145,7 @@ function toggleMetadataUrl() {
     var isDl = (mode === 'youtube' || mode === 'soundcloud');
     document.getElementById('dl-fallback-group').style.display = isDl ? '' : 'none';
     if (isDl) {
-        document.getElementById('dl-fallback-label').textContent = mode === 'soundcloud' ? 'YouTube als Fallback' : 'SoundCloud als Fallback';
+        document.getElementById('dl-fallback-label').textContent = mode === 'soundcloud' ? t('form.yt_fallback') : t('form.sc_fallback');
     }
 
     // Hide fields specified by module
@@ -163,11 +163,11 @@ function toggleMetadataUrl() {
 
     var hint = document.getElementById('offset-mode-hint');
     if (mode === 'streamripper') {
-        hint.textContent = 'Hinweis: Streamripper verwendet eigene Split-Logik. Offset wird ignoriert.';
+        hint.textContent = t('form.streamripper_hint');
     } else if (mode === 'ffmpeg_icy') {
         hint.textContent = '';
     } else if (mode === 'ffmpeg_api') {
-        hint.textContent = 'Nur positive Werte (Metadaten zu frueh) werden im API-Modus unterstuetzt.';
+        hint.textContent = t('form.api_mode_hint');
     } else {
         hint.textContent = '';
     }
@@ -177,7 +177,7 @@ function toggleMetadataUrl() {
         modeHint.innerHTML = MODULE_HINTS[mode];
         modeHint.style.color = 'var(--pico-color-green-500, green)';
     } else {
-        modeHint.textContent = 'Nutze "Stream testen" um den optimalen Modus automatisch zu erkennen';
+        modeHint.textContent = t('form.mode_hint');
         modeHint.style.color = '';
     }
 }
@@ -285,13 +285,13 @@ function updateViz() {
 
     var info = document.getElementById('offset-info');
     if (val > 0) {
-        info.textContent = 'Trackwechsel ' + val + 's vor Metadatenwechsel';
+        info.textContent = t('form.offset_before').replace('{n}', val);
         info.style.color = '#2196f3';
     } else if (val < 0) {
-        info.textContent = 'Trackwechsel ' + Math.abs(val) + 's nach Metadatenwechsel';
+        info.textContent = t('form.offset_after').replace('{n}', Math.abs(val));
         info.style.color = '#4caf50';
     } else {
-        info.textContent = 'Kein Offset — Split erfolgt sofort bei Metadaten-Wechsel';
+        info.textContent = t('form.offset_none');
         info.style.color = 'var(--pico-muted-color,#888)';
     }
 
@@ -435,13 +435,13 @@ function updateTrimSlider() {
 
     // Info text
     var parts = [];
-    if (ts > 0) parts.push('Anfang: ' + ts + 's');
-    if (te > 0) parts.push('Ende: ' + te + 's');
+    if (ts > 0) parts.push(t('form.trim_start') + ': ' + ts + 's');
+    if (te > 0) parts.push(t('form.trim_end') + ': ' + te + 's');
     if (parts.length > 0) {
-        info.textContent = parts.join(' | ') + ' werden abgeschnitten';
+        info.textContent = parts.join(' | ') + ' ' + t('form.trim_cut');
         info.style.color = '#ff9800';
     } else {
-        info.textContent = 'Kein Trim';
+        info.textContent = t('form.no_trim');
         info.style.color = 'var(--pico-muted-color,#888)';
     }
 }
@@ -548,7 +548,7 @@ function testStream() {
     applyBtn.onclick = null;
     modal.setAttribute('open', '');
 
-    var stepLabels = {1:'HTTP-Verbindung', 2:'ICY-Metadaten (Deep)', 3:'Shoutcast API', 4:'Icecast API', 5:'TuneIn', 6:'Streamripper', 7:'FFmpeg'};
+    var stepLabels = {1:t('test.http'), 2:t('test.icy'), 3:t('test.shoutcast'), 4:t('test.icecast'), 5:t('test.tunein'), 6:t('test.streamripper'), 7:t('test.ffmpeg')};
 
     // Create step rows
     for (var i = 1; i <= 7; i++) {
@@ -557,7 +557,7 @@ function testStream() {
         row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--pico-muted-border-color,#333);';
         row.innerHTML = '<span class="test-icon" style="width:22px;text-align:center;font-size:16px;">&#9711;</span>'
             + '<span class="test-label" style="flex:1;">' + stepLabels[i] + '</span>'
-            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">wartend</span>';
+            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">' + t('test.waiting') + '</span>';
         log.appendChild(row);
     }
 
@@ -579,7 +579,7 @@ function testStream() {
             if (row) {
                 row.querySelector('.test-icon').innerHTML = '<span aria-busy="true" style="display:inline-block;width:16px;height:16px;"></span>';
                 row.querySelector('.test-label').textContent = data.label;
-                row.querySelector('.test-status').textContent = 'laeuft...';
+                row.querySelector('.test-status').textContent = t('test.running');
                 row.querySelector('.test-status').style.color = 'var(--pico-muted-color,#888)';
             }
         }
@@ -612,7 +612,7 @@ function testStream() {
                 bestMode = data.best_mode;
                 area.style.background = 'rgba(76,175,80,0.1)';
                 area.style.border = '1px solid rgba(76,175,80,0.4)';
-                var html = '<strong style="color:var(--pico-color-green-500,green);">Empfehlung:</strong><br>';
+                var html = '<strong style="color:var(--pico-color-green-500,green);">' + t('test.recommendation') + ':</strong><br>';
                 data.recommendation.forEach(function(r, i) {
                     var star = i === 0 ? ' &#11088;' : '';
                     html += '<div style="padding:4px 0;' + (i === 0 ? 'font-weight:bold;' : '') + '">'
@@ -621,13 +621,13 @@ function testStream() {
                 });
                 area.innerHTML = html;
                 applyBtn.style.display = '';
-                applyBtn.textContent = 'Modus "' + bestMode + '" uebernehmen';
+                applyBtn.textContent = t('test.apply_mode') + ' "' + bestMode + '"';
                 applyBtn.onclick = function() {
                     document.getElementById('record_mode').value = bestMode;
                     toggleMetadataUrl();
                     modal.removeAttribute('open');
                     var hint = document.getElementById('mode-hint');
-                    hint.innerHTML = '<strong>Automatisch erkannt:</strong> ' + bestMode;
+                    hint.innerHTML = '<strong>' + t('form.auto_detected') + '</strong> ' + bestMode;
                     hint.style.color = 'var(--pico-color-green-500, green)';
                 };
             } else {
@@ -649,12 +649,12 @@ function testStream() {
 <dialog id="test-modal">
     <article style="max-width:550px;">
         <header>
-            <h3 style="margin:0;">Stream-Test</h3>
+            <h3 style="margin:0;">{{ t('test.title') }}</h3>
         </header>
         <div id="test-log"></div>
         <footer style="display:flex;gap:8px;justify-content:flex-end;">
-            <button id="test-apply" class="contrast" style="display:none;">Uebernehmen</button>
-            <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">Schliessen</button>
+            <button id="test-apply" class="contrast" style="display:none;">{{ t('test.apply') }}</button>
+            <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">{{ t('test.close') }}</button>
         </footer>
     </article>
 </dialog>

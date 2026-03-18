@@ -121,7 +121,7 @@ document.querySelectorAll('.sync-form').forEach(form => {
         fetch(form.action, {method: 'POST', credentials: 'include'})
             .then(r => r.json())
             .then(data => {
-                btn.textContent = data.success ? 'OK' : 'Fehler';
+                btn.textContent = data.success ? t('general.ok') : t('general.error');
                 setTimeout(() => {
                     btn.textContent = 'Sync';
                     btn.disabled = false;
@@ -531,7 +531,7 @@ function _volCommit(val) {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({volume: val}),
             }).catch(function() {});
-        }, 200);
+        }, 100);
     }
 }
 
@@ -674,7 +674,7 @@ function addToQueue(streamId, deviceId) {
         if (data.success) {
             _renderQueuePanel();
         } else {
-            alert(data.error || 'Fehler');
+            alert(data.error || t('general.error'));
         }
     })
     .catch(function() { alert(t('queue.add_error')); });
@@ -767,7 +767,7 @@ function _renderQueuePanel() {
                     html += '<div class="queue-item">';
                     html += '<span class="queue-item-pos">' + (idx + 1) + '.</span>';
                     html += '<span class="queue-item-name">' + item.name + '</span>';
-                    html += '<button class="queue-item-remove" onclick="removeFromQueue(\'' + deviceId + '\', ' + idx + ')" title="Entfernen">&#10005;</button>';
+                    html += '<button class="queue-item-remove" onclick="removeFromQueue(\'' + deviceId + '\', ' + idx + ')" title="' + t('general.remove_title') + '">&#10005;</button>';
                     html += '</div>';
                 });
 
@@ -779,7 +779,7 @@ function _renderQueuePanel() {
                     html += '<span class="queue-timer-info">' + t('queue.timer') + '' + info.timer.remaining + ' ' + t('queue.min_remaining') + '</span>';
                     html += '<button class="btn-icon outline queue-btn queue-btn-timer-stop" onclick="cancelQueueTimer(\'' + deviceId + '\')">' + t('queue.stop_timer') + '</button>';
                 } else {
-                    html += '<input type="number" class="queue-timer-input" data-device-id="' + deviceId + '" value="30" min="1" max="999" title="Minuten">';
+                    html += '<input type="number" class="queue-timer-input" data-device-id="' + deviceId + '" value="30" min="1" max="999" title="' + t('general.minutes_title') + '">';
                     html += '<button class="btn-icon outline queue-btn" onclick="setQueueTimer(\'' + deviceId + '\')">' + t('queue.set_timer') + '</button>';
                 }
 

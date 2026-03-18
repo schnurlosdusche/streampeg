@@ -1,20 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Radio Browser - Streampeg{% endblock %}
 {% block content %}
-<h2>Radio Browser</h2>
+<h2>{{ t('browse.title') }}</h2>
 
 <div class="grid">
     <div>
-        <input type="text" id="search-name" placeholder="Sender suchen..." autocomplete="off">
+        <input type="text" id="search-name" placeholder="{{ t('browse.search_placeholder') }}" autocomplete="off">
     </div>
     <div>
         <select id="genre-select">
-            <option value="">Genre waehlen...</option>
+            <option value="">{{ t('browse.genre_placeholder') }}</option>
         </select>
     </div>
 </div>
 
-<div id="loading" style="display:none;" aria-busy="true">Lade Sender...</div>
+<div id="loading" style="display:none;" aria-busy="true">{{ t('browse.loading') }}</div>
 
 <div id="stations-container" style="display:none;">
     <p id="station-count" class="secondary"></p>
@@ -22,11 +22,11 @@
     <table id="stations-table">
         <thead>
             <tr>
-                <th>Sender</th>
-                <th>Land</th>
-                <th>Codec</th>
-                <th>Bitrate</th>
-                <th>Tags</th>
+                <th>{{ t('browse.station') }}</th>
+                <th>{{ t('browse.country') }}</th>
+                <th>{{ t('browse.codec') }}</th>
+                <th>{{ t('browse.bitrate') }}</th>
+                <th>{{ t('browse.tags') }}</th>
                 <th></th>
             </tr>
         </thead>
@@ -88,17 +88,17 @@ function loadStations(type, value) {
             loading.style.display = 'none';
 
             if (!Array.isArray(stations) || stations.length === 0) {
-                stationCount.textContent = 'Keine Sender gefunden.';
+                stationCount.textContent = t('browse.no_results');
                 stationsContainer.style.display = 'block';
                 return;
             }
 
-            stationCount.textContent = stations.length + ' Sender gefunden';
+            stationCount.textContent = stations.length + ' ' + t('browse.results_count');
             stations.forEach(s => {
                 const tr = document.createElement('tr');
                 const tagsShort = s.tags ? s.tags.split(',').slice(0, 3).join(', ') : '';
                 tr.innerHTML =
-                    '<td><button type="button" class="btn-icon btn-listen outline browse-listen" data-url="' + escAttr(s.url) + '" title="Vorhören"><svg width="10" height="12" viewBox="0 0 490 480" fill="currentColor" style="display:block;"><path d="M278.9 10.2c-5.5 2.6-135.1 113.7-140.1 120.1L136 134H32c-17.7 0-32 14.3-32 32v148c0 17.7 14.3 32 32 32h104l2.8 3.7c5 6.4 134.6 117.5 140.1 120.1 6.7 3.2 15.1 1.5 20-4.1 3.3-3.7 5.1-8.5 5.1-13.7V28c0-5.2-1.8-10-5.1-13.7-4.9-5.6-13.3-7.3-20-4.1z"/><path class="listen-waves" d="M365.4 105.7c-7.9-5.2-18.5-3-23.7 4.9s-3 18.5 4.9 23.7C384.5 159.3 408 199 408 240s-23.5 80.7-61.4 105.7c-7.9 5.2-10.1 15.8-4.9 23.7 5.2 7.9 15.8 10.1 23.7 4.9C411.5 343.6 442 294.7 442 240s-30.5-103.6-76.6-134.3z"/><path class="listen-waves" d="M440 38.3c-7.7-5.5-18.4-3.6-23.8 4.1-5.5 7.7-3.6 18.4 4.1 23.8C468.5 99.8 490 167.2 490 240s-21.5 140.2-69.7 173.8c-7.7 5.5-9.6 16.1-4.1 23.8 5.5 7.7 16.1 9.6 23.8 4.1C492 402.4 524 325 524 240S492 77.6 440 38.3z" transform="translate(-44 0)"/></svg></button> ' + escHtml(s.name) + '</td>' +
+                    '<td><button type="button" class="btn-icon btn-listen outline browse-listen" data-url="' + escAttr(s.url) + '" title="' + t('browse.preview_title') + '"><svg width="10" height="12" viewBox="0 0 490 480" fill="currentColor" style="display:block;"><path d="M278.9 10.2c-5.5 2.6-135.1 113.7-140.1 120.1L136 134H32c-17.7 0-32 14.3-32 32v148c0 17.7 14.3 32 32 32h104l2.8 3.7c5 6.4 134.6 117.5 140.1 120.1 6.7 3.2 15.1 1.5 20-4.1 3.3-3.7 5.1-8.5 5.1-13.7V28c0-5.2-1.8-10-5.1-13.7-4.9-5.6-13.3-7.3-20-4.1z"/><path class="listen-waves" d="M365.4 105.7c-7.9-5.2-18.5-3-23.7 4.9s-3 18.5 4.9 23.7C384.5 159.3 408 199 408 240s-23.5 80.7-61.4 105.7c-7.9 5.2-10.1 15.8-4.9 23.7 5.2 7.9 15.8 10.1 23.7 4.9C411.5 343.6 442 294.7 442 240s-30.5-103.6-76.6-134.3z"/><path class="listen-waves" d="M440 38.3c-7.7-5.5-18.4-3.6-23.8 4.1-5.5 7.7-3.6 18.4 4.1 23.8C468.5 99.8 490 167.2 490 240s-21.5 140.2-69.7 173.8c-7.7 5.5-9.6 16.1-4.1 23.8 5.5 7.7 16.1 9.6 23.8 4.1C492 402.4 524 325 524 240S492 77.6 440 38.3z" transform="translate(-44 0)"/></svg></button> ' + escHtml(s.name) + '</td>' +
                     '<td><small>' + escHtml(s.country) + '</small></td>' +
                     '<td><small>' + escHtml(s.codec) + '</small></td>' +
                     '<td><small>' + (s.bitrate || '-') + '</small></td>' +
@@ -107,7 +107,7 @@ function loadStations(type, value) {
                         '<button class="outline btn-small test-btn" data-url="' + escAttr(s.url) + '">Test</button> ' +
                         '<a href="/stream/new?name=' + encodeURIComponent(s.name) +
                         '&url=' + encodeURIComponent(s.url) +
-                        '" role="button" class="outline btn-small add-btn" style="display:none">+ Hinzufuegen</a>' +
+                        '" role="button" class="outline btn-small add-btn" style="display:none' + t('browse.add') + '</a>' +
                     '</td>';
                 stationsBody.appendChild(tr);
             });
@@ -115,7 +115,7 @@ function loadStations(type, value) {
         })
         .catch(() => {
             loading.style.display = 'none';
-            stationCount.textContent = 'Fehler beim Laden.';
+            stationCount.textContent = t('browse.load_error');
             stationsContainer.style.display = 'block';
         });
 }
@@ -155,7 +155,7 @@ function openTestModal(url) {
     _testBestMode = null;
     modal.setAttribute('open', '');
 
-    var stepLabels = {1:'HTTP-Verbindung', 2:'ICY-Metadaten (Deep)', 3:'Shoutcast API', 4:'Icecast API', 5:'TuneIn', 6:'Streamripper', 7:'FFmpeg'};
+    var stepLabels = {1:t('test.http'), 2:t('test.icy'), 3:t('test.shoutcast'), 4:t('test.icecast'), 5:t('test.tunein'), 6:t('test.streamripper'), 7:t('test.ffmpeg')};
 
     for (var i = 1; i <= 7; i++) {
         var row = document.createElement('div');
@@ -163,7 +163,7 @@ function openTestModal(url) {
         row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--pico-muted-border-color,#333);';
         row.innerHTML = '<span class="test-icon" style="width:22px;text-align:center;font-size:16px;">&#9711;</span>'
             + '<span class="test-label" style="flex:1;">' + stepLabels[i] + '</span>'
-            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">wartend</span>';
+            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">' + t('test.waiting') + '</span>';
         log.appendChild(row);
     }
 
@@ -182,7 +182,7 @@ function openTestModal(url) {
             if (row) {
                 row.querySelector('.test-icon').innerHTML = '<span aria-busy="true" style="display:inline-block;width:16px;height:16px;"></span>';
                 row.querySelector('.test-label').textContent = data.label;
-                row.querySelector('.test-status').textContent = 'laeuft...';
+                row.querySelector('.test-status').textContent = t('test.running');
                 row.querySelector('.test-status').style.color = 'var(--pico-muted-color,#888)';
             }
         }
@@ -214,7 +214,7 @@ function openTestModal(url) {
                 _testBestMode = data.best_mode;
                 area.style.background = 'rgba(76,175,80,0.1)';
                 area.style.border = '1px solid rgba(76,175,80,0.4)';
-                var html = '<strong style="color:var(--pico-color-green-500,green);">Empfehlung:</strong><br>';
+                var html = '<strong style="color:var(--pico-color-green-500,green);">' + t('test.recommendation') + '</strong><br>';
                 data.recommendation.forEach(function(r, i) {
                     var star = i === 0 ? ' &#11088;' : '';
                     html += '<div style="padding:4px 0;' + (i === 0 ? 'font-weight:bold;' : '') + '">'
@@ -223,7 +223,7 @@ function openTestModal(url) {
                 });
                 area.innerHTML = html;
                 addBtn.style.display = '';
-                addBtn.textContent = '+ Hinzufuegen als "' + _testBestMode + '"';
+                addBtn.textContent = t('browse.add_as') + ' "' + _testBestMode + '"';
             } else {
                 area.style.background = 'rgba(244,67,54,0.1)';
                 area.style.border = '1px solid rgba(244,67,54,0.4)';
@@ -295,12 +295,12 @@ document.addEventListener('DOMContentLoaded', function() {
 <dialog id="test-modal">
     <article style="max-width:550px;">
         <header>
-            <h3 style="margin:0;">Stream-Test</h3>
+            <h3 style="margin:0;">{{ t('test.title') }}</h3>
         </header>
         <div id="test-log"></div>
         <footer style="display:flex;gap:8px;justify-content:flex-end;">
-            <button id="test-add" class="contrast" style="display:none;">+ Hinzufuegen</button>
-            <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">Schliessen</button>
+            <button id="test-add" class="contrast" style="display:none;">{{ t('browse.add') }}</button>
+            <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">{{ t('test.close') }}</button>
         </footer>
     </article>
 </dialog>

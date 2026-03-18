@@ -2,25 +2,25 @@
 {% block title %}YT Download - Streampeg{% endblock %}
 
 {% block content %}
-<h3>YouTube Audio Download</h3>
+<h3>{{ t('yt.title') }}</h3>
 
 <form id="yt-url-form" onsubmit="return checkUrl(event)">
     <fieldset role="group">
-        <input type="url" id="yt-url" name="url" placeholder="YouTube-URL eingeben (Video oder Playlist)..." required>
-        <button type="submit" id="btn-check">Pruefen</button>
+        <input type="url" id="yt-url" name="url" placeholder="{{ t('yt.url_placeholder') }}" required>
+        <button type="submit" id="btn-check">{{ t('yt.check') }}</button>
     </fieldset>
 </form>
 
 <div id="yt-dest-group" style="margin-bottom:1rem;">
-    <label for="yt-dest">Zielordner</label>
+    <label for="yt-dest">{{ t('yt.target_folder') }}</label>
     <input type="text" id="yt-dest" value="yt-downloads" placeholder="yt-downloads">
-    <small>Unterordner in /recording/ und auf dem NAS</small>
+    <small>{{ t('yt.target_folder_hint') }}</small>
 </div>
 
 <!-- Info / Playlist choice -->
 <div id="yt-info" style="display:none;">
     <article>
-        <header id="yt-info-header">Video-Info</header>
+        <header id="yt-info-header">{{ t('yt.video_info') }}</header>
         <div id="yt-playlist-buttons-top" style="display:none; margin-bottom:1rem;"></div>
         <div id="yt-info-body"></div>
         <div id="yt-playlist-buttons-bottom" style="display:none; margin-top:1rem;"></div>
@@ -29,13 +29,13 @@
 
 <!-- Single video download button -->
 <div id="yt-single-action" style="display:none;">
-    <button id="btn-dl-go" onclick="startDownload('single')" class="btn-start">Download starten</button>
+    <button id="btn-dl-go" onclick="startDownload('single')" class="btn-start">{{ t('yt.start_download') }}</button>
 </div>
 
 <!-- Progress -->
 <div id="yt-progress" style="display:none;">
     <article>
-        <header>Download-Fortschritt</header>
+        <header>{{ t('yt.download_progress') }}</header>
         <div id="yt-progress-title" style="margin-bottom:0.5rem; font-weight:bold;"></div>
         <progress id="yt-progress-bar" value="0" max="100" style="width:100%; margin-bottom:0.3rem;"></progress>
         <div id="yt-progress-detail" style="font-size:0.8rem; color:var(--pico-muted-color); margin-bottom:1rem;"></div>
@@ -63,7 +63,7 @@ function checkUrl(e) {
     currentUrl = url;
     const btn = document.getElementById('btn-check');
     btn.disabled = true;
-    btn.textContent = 'Pruefe...';
+    btn.textContent = t('yt.checking');
     btn.setAttribute('aria-busy', 'true');
 
     hide('yt-info'); hide('yt-single-action'); hide('yt-progress'); hide('yt-result');
@@ -77,11 +77,11 @@ function checkUrl(e) {
     .then(r => r.json())
     .then(data => {
         btn.disabled = false;
-        btn.textContent = 'Pruefen';
+        btn.textContent = t('yt.check');
         btn.removeAttribute('aria-busy');
 
         if (!data.ok) {
-            alert(data.error || 'Fehler beim Pruefen der URL');
+            alert(data.error || t('yt.check_error'));
             return;
         }
 
@@ -91,30 +91,30 @@ function checkUrl(e) {
             // Video aus einer Playlist: Song zuerst, Playlist als Option
             isPlaylist = true;
             const header = document.getElementById('yt-info-header');
-            header.textContent = 'Video gefunden';
+            header.textContent = t('yt.video_found');
 
             let html = '<p><strong>' + escHtml(data.single_title) + '</strong>';
             if (data.single_duration) html += ' (' + formatDuration(data.single_duration) + ')';
             html += '</p>';
-            html += '<button onclick="startDownload(\'single\')" class="btn-start">Diesen Song laden</button>';
+            html += '<button onclick="startDownload(\'single\')" class="btn-start">' + t('yt.download_this_song') + '</button>';
 
             html += '<hr style="margin:1.5rem 0;">';
             let plTitle = data.playlist_title + ' (' + data.count + ' Videos)';
-            if (data.capped) plTitle += ' — Liste gekuerzt';
+            if (data.capped) plTitle += ' — ' + t('yt.list_capped');
             html += '<p><strong>Playlist:</strong> ' + escHtml(plTitle) + '</p>';
 
             // Playlist buttons top
-            html += '<div style="margin-bottom:0.5rem;"><button onclick="startDownload(\'playlist\')" class="outline">Ganze Playlist laden (' + data.count + ')</button></div>';
+            html += '<div style="margin-bottom:0.5rem;"><button onclick="startDownload(\'playlist\')" class="outline">' + t('yt.download_full_playlist') + ' (' + data.count + ')</button></div>';
 
             // Playlist table (collapsed by default)
-            html += '<details><summary style="cursor:pointer;">Playlist anzeigen</summary>';
-            html += '<table role="grid"><thead><tr><th>#</th><th>Titel</th><th>Dauer</th></tr></thead><tbody>';
+            html += '<details><summary style="cursor:pointer;">' + t('yt.show_playlist') + '</summary>';
+            html += '<table role="grid"><thead><tr><th>' + t('yt.number') + '</th><th>' + t('detail.title') + '</th><th>' + t('yt.duration') + '</th></tr></thead><tbody>';
             data.items.forEach((item, i) => {
                 const dur = item.duration ? formatDuration(item.duration) : '?';
                 html += '<tr><td>' + (i+1) + '</td><td>' + escHtml(item.title) + '</td><td>' + dur + '</td></tr>';
             });
             html += '</tbody></table>';
-            html += '<div style="margin-top:0.5rem;"><button onclick="startDownload(\'playlist\')" class="outline">Ganze Playlist laden (' + data.count + ')</button></div>';
+            html += '<div style="margin-top:0.5rem;"><button onclick="startDownload(\'playlist\')" class="outline">' + t('yt.download_full_playlist') + ' (' + data.count + ')</button></div>';
             html += '</details>';
 
             document.getElementById('yt-info-body').innerHTML = html;
@@ -126,15 +126,15 @@ function checkUrl(e) {
             isPlaylist = true;
             const header = document.getElementById('yt-info-header');
             let headerText = data.playlist_title + ' (' + data.count + ' Videos)';
-            if (data.capped) headerText += ' — Liste gekuerzt';
+            if (data.capped) headerText += ' — ' + t('yt.list_capped');
             header.textContent = headerText;
 
             let html = '';
             if (data.is_mix) {
-                html += '<p><small style="color:var(--pico-muted-color);">Dies ist ein automatisch generierter YouTube-Mix. Die Liste kann variieren.</small></p>';
+                html += '<p><small style="color:var(--pico-muted-color);">' + t('yt.mix_notice') + '</small></p>';
             }
 
-            html += '<table role="grid"><thead><tr><th>#</th><th>Titel</th><th>Dauer</th></tr></thead><tbody>';
+            html += '<table role="grid"><thead><tr><th>' + t('yt.number') + '</th><th>' + t('detail.title') + '</th><th>' + t('yt.duration') + '</th></tr></thead><tbody>';
             data.items.forEach((item, i) => {
                 const dur = item.duration ? formatDuration(item.duration) : '?';
                 html += '<tr><td>' + (i+1) + '</td><td>' + escHtml(item.title) + '</td><td>' + dur + '</td></tr>';
@@ -142,7 +142,7 @@ function checkUrl(e) {
             html += '</tbody></table>';
             document.getElementById('yt-info-body').innerHTML = html;
 
-            const btnHtml = '<button onclick="startDownload(\'playlist\')" class="btn-start">Ganze Playlist laden (' + data.count + ')</button>';
+            const btnHtml = '<button onclick="startDownload(\'playlist\')" class="btn-start">' + t('yt.download_full_playlist') + ' (' + data.count + ')</button>';
             document.getElementById('yt-playlist-buttons-top').innerHTML = btnHtml;
             document.getElementById('yt-playlist-buttons-top').style.display = '';
             document.getElementById('yt-playlist-buttons-bottom').innerHTML = btnHtml;
@@ -150,7 +150,7 @@ function checkUrl(e) {
         } else {
             isPlaylist = false;
             const header = document.getElementById('yt-info-header');
-            header.textContent = 'Video gefunden';
+            header.textContent = t('yt.video_found');
 
             let html = '<p><strong>' + escHtml(data.title) + '</strong>';
             if (data.uploader) html += ' &mdash; ' + escHtml(data.uploader);
@@ -165,9 +165,9 @@ function checkUrl(e) {
     })
     .catch(err => {
         btn.disabled = false;
-        btn.textContent = 'Pruefen';
+        btn.textContent = t('yt.check');
         btn.removeAttribute('aria-busy');
-        alert('Fehler: ' + err);
+        alert(t('yt.error') + ': ' + err);
     });
 }
 
@@ -195,7 +195,7 @@ function startDownload(mode) {
         const data = JSON.parse(e.data);
 
         if (data.error) {
-            addLog(log, 'Fehler: ' + data.error, '#e6a8a8');
+            addLog(log, t('yt.error') + ': ' + data.error, '#e6a8a8');
             bar.value = 0;
             evtSource.close();
             return;
@@ -205,14 +205,14 @@ function startDownload(mode) {
             evtSource.close();
             bar.value = 100;
             bar.removeAttribute('data-converting');
-            titleEl.textContent = 'Fertig';
+            titleEl.textContent = t('yt.done');
             detailEl.textContent = data.message;
             addLog(log, data.message, '#a8e6a8');
 
             show('yt-result');
             const rh = document.getElementById('yt-result-header');
             const rb = document.getElementById('yt-result-body');
-            rh.textContent = 'Fertig';
+            rh.textContent = t('yt.done');
             rh.style.color = '#a8e6a8';
             rb.innerHTML = '<p>' + escHtml(data.message) + '</p>';
             return;
@@ -254,8 +254,8 @@ function startDownload(mode) {
     evtSource.onerror = function() {
         evtSource.close();
         // Don't show error — download continues in background
-        titleEl.textContent = 'Download laeuft im Hintergrund weiter...';
-        detailEl.textContent = 'Konvertierung und Sync finden auch ohne diese Seite statt.';
+        titleEl.textContent = t('yt.bg_continue');
+        detailEl.textContent = t('yt.bg_hint');
     };
 }
 

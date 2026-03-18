@@ -320,10 +320,10 @@ def api_test_stream():
             detail += "HTTPS, "
         if http.get("content_type"):
             detail += http["content_type"]
-        yield send({"step": 1, "result": "OK" if http.get("ok") else "Fehler", "detail": detail.strip(", "), "ok": http.get("ok", False)})
+        yield send({"step": 1, "result": "OK" if http.get("ok") else i18n.t("general.error"), "detail": detail.strip(", "), "ok": http.get("ok", False)})
 
         if not http.get("ok"):
-            yield send({"done": True, "recommendation": "FEHLER: Stream nicht erreichbar", "suitable": False})
+            yield send({"done": True, "recommendation": i18n.t("general.stream_unreachable"), "suitable": False})
             return
 
         # Step 2: ICY (deep probe)
@@ -332,18 +332,18 @@ def api_test_stream():
         if icy.get("title"):
             detail = f"Title: {icy['title'][:50]}"
         elif icy.get("has_metaint"):
-            detail = f"{icy.get('blocks_read', 0)} Blöcke in {icy.get('seconds', 0)}s - kein Titel"
+            detail = i18n.t("general.blocks_in_seconds").replace("{s}", str(icy.get('seconds', 0))).replace("{n}", str(icy.get('blocks_read', 0)))
         else:
-            detail = icy.get("error", "nicht verfügbar")
-        yield send({"step": 2, "result": "OK" if icy.get("title") else ("Kein Titel" if icy.get("has_metaint") else "Fehlt"), "detail": detail, "ok": bool(icy.get("title"))})
+            detail = icy.get("error", i18n.t("general.not_available"))
+        yield send({"step": 2, "result": "OK" if icy.get("title") else (i18n.t("general.no_title") if icy.get("has_metaint") else i18n.t("general.missing")), "detail": detail, "ok": bool(icy.get("title"))})
         _save_method(stream_host, stream_path, "icy", effective_url,
                      has_titles=bool(icy.get("title")), sample_title=icy.get("title", ""))
 
         # Step 3: Shoutcast API
         yield send({"step": 3, "label": "Shoutcast API prüfen...", "total": 7})
         api_result = _test_shoutcast_api(effective_url, ua)
-        detail = api_result.get("title", "") if api_result.get("ok") else "nicht verfügbar"
-        yield send({"step": 3, "result": "OK" if api_result.get("ok") else "Fehlt", "detail": detail[:60], "ok": api_result.get("ok", False)})
+        detail = api_result.get("title", "") if api_result.get("ok") else i18n.t("general.not_available")
+        yield send({"step": 3, "result": "OK" if api_result.get("ok") else i18n.t("general.missing"), "detail": detail[:60], "ok": api_result.get("ok", False)})
 
         # Step 4: Icecast API
         yield send({"step": 4, "label": "Icecast Status-API prüfen...", "total": 7})
@@ -352,10 +352,10 @@ def api_test_stream():
         if icecast.get("ok"):
             detail = f"Title: {icecast.get('title', '')[:50]}"
         elif icecast.get("mountpoint"):
-            detail = f"Mountpoint '{icecast['mountpoint']}', kein Titel"
+            detail = f"Mountpoint '{icecast['mountpoint']}', {i18n.t('general.no_title').lower()}"
         else:
-            detail = "nicht verfügbar"
-        yield send({"step": 4, "result": "OK" if icecast.get("ok") else "Fehlt", "detail": detail, "ok": icecast.get("ok", False)})
+            detail = i18n.t("general.not_available")
+        yield send({"step": 4, "result": "OK" if icecast.get("ok") else i18n.t("general.missing"), "detail": detail, "ok": icecast.get("ok", False)})
 
         # Step 5: TuneIn
         yield send({"step": 5, "label": "TuneIn Now-Playing prüfen...", "total": 7})
@@ -363,16 +363,16 @@ def api_test_stream():
         if tunein.get("ok"):
             detail = f"{tunein.get('station_name', '')}: {tunein.get('title', '')[:40]}"
         elif tunein.get("station_id"):
-            detail = f"Station gefunden, {tunein.get('note', 'kein Titel')}"
+            detail = f"{i18n.t('general.station_found')}, {tunein.get('note', i18n.t('general.no_title').lower())}"
         else:
-            detail = tunein.get("error", "nicht gefunden")
-        yield send({"step": 5, "result": "OK" if tunein.get("ok") else "Fehlt", "detail": detail[:60], "ok": tunein.get("ok", False)})
+            detail = tunein.get("error", i18n.t("detail.not_found"))
+        yield send({"step": 5, "result": "OK" if tunein.get("ok") else i18n.t("general.missing"), "detail": detail[:60], "ok": tunein.get("ok", False)})
 
         # Step 6: Streamripper
         yield send({"step": 6, "label": "Streamripper testen (10s)...", "total": 7})
         sr = _test_streamripper(url, ua)
-        detail = f"{sr.get('files_created', 0)} Dateien" if sr.get("ok") else sr.get("error", "fehlgeschlagen")[:60]
-        yield send({"step": 6, "result": "OK" if sr.get("ok") else "Fehler", "detail": detail, "ok": sr.get("ok", False)})
+        detail = f"{sr.get('files_created', 0)} {i18n.t('general.files_count')}" if sr.get("ok") else sr.get("error", i18n.t("general.failed"))[:60]
+        yield send({"step": 6, "result": "OK" if sr.get("ok") else i18n.t("general.error"), "detail": detail, "ok": sr.get("ok", False)})
 
         # Step 7: FFmpeg
         yield send({"step": 7, "label": "FFmpeg testen (10s)...", "total": 7})
@@ -380,8 +380,8 @@ def api_test_stream():
         if ffmpeg.get("ok"):
             detail = f"{round(ffmpeg.get('file_size', 0) / 1024)} KB in 10s"
         else:
-            detail = ffmpeg.get("error", "fehlgeschlagen")[:60]
-        yield send({"step": 7, "result": "OK" if ffmpeg.get("ok") else "Fehler", "detail": detail, "ok": ffmpeg.get("ok", False)})
+            detail = ffmpeg.get("error", i18n.t("general.failed"))[:60]
+        yield send({"step": 7, "result": "OK" if ffmpeg.get("ok") else i18n.t("general.error"), "detail": detail, "ok": ffmpeg.get("ok", False)})
 
         # Recommendation
         known = _get_known_methods(stream_host)
@@ -591,10 +591,10 @@ def api_autotag_batch(stream_id):
     """Start batch auto-tagging for a stream's NAS files."""
     stream = db.get_stream(stream_id)
     if not stream:
-        return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
+        return jsonify({"success": False, "error": i18n.t("detail.not_found")}), 404
     dirpath = os.path.join(sync.get_sync_target(), stream["dest_subdir"])
     if not os.path.isdir(dirpath):
-        return jsonify({"success": False, "error": "Verzeichnis nicht vorhanden"}), 404
+        return jsonify({"success": False, "error": i18n.t("general.not_available")}), 404
     started = autotag.start_batch(stream_id, dirpath)
     if not started:
         return jsonify({"success": False, "error": "Batch läuft bereits"})
@@ -1053,11 +1053,11 @@ def api_yt_download_check():
                 if single_info:
                     return jsonify({
                         "ok": True, "is_playlist": False,
-                        "title": single_info.get("title", "Unbekannt"),
+                        "title": single_info.get("title", "Unknown"),
                         "duration": single_info.get("duration"),
                         "uploader": single_info.get("uploader", ""),
                     })
-                return jsonify({"ok": False, "error": f"yt-dlp Fehler: {result.stderr[:200]}"})
+                return jsonify({"ok": False, "error": f"yt-dlp {i18n.t('general.error')}: {result.stderr[:200]}"})
 
             entries = []
             for line in result.stdout.strip().split("\n"):
@@ -1071,7 +1071,7 @@ def api_yt_download_check():
                 if single_info:
                     return jsonify({
                         "ok": True, "is_playlist": False,
-                        "title": single_info.get("title", "Unbekannt"),
+                        "title": single_info.get("title", "Unknown"),
                         "duration": single_info.get("duration"),
                         "uploader": single_info.get("uploader", ""),
                     })
@@ -1107,16 +1107,16 @@ def api_yt_download_check():
             if single_info:
                 return jsonify({
                     "ok": True, "is_playlist": False,
-                    "title": single_info.get("title", "Unbekannt"),
+                    "title": single_info.get("title", "Unknown"),
                     "duration": single_info.get("duration"),
                     "uploader": single_info.get("uploader", ""),
                 })
-            return jsonify({"ok": False, "error": "Timeout beim Abrufen der Playlist-Infos"})
+            return jsonify({"ok": False, "error": f"Timeout: {i18n.t('general.error')}"})
         except Exception as e:
             if single_info:
                 return jsonify({
                     "ok": True, "is_playlist": False,
-                    "title": single_info.get("title", "Unbekannt"),
+                    "title": single_info.get("title", "Unknown"),
                     "duration": single_info.get("duration"),
                     "uploader": single_info.get("uploader", ""),
                 })
@@ -1126,7 +1126,7 @@ def api_yt_download_check():
     if single_info:
         return jsonify({
             "ok": True, "is_playlist": False,
-            "title": single_info.get("title", "Unbekannt"),
+            "title": single_info.get("title", "Unknown"),
             "duration": single_info.get("duration"),
             "uploader": single_info.get("uploader", ""),
         })
@@ -1139,11 +1139,11 @@ def api_yt_download_check():
             capture_output=True, text=True, timeout=15, env=env,
         )
         if result.returncode != 0:
-            return jsonify({"ok": False, "error": f"yt-dlp Fehler: {result.stderr[:200]}"})
+            return jsonify({"ok": False, "error": f"yt-dlp {i18n.t('general.error')}: {result.stderr[:200]}"})
         lines = result.stdout.strip().split("\n")
         return jsonify({
             "ok": True, "is_playlist": False,
-            "title": lines[0] if lines else "Unbekannt",
+            "title": lines[0] if lines else "Unknown",
             "duration": int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else None,
             "uploader": lines[2] if len(lines) > 2 else "",
         })
@@ -1247,7 +1247,7 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
         synced = 0
         total = len(downloaded_files)
         if downloaded_files and sync.is_sync_enabled() and os.path.ismount(sync_target):
-            log({"status": "syncing", "message": f"Synchronisiere {total} Datei{'en' if total != 1 else ''} zum NAS..."})
+            log({"status": "syncing", "message": f"{i18n.t('general.sync')} {total} {i18n.t('general.files_count')}..."})
             os.makedirs(nas_dest, exist_ok=True)
             for fp in downloaded_files:
                 if os.path.exists(fp):
@@ -1266,13 +1266,13 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
                         pass
 
         total = len(downloaded_files)
-        msg = f"{total} Song{'s' if total != 1 else ''} heruntergeladen"
+        msg = f"{total} Song{'s' if total != 1 else ''} {i18n.t('detail.downloaded')}"
         if synced:
-            msg += f", {synced} zum NAS synchronisiert"
+            msg += f", {synced} {i18n.t('general.sync')}"
         log({"status": "done", "message": msg, "count": total, "synced": synced})
 
     except Exception as e:
-        log({"status": "error", "message": f"Fehler: {str(e)[:200]}"})
+        log({"status": "error", "message": f"{i18n.t('general.error')}: {str(e)[:200]}"})
 
     job["done"] = True
 
