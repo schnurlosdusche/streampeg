@@ -10,13 +10,14 @@ from db import log_event, get_track_stats
 from ffmpeg_recorder import FfmpegRecorder, _trim_audio_file, _title_matches_skip_words
 from module_manager import get_recorder_class
 from sync import sync_file, get_sync_target
+import cover_art
 
 # In-memory process registry: stream_id -> {proc, start_time}
 _processes = {}
 
 # Cache for file counts (expensive NAS glob): stream_id -> {count, size, timestamp}
 _file_count_cache = {}
-_FILE_COUNT_TTL = 60  # seconds
+_FILE_COUNT_TTL = 300  # seconds (NAS glob is expensive over SMB)
 
 
 class BitrateError(Exception):
@@ -183,6 +184,65 @@ def _get_cached_file_counts(stream_id, dest, nas_dest):
     return total_count, total_size
 
 
+def get_status_fast(stream):
+    """Lightweight status for initial page render — no NAS glob, no DB queries."""
+    stream_id = stream["id"]
+    info = _processes.get(stream_id)
+    running = False
+    pid = None
+    uptime = 0
+
+    if info and info["proc"].poll() is None:
+        running = True
+        pid = info["proc"].pid
+        uptime = int(time.time() - info["start_time"])
+
+    current_track = None
+    rec_state = None
+    yt_stats = None
+
+    if info and hasattr(info["proc"], "get_current_track"):
+        current_track = info["proc"].get_current_track()
+        rec_state = info["proc"].get_state() if hasattr(info["proc"], "get_state") else None
+        if hasattr(info["proc"], "get_stats"):
+            yt_stats = info["proc"].get_stats()
+    elif info:
+        watcher = info.get("watcher")
+        if watcher:
+            rec_state = watcher.get_state()
+            current_track = watcher.get_current_track()
+
+    # Use cached file count if available, otherwise show "-"
+    cached = _file_count_cache.get(stream_id)
+    file_count = cached["count"] if cached else "-"
+
+    # Cover art
+    cover_url_val = None
+    if running and info and hasattr(info["proc"], "get_cover_url"):
+        cover_url_val = info["proc"].get_cover_url()
+    if not cover_url_val and running and current_track:
+        cover_url_val = cover_art.get_cover_url(stream_id, current_track)
+
+    result = {
+        "running": running,
+        "pid": pid,
+        "uptime": uptime,
+        "uptime_str": _format_uptime(uptime) if running else "-",
+        "current_track": current_track,
+        "bitrate": None,
+        "cover_url": cover_url_val,
+        "file_count": file_count,
+        "disk_usage_mb": 0,
+        "rec_state": rec_state,
+        "rec_pct": 0,
+        "track_stats": None,
+    }
+    if yt_stats:
+        result["yt_stats"] = yt_stats
+        result["rec_pct"] = yt_stats.get("rec_pct", 0)
+    return result
+
+
 def get_status(stream):
     stream_id = stream["id"]
     dest = os.path.join(RECORDING_BASE, stream["dest_subdir"])
@@ -205,6 +265,12 @@ def get_status(stream):
         bitrate = info["proc"].get_bitrate() if hasattr(info["proc"], "get_bitrate") else None
         rec_state = info["proc"].get_state() if hasattr(info["proc"], "get_state") else None
         track_stats = get_track_stats(stream_id)
+        # Cover art: use recorder override (yt-dlp thumb) or iTunes lookup
+        cover_url_val = None
+        if hasattr(info["proc"], "get_cover_url"):
+            cover_url_val = info["proc"].get_cover_url()
+        if not cover_url_val and current_track:
+            cover_url_val = cover_art.get_cover_url(stream_id, current_track)
         result = {
             "running": running,
             "pid": pid,
@@ -212,6 +278,7 @@ def get_status(stream):
             "uptime_str": _format_uptime(uptime) if running else "-",
             "current_track": current_track,
             "bitrate": bitrate,
+            "cover_url": cover_url_val,
             "file_count": total_count,
             "disk_usage_mb": round(total_size / (1024 * 1024), 1),
             "rec_state": rec_state,
@@ -257,6 +324,7 @@ def get_status(stream):
     total_count, total_size = _get_cached_file_counts(stream_id, dest, nas_dest)
 
     track_stats = get_track_stats(stream_id)
+    cover_url_val = cover_art.get_cover_url(stream_id, current_track) if running and current_track else None
     return {
         "running": running,
         "pid": pid,
@@ -264,6 +332,7 @@ def get_status(stream):
         "uptime_str": _format_uptime(uptime) if running else "-",
         "current_track": current_track,
         "bitrate": None,
+        "cover_url": cover_url_val,
         "file_count": total_count,
         "disk_usage_mb": round(total_size / (1024 * 1024), 1),
         "rec_state": rec_state,

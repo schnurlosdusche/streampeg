@@ -19,6 +19,9 @@
         <p>Uptime: {{ status.uptime_str }}</p>
         {% endif %}
         <p>Aktueller Track: <strong>{{ status.current_track or "-" }}</strong></p>
+        {% if status.bitrate %}
+        <p>{% if stream.record_mode in ('youtube', 'soundcloud') %}Track-Bitrate{% else %}Stream-Bitrate{% endif %}: <strong>{{ status.bitrate }} kbps</strong></p>
+        {% endif %}
         <p>Dateien auf Worker: {{ status.file_count }} ({{ status.disk_usage_mb }} MB)</p>
         {% if status.yt_stats %}
         <p>YouTube: <strong>{{ status.yt_stats.downloaded }}</strong> geladen, <strong>{{ status.yt_stats.not_found }}</strong> nicht gefunden, {{ status.yt_stats.total }} gesamt</p>
@@ -37,6 +40,10 @@
                 <button type="submit" class="outline btn-small">Jetzt syncen</button>
             </form>
             <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" role="button" class="outline secondary btn-small">Bearbeiten</a>
+            <div class="inline" style="position:relative;">
+                <button type="button" class="outline btn-small btn-cast-detail" onclick="toggleCastMenu(this, {{ stream.id }})">An Gerät senden</button>
+            </div>
+            <button type="button" class="outline btn-small" id="autotag-btn" onclick="startAutotag({{ stream.id }})">Auto-Tag</button>
         </footer>
     </article>
 </div>
@@ -108,4 +115,43 @@
 {% else %}
 <p class="secondary">Noch keine Sync-Eintraege.</p>
 {% endif %}
+
+<script>
+function startAutotag(streamId) {
+    var btn = document.getElementById('autotag-btn');
+    btn.disabled = true;
+    btn.textContent = 'Tagging...';
+    fetch('/api/autotag/' + streamId, {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                pollAutotagStatus(streamId);
+            } else {
+                btn.textContent = data.error || 'Fehler';
+                setTimeout(function() { btn.textContent = 'Auto-Tag'; btn.disabled = false; }, 3000);
+            }
+        })
+        .catch(function() { btn.textContent = 'Auto-Tag'; btn.disabled = false; });
+}
+
+function pollAutotagStatus(streamId) {
+    var btn = document.getElementById('autotag-btn');
+    fetch('/api/autotag/' + streamId + '/status', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status && data.status.running) {
+                btn.textContent = 'Tagging ' + data.status.done + '/' + data.status.total;
+                setTimeout(function() { pollAutotagStatus(streamId); }, 2000);
+            } else if (data.status) {
+                var errs = data.status.errors ? data.status.errors.length : 0;
+                btn.textContent = 'Fertig (' + data.status.done + ' Dateien' + (errs ? ', ' + errs + ' Fehler' : '') + ')';
+                setTimeout(function() { btn.textContent = 'Auto-Tag'; btn.disabled = false; }, 5000);
+            } else {
+                btn.textContent = 'Auto-Tag';
+                btn.disabled = false;
+            }
+        })
+        .catch(function() { btn.textContent = 'Auto-Tag'; btn.disabled = false; });
+}
+</script>
 {% endblock %}

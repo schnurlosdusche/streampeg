@@ -59,6 +59,153 @@
 
 <hr>
 
+<h4>Anzeige</h4>
+<table>
+    <tbody>
+        <tr>
+            <td>
+                <strong>Cover Art</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">Album-Cover im Dashboard anzeigen (iTunes Search API)</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="cover-art-toggle"
+                        onclick="toggleCoverArt()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if cover_art_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ "Aktiviert" if cover_art_enabled else "Deaktiviert" }}
+                </button>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<hr>
+
+<h4>Cast</h4>
+<p><small style="color:var(--pico-muted-color,#888);">Streams an Netzwerk-Audiogeräte senden. LMS (Max2Play / Squeezebox) ist immer aktiv.</small></p>
+
+<table>
+    <thead>
+        <tr><th>Backend</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>
+                <strong>LMS</strong> (Logitech Media Server / Squeezebox / Max2Play)
+                <br><small style="color:var(--pico-muted-color,#888);">Auto-Discovery via UDP-Broadcast</small>
+            </td>
+            <td><span style="color:var(--pico-color-green-500,green);">Aktiv</span></td>
+        </tr>
+        <tr>
+            <td>
+                <strong>Sonos</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">Auto-Discovery via SSDP</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="sonos-toggle"
+                        onclick="toggleSonos()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if sonos_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ "Aktiviert" if sonos_enabled else "Deaktiviert" }}
+                </button>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<hr>
+
+<h4>Auto-Tagging</h4>
+<p><small style="color:var(--pico-muted-color,#888);">Automatisches Taggen von MP3-Dateien nach der Aufnahme (AcoustID + MusicBrainz + Cover Art Archive).</small></p>
+
+<table>
+    <tbody>
+        <tr>
+            <td>
+                <strong>Auto-Tagging</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">ID3-Tags (Artist, Title, Album, Genre, Cover) automatisch setzen</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="autotag-toggle"
+                        onclick="toggleAutotag()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if autotag_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ "Aktiviert" if autotag_enabled else "Deaktiviert" }}
+                </button>
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <strong>AcoustID API Key</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">Kostenlos registrieren auf <a href="https://acoustid.org/api-key" target="_blank">acoustid.org</a></small>
+            </td>
+            <td>
+                <div style="display:flex;gap:0.3rem;align-items:center;">
+                    <input type="text" id="acoustid-key" value="{{ acoustid_key }}" placeholder="API Key eingeben" style="margin:0;padding:4px 8px;font-size:12px;max-width:220px;">
+                    <button class="outline btn-icon" onclick="saveAcoustidKey()" style="font-size:12px;padding:4px 12px;">Speichern</button>
+                </div>
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <strong>fpcalc</strong> (Chromaprint)
+                <br><small style="color:var(--pico-muted-color,#888);">Audio-Fingerprinting Binary</small>
+            </td>
+            <td>
+                {% if fpcalc_ok %}
+                <span style="color:var(--pico-color-green-500,green);">Installiert</span>
+                {% else %}
+                <span style="color:var(--pico-color-red-500,red);">Nicht gefunden</span>
+                <br><small style="color:var(--pico-muted-color,#888);">apt install libchromaprint-tools</small>
+                {% endif %}
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<hr>
+
+<h4>DLNA Media Server</h4>
+<p><small style="color:var(--pico-muted-color,#888);">Aufgenommene Tracks als DLNA/UPnP Media Server im Netzwerk bereitstellen.</small></p>
+
+<table>
+    <tbody>
+        <tr>
+            <td>
+                <strong>DLNA Server</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">Stellt MP3-Dateien vom NAS für Sonos, LMS und andere DLNA-Renderer bereit</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="dlna-toggle"
+                        onclick="toggleDlna()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if dlna_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ "Aktiviert" if dlna_enabled else "Deaktiviert" }}
+                </button>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Server-Name</strong></td>
+            <td><input type="text" id="dlna-name" value="{{ dlna_status.name }}" style="margin:0;padding:4px 8px;font-size:12px;max-width:250px;"></td>
+        </tr>
+        <tr>
+            <td><strong>Port</strong><br><small style="color:var(--pico-muted-color,#888);">1024–65535</small></td>
+            <td><input type="number" id="dlna-port" value="{{ dlna_status.port }}" min="1024" max="65535" style="margin:0;padding:4px 8px;font-size:12px;max-width:100px;"></td>
+        </tr>
+        <tr>
+            <td><strong>Medien-Verzeichnis</strong><br><small style="color:var(--pico-muted-color,#888);">Pfad zu den aufgenommenen Dateien</small></td>
+            <td><input type="text" id="dlna-media-path" value="{{ dlna_status.media_path }}" style="margin:0;padding:4px 8px;font-size:12px;max-width:300px;"></td>
+        </tr>
+        <tr>
+            <td></td>
+            <td>
+                <button class="outline btn-icon" onclick="saveDlnaSettings()" style="font-size:12px;padding:4px 12px;">Speichern</button>
+                {% if dlna_status.running %}
+                <small style="margin-left:0.5rem;color:var(--pico-muted-color,#888);">Läuft auf <strong>{{ dlna_status.ip }}:{{ dlna_status.port }}</strong></small>
+                {% endif %}
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<hr>
+
 <h4>Sync</h4>
 
 <form method="post" action="{{ url_for('settings_sync') }}">
@@ -97,5 +244,130 @@ document.querySelectorAll('.module-toggle').forEach(function(btn) {
             });
     });
 });
+
+function toggleCoverArt() {
+    var btn = document.getElementById('cover-art-toggle');
+    fetch('/settings/cover-art/toggle', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                if (data.enabled) {
+                    btn.textContent = 'Aktiviert';
+                    btn.style.color = 'var(--pico-color-green-500,green)';
+                    btn.style.borderColor = 'var(--pico-color-green-500,green)';
+                } else {
+                    btn.textContent = 'Deaktiviert';
+                    btn.style.color = 'var(--pico-color-red-500,red)';
+                    btn.style.borderColor = 'var(--pico-color-red-500,red)';
+                }
+            }
+        });
+}
+
+function toggleSonos() {
+    var btn = document.getElementById('sonos-toggle');
+    fetch('/settings/cast/sonos/toggle', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                if (data.enabled) {
+                    btn.textContent = 'Aktiviert';
+                    btn.style.color = 'var(--pico-color-green-500,green)';
+                    btn.style.borderColor = 'var(--pico-color-green-500,green)';
+                } else {
+                    btn.textContent = 'Deaktiviert';
+                    btn.style.color = 'var(--pico-color-red-500,red)';
+                    btn.style.borderColor = 'var(--pico-color-red-500,red)';
+                }
+            }
+        });
+}
+
+function saveDlnaSettings() {
+    fetch('/settings/dlna/save', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            name: document.getElementById('dlna-name').value,
+            port: parseInt(document.getElementById('dlna-port').value),
+            media_path: document.getElementById('dlna-media-path').value,
+        }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok) {
+            alert('DLNA-Einstellungen gespeichert' + (data.status.running ? ' (Server neu gestartet)' : ''));
+            location.reload();
+        }
+    });
+}
+
+function toggleDlna() {
+    var btn = document.getElementById('dlna-toggle');
+    btn.disabled = true;
+    btn.textContent = '...';
+    // Save current field values first, then toggle
+    fetch('/settings/dlna/save', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            name: document.getElementById('dlna-name').value,
+            port: parseInt(document.getElementById('dlna-port').value),
+            media_path: document.getElementById('dlna-media-path').value,
+        }),
+    })
+    .then(function() {
+        return fetch('/settings/dlna/toggle', {method: 'POST', credentials: 'include'});
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok) {
+            if (data.enabled) {
+                btn.textContent = 'Aktiviert';
+                btn.style.color = 'var(--pico-color-green-500,green)';
+                btn.style.borderColor = 'var(--pico-color-green-500,green)';
+            } else {
+                btn.textContent = 'Deaktiviert';
+                btn.style.color = 'var(--pico-color-red-500,red)';
+                btn.style.borderColor = 'var(--pico-color-red-500,red)';
+            }
+            btn.disabled = false;
+            setTimeout(function() { location.reload(); }, 500);
+        }
+    })
+    .catch(function() { btn.disabled = false; btn.textContent = 'Fehler'; });
+}
+
+function toggleAutotag() {
+    var btn = document.getElementById('autotag-toggle');
+    fetch('/settings/autotag/toggle', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                if (data.enabled) {
+                    btn.textContent = 'Aktiviert';
+                    btn.style.color = 'var(--pico-color-green-500,green)';
+                    btn.style.borderColor = 'var(--pico-color-green-500,green)';
+                } else {
+                    btn.textContent = 'Deaktiviert';
+                    btn.style.color = 'var(--pico-color-red-500,red)';
+                    btn.style.borderColor = 'var(--pico-color-red-500,red)';
+                }
+            }
+        });
+}
+
+function saveAcoustidKey() {
+    var key = document.getElementById('acoustid-key').value;
+    fetch('/settings/autotag/key', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: key}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok) alert('AcoustID Key gespeichert');
+    });
+}
 </script>
 {% endblock %}

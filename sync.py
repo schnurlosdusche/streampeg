@@ -46,6 +46,14 @@ def sync_file(filepath, stream):
         )
         if result.returncode == 0:
             log_event(stream["id"], "sync", f"Sync: {os.path.basename(filepath)}")
+            # Auto-tag in background if enabled
+            try:
+                import autotag
+                if autotag.is_enabled() and dst.lower().endswith(".mp3"):
+                    import threading
+                    threading.Thread(target=autotag.process_file, args=(dst,), daemon=True).start()
+            except Exception:
+                pass
             return True
         else:
             log_event(stream["id"], "sync_error",

@@ -243,6 +243,8 @@ class YouTubeRecorder:
         self.start_time = time.time()
         self.returncode = None
         self._stats_cache = {"total": 0, "downloaded": 0, "not_found": 0}
+        self._bitrate = None
+        self._cover_url = None
 
     def start(self):
         os.makedirs(self.dest, exist_ok=True)
@@ -270,6 +272,12 @@ class YouTubeRecorder:
 
     def get_state(self):
         return self._state
+
+    def get_bitrate(self):
+        return self._bitrate
+
+    def get_cover_url(self):
+        return self._cover_url
 
     def get_stats(self):
         return self._stats_cache
@@ -448,6 +456,7 @@ class YouTubeRecorder:
                     "--no-playlist",
                     "--max-downloads", "1",
                     "--output", output_template,
+                    "--print", "thumbnail",
                     "--print", "after_move:filepath",
                     "--no-overwrites",
                     "--restrict-filenames",
@@ -478,11 +487,15 @@ class YouTubeRecorder:
                     continue
                 break
 
-            # Parse filepath from output — only accept MP3
+            # Parse thumbnail URL and filepath from output
+            # --print thumbnail outputs first, then --print after_move:filepath
             filepath = None
+            thumb_url = None
             for line in result.stdout.strip().split("\n"):
                 line = line.strip()
-                if line and line.endswith(".mp3"):
+                if line and line.startswith("http") and not line.endswith(".mp3"):
+                    thumb_url = line
+                elif line and line.endswith(".mp3"):
                     filepath = line
                     break
 
@@ -509,6 +522,9 @@ class YouTubeRecorder:
                         pass
                     return False
 
+                self._bitrate = file_br
+                if thumb_url:
+                    self._cover_url = thumb_url
                 self._song_db.add_song(
                     artist_raw, title_raw, icy_title,
                     filename=os.path.basename(filepath),
@@ -545,6 +561,7 @@ class YouTubeRecorder:
                                 pass
                             return False
 
+                        self._bitrate = file_br
                         self._song_db.add_song(
                             artist_raw, title_raw, icy_title,
                             filename=f.name, filepath=str(f),

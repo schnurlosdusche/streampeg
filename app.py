@@ -14,6 +14,11 @@ import process_manager
 import cleanup
 import sync
 import module_manager
+import cast
+import cast_queue
+import cover_art
+import autotag
+import dlna_server
 from scheduler import SyncScheduler
 
 app = Flask(__name__)
@@ -33,9 +38,10 @@ def _sanitize_subdir(name):
 @app.route("/")
 def dashboard():
     streams = db.get_all_streams()
+    # Only pass lightweight in-memory status (no NAS glob, no DB stats)
     statuses = {}
     for s in streams:
-        statuses[s["id"]] = process_manager.get_status(s)
+        statuses[s["id"]] = process_manager.get_status_fast(s)
     return render_template("dashboard.html", streams=streams, statuses=statuses,
                            module_icons=module_manager.get_module_icons())
 
@@ -138,6 +144,34 @@ def stream_stop(stream_id):
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify({"ok": True})
     return redirect(url_for("dashboard"))
+
+
+@app.route("/api/start-all", methods=["POST"])
+def api_start_all():
+    streams = db.get_all_streams()
+    started = 0
+    errors = []
+    for s in streams:
+        st = process_manager.get_status(s)
+        if not st.get("running"):
+            try:
+                process_manager.start_stream(s)
+                started += 1
+            except Exception as e:
+                errors.append(f"{s['name']}: {str(e)[:80]}")
+    return jsonify({"ok": True, "started": started, "errors": errors})
+
+
+@app.route("/api/stop-all", methods=["POST"])
+def api_stop_all():
+    streams = db.get_all_streams()
+    stopped = 0
+    for s in streams:
+        st = process_manager.get_status(s)
+        if st.get("running"):
+            process_manager.stop_stream(s["id"])
+            stopped += 1
+    return jsonify({"ok": True, "stopped": stopped})
 
 
 # --- Stream Listen (Proxy) ---
@@ -430,9 +464,23 @@ def settings():
     enabled = {name: module_manager._is_enabled(name) for name in all_modules}
     sync_enabled = sync.is_sync_enabled()
     sync_target = sync.get_sync_target()
+    sonos_enabled = cast.is_sonos_enabled()
+    cover_art_enabled = cover_art.is_enabled()
+    autotag_enabled = autotag.is_enabled()
+    acoustid_key = autotag.get_acoustid_key()
+    fpcalc_ok = autotag._fpcalc_available()
+    dlna_enabled = dlna_server.is_enabled()
+    dlna_status = dlna_server.get_status()
     return render_template("settings.html", modules=all_modules, enabled=enabled,
                            builtin_modes=sorted(module_manager.BUILTIN_MODES),
-                           sync_enabled=sync_enabled, sync_target=sync_target)
+                           sync_enabled=sync_enabled, sync_target=sync_target,
+                           sonos_enabled=sonos_enabled,
+                           cover_art_enabled=cover_art_enabled,
+                           autotag_enabled=autotag_enabled,
+                           acoustid_key=acoustid_key,
+                           fpcalc_ok=fpcalc_ok,
+                           dlna_enabled=dlna_enabled,
+                           dlna_status=dlna_status)
 
 
 @app.route("/settings/module/<name>/toggle", methods=["POST"])
@@ -443,6 +491,101 @@ def settings_module_toggle(name):
     currently_enabled = module_manager._is_enabled(name)
     module_manager.set_module_enabled(name, not currently_enabled)
     return jsonify({"ok": True, "enabled": not currently_enabled})
+
+
+@app.route("/settings/cover-art/toggle", methods=["POST"])
+def settings_cover_art_toggle():
+    currently = cover_art.is_enabled()
+    cover_art.set_enabled(not currently)
+    return jsonify({"ok": True, "enabled": not currently})
+
+
+@app.route("/settings/cast/sonos/toggle", methods=["POST"])
+def settings_sonos_toggle():
+    currently = cast.is_sonos_enabled()
+    cast.set_sonos_enabled(not currently)
+    return jsonify({"ok": True, "enabled": not currently})
+
+
+@app.route("/settings/dlna/toggle", methods=["POST"])
+def settings_dlna_toggle():
+    currently = dlna_server.is_enabled()
+    if currently:
+        dlna_server.stop()
+        dlna_server.set_enabled(False)
+    else:
+        dlna_server.set_enabled(True)
+        dlna_server.start()
+    return jsonify({"ok": True, "enabled": not currently, "status": dlna_server.get_status()})
+
+
+@app.route("/api/dlna/status")
+def api_dlna_status():
+    return jsonify(dlna_server.get_status())
+
+
+@app.route("/settings/dlna/save", methods=["POST"])
+def settings_dlna_save():
+    """Save DLNA server settings."""
+    data = request.get_json() or {}
+    if "port" in data:
+        try:
+            port = int(data["port"])
+            if 1024 <= port <= 65535:
+                dlna_server.set_port(port)
+        except (TypeError, ValueError):
+            pass
+    if "name" in data:
+        name = data["name"].strip()
+        if name:
+            dlna_server.set_friendly_name(name)
+    if "media_path" in data:
+        path = data["media_path"].strip()
+        if path:
+            dlna_server.set_media_path(path)
+    # Restart if running
+    was_running = dlna_server.get_status()["running"]
+    if was_running:
+        dlna_server.stop()
+        dlna_server.start()
+    return jsonify({"ok": True, "status": dlna_server.get_status()})
+
+
+@app.route("/settings/autotag/toggle", methods=["POST"])
+def settings_autotag_toggle():
+    currently = autotag.is_enabled()
+    autotag.set_enabled(not currently)
+    return jsonify({"ok": True, "enabled": not currently})
+
+
+@app.route("/settings/autotag/key", methods=["POST"])
+def settings_autotag_key():
+    data = request.get_json() or {}
+    key = data.get("key", "").strip()
+    autotag.set_acoustid_key(key)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/autotag/<int:stream_id>", methods=["POST"])
+def api_autotag_batch(stream_id):
+    """Start batch auto-tagging for a stream's NAS files."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
+    dirpath = os.path.join(sync.get_sync_target(), stream["dest_subdir"])
+    if not os.path.isdir(dirpath):
+        return jsonify({"success": False, "error": "Verzeichnis nicht vorhanden"}), 404
+    started = autotag.start_batch(stream_id, dirpath)
+    if not started:
+        return jsonify({"success": False, "error": "Batch läuft bereits"})
+    return jsonify({"success": True})
+
+
+@app.route("/api/autotag/<int:stream_id>/status")
+def api_autotag_status(stream_id):
+    """Get batch tagging status."""
+    status = autotag.get_job_status(stream_id)
+    return jsonify({"status": status})
 
 
 @app.route("/settings/sync", methods=["POST"])
@@ -475,6 +618,257 @@ def api_status():
 @app.route("/api/disk")
 def api_disk():
     return jsonify(_get_disk_info())
+
+
+# --- Cast API ---
+
+@app.route("/api/cast/devices")
+def api_cast_devices():
+    """Return discovered cast devices (LMS + Sonos)."""
+    force = request.args.get("refresh", "0") == "1"
+    devices = cast.discover_devices(force=force)
+    active = cast.get_active_casts()
+    # Include volume for devices with active casts
+    active_device_ids = set(active.values())
+    volumes = {}
+    for dev in devices:
+        if dev["id"] in active_device_ids:
+            vol = cast.get_volume(dev["id"])
+            if vol is not None:
+                volumes[dev["id"]] = vol
+    return jsonify({"devices": devices, "active_casts": active, "volumes": volumes})
+
+
+@app.route("/api/cast/play", methods=["POST"])
+def api_cast_play():
+    """Cast a stream to a device."""
+    data = request.get_json() or {}
+    stream_id = data.get("stream_id")
+    device_id = data.get("device_id")
+    if not stream_id or not device_id:
+        return jsonify({"success": False, "error": "stream_id und device_id erforderlich"}), 400
+
+    stream = db.get_stream(int(stream_id))
+    if not stream:
+        return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
+
+    # Stop previous cast for this stream if any
+    prev = cast.get_active_cast_for_stream(int(stream_id))
+    if prev:
+        cast.stop_cast(prev)
+        cast.remove_active_cast(int(stream_id))
+
+    # Also remove any other stream casting to the same device (switch)
+    active = cast.get_active_casts()
+    for sid, did in list(active.items()):
+        if did == device_id and sid != int(stream_id):
+            cast.remove_active_cast(sid)
+
+    ok, msg = cast.cast_stream(stream["url"], device_id)
+    if ok:
+        cast.set_active_cast(int(stream_id), device_id)
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/cast/stop", methods=["POST"])
+def api_cast_stop():
+    """Stop casting a stream."""
+    data = request.get_json() or {}
+    stream_id = data.get("stream_id")
+    if not stream_id:
+        return jsonify({"success": False, "error": "stream_id erforderlich"}), 400
+
+    device_id = cast.get_active_cast_for_stream(int(stream_id))
+    if not device_id:
+        return jsonify({"success": False, "error": "Stream wird nicht gecastet"}), 400
+
+    ok, msg = cast.stop_cast(device_id)
+    if ok:
+        cast.remove_active_cast(int(stream_id))
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/cast/player")
+def api_cast_player():
+    """Return all data needed for the global player bar."""
+    active = cast.get_active_casts()
+    if not active:
+        return jsonify({"active": False})
+
+    devices = cast.discover_devices()
+    dev_map = {d["id"]: d for d in devices}
+
+    # Get stream status for active casts
+    players = []
+    all_streams = db.get_all_streams()
+    stream_map = {s["id"]: s for s in all_streams}
+
+    for stream_id_str, device_id in active.items():
+        stream_id = int(stream_id_str) if isinstance(stream_id_str, str) else stream_id_str
+        stream = stream_map.get(stream_id)
+        device = dev_map.get(device_id)
+        if not stream or not device:
+            continue
+
+        st = process_manager.get_status(stream)
+        vol = cast.get_volume(device_id)
+        players.append({
+            "stream_id": stream_id,
+            "stream_name": stream["name"],
+            "device_id": device_id,
+            "device_name": device.get("name", device_id),
+            "device_type": device.get("type", ""),
+            "current_track": st.get("current_track", ""),
+            "cover_url": st.get("cover_url"),
+            "volume": vol,
+            "running": st.get("running", False),
+        })
+
+    # All available speakers for multiroom toggle
+    all_speakers = []
+    for d in devices:
+        if not d.get("enabled", False):
+            continue
+        # Check if this speaker is synced/grouped to an active device
+        in_group_of = None
+        for p in players:
+            if d["id"] == p["device_id"]:
+                in_group_of = p["device_id"]
+                break
+        all_speakers.append({
+            "id": d["id"],
+            "name": d["name"],
+            "type": d["type"],
+            "active_for": in_group_of,
+        })
+
+    return jsonify({
+        "active": True,
+        "players": players,
+        "speakers": all_speakers,
+    })
+
+
+@app.route("/api/cast/multiroom/add", methods=["POST"])
+def api_multiroom_add():
+    """Add a speaker to a multiroom group."""
+    data = request.get_json() or {}
+    master_id = data.get("master_device_id")
+    slave_id = data.get("slave_device_id")
+    if not master_id or not slave_id:
+        return jsonify({"success": False, "error": "master und slave device_id erforderlich"}), 400
+    ok, msg = cast.multiroom_add(master_id, slave_id)
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/cast/multiroom/remove", methods=["POST"])
+def api_multiroom_remove():
+    """Remove a speaker from multiroom group."""
+    data = request.get_json() or {}
+    device_id = data.get("device_id")
+    if not device_id:
+        return jsonify({"success": False, "error": "device_id erforderlich"}), 400
+    ok, msg = cast.multiroom_remove(device_id)
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/cast/volume/<device_id>", methods=["GET"])
+def api_cast_volume_get(device_id):
+    """Get current volume of a cast device."""
+    vol = cast.get_volume(device_id)
+    if vol is None:
+        return jsonify({"error": "Volume nicht verfügbar"}), 404
+    return jsonify({"volume": vol})
+
+
+@app.route("/api/cast/volume/<device_id>", methods=["POST"])
+def api_cast_volume_set(device_id):
+    """Set volume of a cast device."""
+    data = request.get_json() or {}
+    level = data.get("volume")
+    if level is None:
+        return jsonify({"error": "volume erforderlich"}), 400
+    try:
+        level = int(level)
+    except (TypeError, ValueError):
+        return jsonify({"error": "volume muss eine Zahl sein"}), 400
+    cast.set_volume(device_id, level)
+    return jsonify({"ok": True, "volume": max(0, min(100, level))})
+
+
+# --- Cast Queue API ---
+
+@app.route("/api/cast/queue/<device_id>")
+def api_cast_queue_get(device_id):
+    """Return queue and timer info for a device."""
+    queue = cast_queue.get_queue(device_id)
+    timer = cast_queue.get_timer_info(device_id)
+    return jsonify({"queue": queue, "timer": timer})
+
+
+@app.route("/api/cast/queue/<device_id>/add", methods=["POST"])
+def api_cast_queue_add(device_id):
+    """Add a stream to a device's queue."""
+    data = request.get_json() or {}
+    stream_id = data.get("stream_id")
+    if not stream_id:
+        return jsonify({"success": False, "error": "stream_id erforderlich"}), 400
+    stream = db.get_stream(int(stream_id))
+    if not stream:
+        return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
+    cast_queue.add_to_queue(device_id, int(stream_id), stream["url"], stream["name"])
+    return jsonify({"success": True, "queue": cast_queue.get_queue(device_id)})
+
+
+@app.route("/api/cast/queue/<device_id>/<int:index>", methods=["DELETE"])
+def api_cast_queue_remove(device_id, index):
+    """Remove a queue item by index."""
+    ok = cast_queue.remove_from_queue(device_id, index)
+    return jsonify({"success": ok, "queue": cast_queue.get_queue(device_id)})
+
+
+@app.route("/api/cast/queue/<device_id>/next", methods=["POST"])
+def api_cast_queue_next(device_id):
+    """Advance to the next stream in the queue."""
+    item = cast_queue.advance_queue(device_id)
+    if not item:
+        return jsonify({"success": False, "error": "Warteschlange ist leer"}), 400
+    return jsonify({"success": True, "playing": item, "queue": cast_queue.get_queue(device_id)})
+
+
+@app.route("/api/cast/queue/<device_id>/timer", methods=["POST"])
+def api_cast_queue_timer(device_id):
+    """Set or cancel the auto-advance timer. minutes=0 cancels."""
+    data = request.get_json() or {}
+    minutes = int(data.get("minutes", 0))
+    if minutes <= 0:
+        cast_queue.cancel_timer(device_id)
+        return jsonify({"success": True, "timer": None})
+    cast_queue.set_timer(device_id, minutes)
+    return jsonify({"success": True, "timer": cast_queue.get_timer_info(device_id)})
+
+
+@app.route("/api/cast/queue/<device_id>", methods=["DELETE"])
+def api_cast_queue_clear(device_id):
+    """Clear entire queue for a device."""
+    cast_queue.clear_queue(device_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/cast/queues")
+def api_cast_queues_all():
+    """Return all device queues (for the queue panel)."""
+    devices = cast.discover_devices()
+    result = {}
+    for d in devices:
+        q = cast_queue.get_queue(d["id"])
+        if q:
+            result[d["id"]] = {
+                "device_name": d["name"],
+                "queue": q,
+                "timer": cast_queue.get_timer_info(d["id"]),
+            }
+    return jsonify(result)
 
 
 @app.route("/api/sync/<int:stream_id>", methods=["POST"])
@@ -547,6 +941,372 @@ def _get_disk_info():
     return info
 
 
+# --- YT Download (direct URL download) ---
+
+@app.route("/yt-download")
+def yt_download():
+    return render_template("yt_download.html")
+
+
+@app.route("/api/yt-download/check", methods=["POST"])
+def api_yt_download_check():
+    """Check a YouTube URL: single video or playlist? Return metadata."""
+    import subprocess
+    url = request.json.get("url", "").strip() if request.is_json else ""
+    if not url:
+        return jsonify({"ok": False, "error": "Keine URL angegeben"}), 400
+
+    # Find yt-dlp binary
+    yt_dlp_candidates = [
+        os.path.expanduser("~/.local/bin/yt-dlp"),
+        "/usr/local/bin/yt-dlp",
+        "/usr/bin/yt-dlp",
+        "yt-dlp",
+    ]
+    yt_dlp = next((p for p in yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
+
+    env = os.environ.copy()
+    deno_path = os.path.expanduser("~/.deno/bin")
+    if os.path.isdir(deno_path):
+        env["PATH"] = f"{deno_path}:{env.get('PATH', '')}"
+
+    # Strip &radio=... parameter (YouTube radio/mix indicator)
+    url = re.sub(r"[&?]radio=[^&]*", "", url)
+
+    # Extract list= ID to detect playlist type
+    list_id = ""
+    list_match = re.search(r"list=([^&]+)", url)
+    if list_match:
+        list_id = list_match.group(1)
+
+    # Real playlist prefixes: PL (user), OL (official), FL (favorites)
+    # Not a playlist: RD (radio/mix), UU (channel uploads), WL (watch later), LL (liked)
+    is_real_playlist = list_id.startswith(("PL", "OL", "FL"))
+    is_explicit_playlist = "/playlist" in url.split("?")[0]
+    is_playlist_url = is_explicit_playlist or is_real_playlist
+    has_single_video = "watch?v=" in url or "youtu.be/" in url
+
+    # For mixes/radio: strip the list= param so yt-dlp treats it as single video
+    if list_id and not is_real_playlist and not is_explicit_playlist:
+        url = re.sub(r"[&?]list=[^&]*", "", url)
+        url = re.sub(r"[&?]index=[^&]*", "", url)
+
+    # Step 1: Always get single video info first (unless explicit playlist URL)
+    # Use --print instead of --dump-json to skip slow format extraction
+    single_info = None
+    if has_single_video:
+        try:
+            result = subprocess.run(
+                [yt_dlp, "--no-playlist", "--no-download", "--no-warnings",
+                 "--print", "%(title)s\n%(duration)s\n%(uploader)s", url],
+                capture_output=True, text=True, timeout=15, env=env,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                lines = result.stdout.strip().split("\n")
+                single_info = {
+                    "title": lines[0] if len(lines) > 0 else "Unbekannt",
+                    "duration": int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else None,
+                    "uploader": lines[2] if len(lines) > 2 else "",
+                }
+        except Exception:
+            pass
+
+    # Step 2: Only fetch playlist entries for real playlists (index= or /playlist page)
+    if is_playlist_url:
+        try:
+            # Extract the list= parameter to check for Mixes (RD...) which are auto-generated
+            list_id = ""
+            if "list=" in url:
+                list_id = url.split("list=")[1].split("&")[0]
+            is_mix = list_id.startswith("RD") or list_id.startswith("UU")
+
+            # Limit entries: Mixes are quasi-infinite, cap at 50; real playlists at 500
+            max_entries = 50 if is_mix else 500
+
+            result = subprocess.run(
+                [yt_dlp, "--flat-playlist", "--dump-json", "--no-warnings",
+                 "--playlist-end", str(max_entries), url],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if result.returncode != 0:
+                # Playlist fetch failed — if we have single video info, return that
+                if single_info:
+                    return jsonify({
+                        "ok": True, "is_playlist": False,
+                        "title": single_info.get("title", "Unbekannt"),
+                        "duration": single_info.get("duration"),
+                        "uploader": single_info.get("uploader", ""),
+                    })
+                return jsonify({"ok": False, "error": f"yt-dlp Fehler: {result.stderr[:200]}"})
+
+            entries = []
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+
+            if not entries:
+                if single_info:
+                    return jsonify({
+                        "ok": True, "is_playlist": False,
+                        "title": single_info.get("title", "Unbekannt"),
+                        "duration": single_info.get("duration"),
+                        "uploader": single_info.get("uploader", ""),
+                    })
+                return jsonify({"ok": False, "error": "Keine Videos gefunden"})
+
+            items = []
+            for e in entries:
+                items.append({
+                    "id": e.get("id", ""),
+                    "title": e.get("title", "Unbekannt"),
+                    "duration": e.get("duration"),
+                    "url": e.get("url", e.get("webpage_url", "")),
+                })
+
+            playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or "Playlist"
+            if is_mix:
+                playlist_title = f"Mix: {playlist_title}"
+
+            return jsonify({
+                "ok": True,
+                "is_playlist": True,
+                "is_mix": is_mix,
+                "has_single_video": has_single_video,
+                "playlist_title": playlist_title,
+                "count": len(entries),
+                "capped": len(entries) >= max_entries,
+                "items": items,
+                # Include single video info if available
+                "single_title": single_info.get("title") if single_info else None,
+                "single_duration": single_info.get("duration") if single_info else None,
+            })
+        except subprocess.TimeoutExpired:
+            if single_info:
+                return jsonify({
+                    "ok": True, "is_playlist": False,
+                    "title": single_info.get("title", "Unbekannt"),
+                    "duration": single_info.get("duration"),
+                    "uploader": single_info.get("uploader", ""),
+                })
+            return jsonify({"ok": False, "error": "Timeout beim Abrufen der Playlist-Infos"})
+        except Exception as e:
+            if single_info:
+                return jsonify({
+                    "ok": True, "is_playlist": False,
+                    "title": single_info.get("title", "Unbekannt"),
+                    "duration": single_info.get("duration"),
+                    "uploader": single_info.get("uploader", ""),
+                })
+            return jsonify({"ok": False, "error": str(e)[:200]})
+
+    # No playlist — single video
+    if single_info:
+        return jsonify({
+            "ok": True, "is_playlist": False,
+            "title": single_info.get("title", "Unbekannt"),
+            "duration": single_info.get("duration"),
+            "uploader": single_info.get("uploader", ""),
+        })
+
+    # Fallback: try fetching as single video
+    try:
+        result = subprocess.run(
+            [yt_dlp, "--no-playlist", "--no-download", "--no-warnings",
+             "--print", "%(title)s\n%(duration)s\n%(uploader)s", url],
+            capture_output=True, text=True, timeout=15, env=env,
+        )
+        if result.returncode != 0:
+            return jsonify({"ok": False, "error": f"yt-dlp Fehler: {result.stderr[:200]}"})
+        lines = result.stdout.strip().split("\n")
+        return jsonify({
+            "ok": True, "is_playlist": False,
+            "title": lines[0] if lines else "Unbekannt",
+            "duration": int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else None,
+            "uploader": lines[2] if len(lines) > 2 else "",
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Timeout beim Abrufen der Video-Infos"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]})
+
+
+# Background download jobs: job_id -> {"log": [...], "done": bool}
+import threading
+import queue as _queue
+
+_yt_jobs = {}
+_yt_jobs_lock = threading.Lock()
+
+
+def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
+    """Run yt-dlp download in background thread. Writes progress to job log."""
+    import subprocess as _sp
+    from pathlib import Path
+
+    job = _yt_jobs[job_id]
+
+    def log(data):
+        job["log"].append(data)
+
+    yt_dlp_candidates = [
+        os.path.expanduser("~/.local/bin/yt-dlp"),
+        "/usr/local/bin/yt-dlp",
+        "/usr/bin/yt-dlp",
+        "yt-dlp",
+    ]
+    yt_dlp = next((p for p in yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
+    yt_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+    env = os.environ.copy()
+    deno_path = os.path.expanduser("~/.deno/bin")
+    if os.path.isdir(deno_path):
+        env["PATH"] = f"{deno_path}:{env.get('PATH', '')}"
+
+    sync_target = sync.get_sync_target()
+    nas_dest = os.path.join(sync_target, dest_subdir)
+
+    cmd = [
+        yt_dlp, url,
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "0",
+        "--format", "bestaudio",
+        "--postprocessor-args", "ffmpeg:-b:a 320k",
+        "--output", os.path.join(dest, "%(title)s.%(ext)s"),
+        "--no-overwrites",
+        "--restrict-filenames",
+        "--embed-thumbnail",
+        "--user-agent", yt_ua,
+        "--remote-components", "ejs:github",
+        "--newline",
+        "--progress",
+    ]
+    if mode == "single":
+        cmd += ["--no-playlist"]
+
+    log({"status": "starting", "message": "Download wird gestartet..."})
+
+    try:
+        proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                         text=True, env=env, bufsize=1)
+
+        downloaded_files = []
+
+        for line in proc.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+
+            if "[download] Destination:" in line:
+                title = os.path.basename(line.split("Destination:")[-1].strip())
+                log({"status": "downloading", "message": f"Lade: {title}"})
+            elif "[download]" in line and "%" in line:
+                log({"status": "progress", "message": line.strip()})
+            elif "[ExtractAudio]" in line:
+                log({"status": "converting", "message": "Konvertiere zu MP3..."})
+            elif "[EmbedThumbnail]" in line:
+                log({"status": "converting", "message": "Thumbnail wird eingebettet..."})
+            elif line.startswith("/") and line.endswith(".mp3"):
+                downloaded_files.append(line.strip())
+            elif "has already been downloaded" in line:
+                log({"status": "skip", "message": "Bereits vorhanden, uebersprungen"})
+
+        proc.wait(timeout=10)
+
+        # Find downloaded mp3 files in dest
+        if not downloaded_files:
+            now = time.time()
+            for f in sorted(Path(dest).glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if now - f.stat().st_mtime < 300:
+                    downloaded_files.append(str(f))
+
+        # Sync files to NAS
+        synced = 0
+        total = len(downloaded_files)
+        if downloaded_files and sync.is_sync_enabled() and os.path.ismount(sync_target):
+            log({"status": "syncing", "message": f"Synchronisiere {total} Datei{'en' if total != 1 else ''} zum NAS..."})
+            os.makedirs(nas_dest, exist_ok=True)
+            for fp in downloaded_files:
+                if os.path.exists(fp):
+                    dst = os.path.join(nas_dest, os.path.basename(fp))
+                    if os.path.exists(dst):
+                        name, ext = os.path.splitext(os.path.basename(fp))
+                        dst = os.path.join(nas_dest, f"{name}_{int(time.time())}{ext}")
+                    try:
+                        result = _sp.run(
+                            ["rsync", "-aq", "--remove-source-files", fp, dst],
+                            capture_output=True, text=True, timeout=60,
+                        )
+                        if result.returncode == 0:
+                            synced += 1
+                    except Exception:
+                        pass
+
+        total = len(downloaded_files)
+        msg = f"{total} Song{'s' if total != 1 else ''} heruntergeladen"
+        if synced:
+            msg += f", {synced} zum NAS synchronisiert"
+        log({"status": "done", "message": msg, "count": total, "synced": synced})
+
+    except Exception as e:
+        log({"status": "error", "message": f"Fehler: {str(e)[:200]}"})
+
+    job["done"] = True
+
+
+@app.route("/api/yt-download/start")
+def api_yt_download_start():
+    """Start YouTube download in background, return SSE progress stream."""
+    url = request.args.get("url", "").strip()
+    mode = request.args.get("mode", "single")
+    dest_subdir = request.args.get("dest", "yt-downloads").strip()
+    dest_subdir = re.sub(r"[^\w\s-]", "", dest_subdir).strip().replace(" ", "_") or "yt-downloads"
+
+    if not url:
+        return Response("data: " + json.dumps({"error": "Keine URL"}) + "\n\n",
+                        mimetype="text/event-stream")
+
+    dest = os.path.join(RECORDING_BASE, dest_subdir)
+    os.makedirs(dest, exist_ok=True)
+
+    # Create background job
+    job_id = f"yt_{int(time.time())}_{id(url)}"
+    _yt_jobs[job_id] = {"log": [], "done": False}
+
+    t = threading.Thread(target=_yt_download_worker,
+                         args=(job_id, url, mode, dest, dest_subdir), daemon=True)
+    t.start()
+
+    def generate():
+        idx = 0
+        while True:
+            job = _yt_jobs.get(job_id)
+            if not job:
+                break
+
+            # Send any new log entries
+            while idx < len(job["log"]):
+                entry = job["log"][idx]
+                yield f"data: {json.dumps(entry)}\n\n"
+                idx += 1
+                # If done or error, stop
+                if entry.get("status") in ("done", "error"):
+                    # Cleanup old job after sending
+                    _yt_jobs.pop(job_id, None)
+                    return
+
+            if job["done"] and idx >= len(job["log"]):
+                _yt_jobs.pop(job_id, None)
+                return
+
+            time.sleep(0.5)
+
+    return Response(generate(), mimetype="text/event-stream")
+
+
 def _shutdown():
     """Graceful shutdown: stop all streams, cleanup incomplete files."""
     print("Shutting down: stopping all streams...")
@@ -555,6 +1315,7 @@ def _shutdown():
     process_manager.cleanup_incomplete(streams)
     if scheduler:
         scheduler.stop()
+    dlna_server.stop()
     print("Shutdown complete.")
 
 
@@ -577,5 +1338,9 @@ if __name__ == "__main__":
     # Start background scheduler
     scheduler = SyncScheduler(app)
     scheduler.start()
+
+    # Start DLNA server if enabled
+    if dlna_server.is_enabled():
+        dlna_server.start()
 
     app.run(host=HOST, port=PORT, threaded=True)
