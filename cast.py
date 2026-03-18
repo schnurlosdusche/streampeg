@@ -139,7 +139,7 @@ def _discover_sonos():
                 "type": "sonos",
                 "host": sp.ip_address,
                 "uid": sp.uid,
-                "model": getattr(sp, "model_name", ""),
+                "model": sp.get_speaker_info().get("model_name", ""),
                 "enabled": sonos_enabled,
             })
     except Exception:
@@ -192,7 +192,20 @@ def sonos_play(device, stream_url):
     """Tell a Sonos speaker to play a stream URL."""
     try:
         sp = soco.SoCo(device["host"])
-        sp.play_uri(stream_url)
+        # Sonos rejects streams without proper MIME metadata (UPnP Error 714).
+        # Provide DIDL-Lite with audioBroadcast class and audio/mpeg MIME type.
+        from xml.sax.saxutils import escape
+        didl = (
+            '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/"'
+            ' xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"'
+            ' xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">'
+            '<item id="R:0/0/0" parentID="R:0/0" restricted="true">'
+            '<dc:title>{name}</dc:title>'
+            '<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>'
+            '<res protocolInfo="http-get:*:audio/mpeg:*">{url}</res>'
+            '</item></DIDL-Lite>'
+        ).format(name=escape(device.get("name", "Stream")), url=escape(stream_url))
+        sp.play_uri(stream_url, meta=didl)
     except Exception:
         pass
 
