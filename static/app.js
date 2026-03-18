@@ -447,9 +447,10 @@ function _refreshPlayerBar() {
     // === CAST active ===
     var p = _playerData.players[0];
     var st = _lastStreamStatus[p.stream_id] || {};
-    var castTrack = p.current_track || st.current_track || '';
-    var castHasTrack = castTrack && castTrack !== '-' && castTrack !== 'recording' && castTrack.replace(/[\s-]/g, '') !== '';
-    var castCover = p.cover_url || st.cover_url || null;
+    // Prefer stream status track info (always up-to-date from ICY metadata)
+    var castTrack = st.current_track || p.current_track || '';
+    var castHasTrack = castTrack && castTrack.replace(/[\s\-]/g, '') !== '';
+    var castCover = st.cover_url || p.cover_url || null;
 
     if (castCover) {
         cover.src = castCover;
