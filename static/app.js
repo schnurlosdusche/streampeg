@@ -497,6 +497,26 @@ function playerStop() {
     });
 }
 
+function playerVolumeStep(delta) {
+    var slider = document.getElementById('player-volume-slider');
+    if (!slider) return;
+    var val = Math.max(0, Math.min(100, parseInt(slider.value) + delta));
+    slider.value = val;
+    var valSpan = document.getElementById('player-volume-value');
+    if (valSpan) valSpan.textContent = val;
+    var devId = slider.getAttribute('data-device-id');
+    if (devId) {
+        clearTimeout(_playerVolumeDebounce);
+        _playerVolumeDebounce = setTimeout(function() {
+            fetch('/api/cast/volume/' + encodeURIComponent(devId), {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({volume: val}),
+            }).catch(function() {});
+        }, 200);
+    }
+}
+
 // Volume slider events (cast only)
 document.addEventListener('DOMContentLoaded', function() {
     var slider = document.getElementById('player-volume-slider');
