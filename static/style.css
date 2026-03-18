@@ -256,7 +256,7 @@ body {
     bottom: 0;
     left: 0;
     right: 0;
-    height: 120px;
+    height: 90px;
     background: #1e1e2a;
     border-top: 1px solid #3a3a4a;
     z-index: 1000;
@@ -270,8 +270,8 @@ body {
     max-width: 100%;
 }
 #player-cover-wrap {
-    width: 90px;
-    height: 90px;
+    width: 68px;
+    height: 68px;
     flex-shrink: 0;
     border-radius: 4px;
     overflow: hidden;
@@ -281,8 +281,8 @@ body {
     justify-content: center;
 }
 #player-cover {
-    width: 90px;
-    height: 90px;
+    width: 68px;
+    height: 68px;
     object-fit: cover;
 }
 #player-cover-placeholder {
