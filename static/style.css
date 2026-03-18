@@ -256,9 +256,9 @@ body {
     bottom: 0;
     left: 0;
     right: 0;
-    height: 60px;
-    background: #111118;
-    border-top: 1px solid #2a2a3a;
+    height: 120px;
+    background: #1e1e2a;
+    border-top: 1px solid #3a3a4a;
     z-index: 1000;
 }
 #player-bar-inner {
@@ -270,8 +270,8 @@ body {
     max-width: 100%;
 }
 #player-cover-wrap {
-    width: 44px;
-    height: 44px;
+    width: 90px;
+    height: 90px;
     flex-shrink: 0;
     border-radius: 4px;
     overflow: hidden;
@@ -281,8 +281,8 @@ body {
     justify-content: center;
 }
 #player-cover {
-    width: 44px;
-    height: 44px;
+    width: 90px;
+    height: 90px;
     object-fit: cover;
 }
 #player-cover-placeholder {
