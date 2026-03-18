@@ -258,16 +258,40 @@ def stop_cast(device_id):
     return False, f"Unbekannter Gerätetyp: {device['type']}"
 
 
+def _persist_casts():
+    """Save active casts to DB so they survive restarts."""
+    from db import set_setting
+    with _casts_lock:
+        data = dict(_active_casts)
+    set_setting("active_casts", json.dumps(data))
+
+
+def _load_casts():
+    """Load active casts from DB on startup."""
+    from db import get_setting
+    raw = get_setting("active_casts")
+    if raw:
+        try:
+            data = json.loads(raw)
+            with _casts_lock:
+                for k, v in data.items():
+                    _active_casts[int(k) if str(k).isdigit() else k] = v
+        except (ValueError, TypeError):
+            pass
+
+
 def set_active_cast(stream_id, device_id):
     """Track which stream is casting to which device."""
     with _casts_lock:
         _active_casts[stream_id] = device_id
+    _persist_casts()
 
 
 def remove_active_cast(stream_id):
     """Remove active cast tracking."""
     with _casts_lock:
         _active_casts.pop(stream_id, None)
+    _persist_casts()
 
 
 def get_active_casts():
@@ -484,3 +508,7 @@ def get_multiroom_state():
                     groups[d["id"]] = slave_ids
 
     return groups
+
+
+# Load persisted casts on module import
+_load_casts()

@@ -535,8 +535,14 @@ function _volCommit(val) {
 }
 
 function playerVolumeStep(delta) {
-    _volCommit(Math.max(0, Math.min(100, _volValue + delta)));
+    var newVal = Math.max(0, Math.min(100, _volValue + delta));
+    _playerVolumeLocal = newVal;
+    _volCommit(newVal);
+    // Keep _playerVolumeLocal set briefly so polling doesn't overwrite
+    clearTimeout(_volStepResetTimer);
+    _volStepResetTimer = setTimeout(function() { _playerVolumeLocal = null; }, 2000);
 }
+var _volStepResetTimer = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     var slider = document.getElementById('vol-slider');
