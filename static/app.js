@@ -421,7 +421,7 @@ function _refreshPlayerBar() {
     var trackEl = document.getElementById('player-track');
     var streamEl = document.getElementById('player-stream');
     var stopBtn = document.getElementById('player-stop-btn');
-    var slider = document.getElementById('player-volume-slider');
+    var volSlider = document.getElementById('vol-slider');
     var valSpan = document.getElementById('player-volume-value');
     var devName = document.getElementById('player-device-name');
     var mrBtn = document.getElementById('player-multiroom-btn');
@@ -438,9 +438,9 @@ function _refreshPlayerBar() {
         stopBtn.style.display = 'none';
         devName.textContent = '';
         mrPanel.style.display = 'none';
-        slider.value = 0;
+        _setVolSlider(0);
         valSpan.textContent = '-';
-        slider.removeAttribute('data-device-id');
+        volSlider.removeAttribute('data-device-id');
         return;
     }
 
@@ -467,12 +467,12 @@ function _refreshPlayerBar() {
     mrPanel.style.display = '';
 
     // Volume
-    if (slider && !slider.matches(':active') && _playerVolumeLocal === null) {
+    if (volSlider && !_volDragging && _playerVolumeLocal === null) {
         var vol = p.volume !== null && p.volume !== undefined ? p.volume : 50;
-        slider.value = vol;
+        _setVolSlider(vol);
         valSpan.textContent = vol;
     }
-    slider.setAttribute('data-device-id', p.device_id);
+    volSlider.setAttribute('data-device-id', p.device_id);
 
     // Multiroom button
     var groupCount = 0;
@@ -497,14 +497,31 @@ function playerStop() {
     });
 }
 
-function playerVolumeStep(delta) {
-    var slider = document.getElementById('player-volume-slider');
-    if (!slider) return;
-    var val = Math.max(0, Math.min(100, parseInt(slider.value) + delta));
-    slider.value = val;
+// --- Custom volume slider (matches trim slider design) ---
+var _volValue = 50;
+var _volDragging = false;
+
+function _setVolSlider(val) {
+    _volValue = Math.max(0, Math.min(100, Math.round(val)));
+    var fill = document.getElementById('vol-slider-fill');
+    var handle = document.getElementById('vol-slider-handle');
+    if (fill) { fill.style.width = _volValue + '%'; }
+    if (handle) { handle.style.left = _volValue + '%'; }
+}
+
+function _volFromEvent(e) {
+    var slider = document.getElementById('vol-slider');
+    if (!slider) return _volValue;
+    var rect = slider.getBoundingClientRect();
+    var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    return Math.max(0, Math.min(100, Math.round(x / rect.width * 100)));
+}
+
+function _volCommit(val) {
+    _setVolSlider(val);
     var valSpan = document.getElementById('player-volume-value');
     if (valSpan) valSpan.textContent = val;
-    var devId = slider.getAttribute('data-device-id');
+    var devId = document.getElementById('vol-slider').getAttribute('data-device-id');
     if (devId) {
         clearTimeout(_playerVolumeDebounce);
         _playerVolumeDebounce = setTimeout(function() {
@@ -517,30 +534,43 @@ function playerVolumeStep(delta) {
     }
 }
 
-// Volume slider events (cast only)
+function playerVolumeStep(delta) {
+    _volCommit(Math.max(0, Math.min(100, _volValue + delta)));
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    var slider = document.getElementById('player-volume-slider');
+    var slider = document.getElementById('vol-slider');
     if (!slider) return;
-    slider.addEventListener('input', function() {
+
+    function startDrag(e) {
+        e.preventDefault();
+        _volDragging = true;
+        _playerVolumeLocal = true;
+        var val = _volFromEvent(e);
+        _setVolSlider(val);
         var valSpan = document.getElementById('player-volume-value');
-        valSpan.textContent = slider.value;
-        _playerVolumeLocal = parseInt(slider.value);
-    });
-    slider.addEventListener('change', function() {
-        var val = parseInt(slider.value);
-        var devId = slider.getAttribute('data-device-id');
+        if (valSpan) valSpan.textContent = val;
+    }
+    function moveDrag(e) {
+        if (!_volDragging) return;
+        var val = _volFromEvent(e);
+        _setVolSlider(val);
+        var valSpan = document.getElementById('player-volume-value');
+        if (valSpan) valSpan.textContent = val;
+    }
+    function endDrag() {
+        if (!_volDragging) return;
+        _volDragging = false;
         _playerVolumeLocal = null;
-        if (devId) {
-            clearTimeout(_playerVolumeDebounce);
-            _playerVolumeDebounce = setTimeout(function() {
-                fetch('/api/cast/volume/' + encodeURIComponent(devId), {
-                    method: 'POST', credentials: 'include',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({volume: val}),
-                }).catch(function() {});
-            }, 200);
-        }
-    });
+        _volCommit(_volValue);
+    }
+
+    slider.addEventListener('mousedown', startDrag);
+    slider.addEventListener('touchstart', startDrag, {passive: false});
+    document.addEventListener('mousemove', moveDrag);
+    document.addEventListener('touchmove', moveDrag, {passive: false});
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchend', endDrag);
 });
 
 // Multiroom panel
