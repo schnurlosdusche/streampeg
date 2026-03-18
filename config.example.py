@@ -2,7 +2,7 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RECORDING_BASE = "/recording"
-SMB_TARGET = "/mnt/unraid-streams"
+SMB_TARGET = "/mnt/nas/music"  # Path to mounted NAS/network share for synced files
 DB_PATH = os.environ.get("SR_UI_DB_PATH", os.path.join(BASE_DIR, "streamripper-ui.db"))
 STREAMRIPPER_BIN = "streamripper"
 SYNC_INTERVAL = 300  # seconds
@@ -23,5 +23,5 @@ DEFAULT_MIN_SIZE_MB = 2
 MIN_BITRATE = 128  # Minimum stream bitrate in kbps — refuse to record/download below this
 HOST = "0.0.0.0"
 PORT = 5000
-SECRET_KEY = os.environ.get("SR_UI_SECRET", "sr-ui-secret-key-change-me")
-AUTH_PASSWORD = os.environ.get("SR_UI_PASSWORD", "streaming")
+SECRET_KEY = os.environ.get("SR_UI_SECRET", "change-me-in-production")
+AUTH_PASSWORD = os.environ.get("SR_UI_PASSWORD", "change-me")
