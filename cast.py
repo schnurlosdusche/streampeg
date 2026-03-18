@@ -25,6 +25,11 @@ DISCOVERY_CACHE_SECS = 30  # re-discover at most every 30s
 _active_casts = {}
 _casts_lock = threading.Lock()
 
+# ICY metadata cache for streams that are cast but not recording
+_icy_cache = {}       # stream_id -> {"track": str, "cover_url": str|None, "ts": float}
+_icy_cache_lock = threading.Lock()
+_ICY_POLL_INTERVAL = 10  # seconds between ICY polls per stream
+
 
 # ===== LMS discovery & control =============================================
 
@@ -508,6 +513,76 @@ def get_multiroom_state():
                     groups[d["id"]] = slave_ids
 
     return groups
+
+
+# ===== ICY metadata polling for non-recording casts ========================
+
+import re as _re
+
+def _fetch_icy_title(url, ua="VLC/3.0.21", timeout=5):
+    """Quick ICY title fetch — reads just enough to get StreamTitle."""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": ua,
+            "Icy-MetaData": "1",
+        })
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        metaint_str = resp.headers.get("icy-metaint")
+        if not metaint_str:
+            resp.close()
+            return None
+        metaint = int(metaint_str)
+        # Read one block + metadata
+        resp.read(metaint)
+        meta_len = resp.read(1)
+        if not meta_len:
+            resp.close()
+            return None
+        length = meta_len[0] * 16
+        if length > 0:
+            meta = resp.read(length).decode("utf-8", errors="replace").rstrip("\x00")
+            m = _re.search(r"StreamTitle='([^']*)'", meta)
+            if m and m.group(1).strip():
+                resp.close()
+                return m.group(1).strip()
+        resp.close()
+    except Exception:
+        pass
+    return None
+
+
+def poll_icy_for_cast(stream_id, stream_url):
+    """Fetch ICY title for a cast that is not recording. Updates cache."""
+    with _icy_cache_lock:
+        cached = _icy_cache.get(stream_id)
+        if cached and time.time() - cached["ts"] < _ICY_POLL_INTERVAL:
+            return  # still fresh
+
+    title = _fetch_icy_title(stream_url)
+    if title:
+        cover_url = None
+        try:
+            import cover_art
+            cover_url = cover_art.get_cover_url(stream_id, title)
+        except Exception:
+            pass
+        with _icy_cache_lock:
+            _icy_cache[stream_id] = {"track": title, "cover_url": cover_url, "ts": time.time()}
+
+
+def get_icy_cache(stream_id):
+    """Return cached ICY info for a stream, or None."""
+    with _icy_cache_lock:
+        cached = _icy_cache.get(stream_id)
+        if cached and time.time() - cached["ts"] < 30:
+            return cached
+    return None
+
+
+def clear_icy_cache(stream_id):
+    """Clear ICY cache when a stream stops being cast."""
+    with _icy_cache_lock:
+        _icy_cache.pop(stream_id, None)
 
 
 # Load persisted casts on module import

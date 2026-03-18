@@ -223,6 +223,7 @@ TRANSLATIONS = {
         "cast.queue_add": "+ Queue:",
         "cast.stop_playback": "Stop playback",
         "cast.failed": "Cast failed",
+        "cast.max_reached": "Maximum of 4 simultaneous casts reached",
 
         # Queue
         "queue.next": "Next",
@@ -473,6 +474,7 @@ TRANSLATIONS = {
         "cast.queue_add": "+ Warteschlange:",
         "cast.stop_playback": "Wiedergabe stoppen",
         "cast.failed": "Cast fehlgeschlagen",
+        "cast.max_reached": "Maximal 4 gleichzeitige Casts erlaubt",
         "queue.next": "Nächster",
         "queue.clear": "Leeren",
         "queue.min_remaining": "Min verbleibend",

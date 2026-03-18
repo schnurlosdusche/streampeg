@@ -16,10 +16,22 @@ import urllib.parse
 
 try:
     import mutagen
-    from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TCON, APIC, ID3NoHeaderError
+    from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TCON, APIC, TBPM, TKEY, ID3NoHeaderError
     _mutagen_available = True
 except ImportError:
     _mutagen_available = False
+
+try:
+    import aubio
+    _aubio_available = True
+except ImportError:
+    _aubio_available = False
+
+try:
+    import numpy as np
+    _numpy_available = True
+except ImportError:
+    _numpy_available = False
 
 # Background job tracking
 _jobs = {}  # stream_id -> {"total": int, "done": int, "running": bool, "errors": []}
@@ -198,6 +210,17 @@ def _has_tags(filepath):
         return False
 
 
+def _has_bpm_key(filepath):
+    """Check if file already has BPM and key tags."""
+    if not _mutagen_available:
+        return True  # Can't check, assume yes
+    try:
+        tags = ID3(filepath)
+        return tags.get("TBPM") is not None and tags.get("TKEY") is not None
+    except Exception:
+        return True
+
+
 def write_tags(filepath, metadata, cover_bytes=None):
     """Write ID3v2.4 tags to an MP3 file using mutagen."""
     if not _mutagen_available:
@@ -218,6 +241,10 @@ def write_tags(filepath, metadata, cover_bytes=None):
             tags["TDRC"] = TDRC(encoding=3, text=[metadata["date"]])
         if metadata.get("genre"):
             tags["TCON"] = TCON(encoding=3, text=[metadata["genre"]])
+        if metadata.get("bpm"):
+            tags["TBPM"] = TBPM(encoding=3, text=[str(metadata["bpm"])])
+        if metadata.get("key"):
+            tags["TKEY"] = TKEY(encoding=3, text=[metadata["key"]])
         if cover_bytes:
             tags["APIC:"] = APIC(
                 encoding=3, mime="image/jpeg", type=3,
@@ -228,6 +255,113 @@ def write_tags(filepath, metadata, cover_bytes=None):
         return True
     except Exception:
         return False
+
+
+# === BPM detection (aubio) ===
+
+def detect_bpm(filepath):
+    """Detect BPM using aubio. Returns int BPM or None."""
+    if not _aubio_available:
+        return None
+    try:
+        src = aubio.source(filepath, samplerate=0, hop_size=512)
+        samplerate = src.samplerate
+        t = aubio.tempo("default", 1024, 512, samplerate)
+        beats = []
+        total_frames = 0
+        while True:
+            samples, read = src()
+            is_beat = t(samples)
+            if is_beat[0]:
+                beats.append(total_frames / float(samplerate))
+            total_frames += read
+            if read < 512:
+                break
+        if len(beats) > 1:
+            intervals = [beats[i+1] - beats[i] for i in range(len(beats)-1)]
+            # Filter outliers (keep intervals within 2x of median)
+            intervals.sort()
+            median = intervals[len(intervals)//2]
+            filtered = [iv for iv in intervals if 0.5 * median < iv < 2 * median]
+            if filtered:
+                avg_interval = sum(filtered) / len(filtered)
+                bpm = round(60.0 / avg_interval)
+                if 40 <= bpm <= 250:
+                    return bpm
+        # Fallback: aubio's built-in BPM
+        bpm = round(t.get_bpm())
+        return bpm if 40 <= bpm <= 250 else None
+    except Exception:
+        return None
+
+
+# === Musical key detection (chromagram + Krumhansl-Schmuckler) ===
+
+# Krumhansl-Schmuckler key profiles
+_MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+_MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+_KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def detect_key(filepath):
+    """Detect musical key using chroma analysis. Returns key string like 'Cm' or 'F#' or None."""
+    if not _aubio_available or not _numpy_available:
+        return None
+    try:
+        src = aubio.source(filepath, samplerate=44100, hop_size=4096)
+        samplerate = src.samplerate
+        win_size = 8192
+        pvoc = aubio.pvoc(win_size, 4096)
+        fb = aubio.filterbank(12, win_size)
+        # Build chroma filterbank (12 pitch classes)
+        fb.set_power(1)
+
+        # Manual chroma via FFT magnitudes
+        chroma_sum = np.zeros(12)
+        frames = 0
+        while True:
+            samples, read = src()
+            spectrum = pvoc(samples)
+            magnitudes = np.array(spectrum.norm, dtype=float)
+            # Map FFT bins to pitch classes
+            for i in range(1, len(magnitudes)):
+                freq = i * samplerate / win_size
+                if freq < 60 or freq > 4200:
+                    continue
+                # Convert frequency to pitch class (0=C, 1=C#, ...)
+                import math
+                midi = 69 + 12 * math.log2(freq / 440.0)
+                pc = int(round(midi)) % 12
+                chroma_sum[pc] += magnitudes[i] ** 2
+            frames += 1
+            if read < 4096:
+                break
+
+        if frames == 0 or chroma_sum.sum() == 0:
+            return None
+
+        # Normalize
+        chroma_sum /= chroma_sum.sum()
+
+        # Correlate with all 24 key profiles
+        best_key = None
+        best_corr = -2
+        for shift in range(12):
+            rolled = np.roll(chroma_sum, -shift)
+            # Major
+            corr_maj = np.corrcoef(rolled, _MAJOR_PROFILE)[0, 1]
+            if corr_maj > best_corr:
+                best_corr = corr_maj
+                best_key = _KEY_NAMES[shift]
+            # Minor
+            corr_min = np.corrcoef(rolled, _MINOR_PROFILE)[0, 1]
+            if corr_min > best_corr:
+                best_corr = corr_min
+                best_key = _KEY_NAMES[shift] + "m"
+
+        return best_key if best_corr > 0.3 else None
+    except Exception:
+        return None
 
 
 # === Filename fallback ===
@@ -258,8 +392,23 @@ def process_file(filepath, api_key=None):
     if not _mutagen_available:
         return False, "no_mutagen"
 
-    # Skip already tagged files
+    # If already tagged, still check for missing BPM/key
     if _has_tags(filepath):
+        if _has_bpm_key(filepath):
+            return True, "already_tagged"
+        # Add BPM/key to existing tags
+        bpm = detect_bpm(filepath)
+        key = detect_key(filepath)
+        if bpm or key:
+            try:
+                tags = ID3(filepath)
+                if bpm and not tags.get("TBPM"):
+                    tags["TBPM"] = TBPM(encoding=3, text=[str(bpm)])
+                if key and not tags.get("TKEY"):
+                    tags["TKEY"] = TKEY(encoding=3, text=[key])
+                tags.save(filepath, v2_version=4)
+            except Exception:
+                pass
         return True, "already_tagged"
 
     if not api_key:
@@ -287,6 +436,15 @@ def process_file(filepath, api_key=None):
     if not metadata:
         metadata = _parse_filename(filepath)
         method = "filename"
+
+    # BPM and key detection (always attempt, even for already-tagged files)
+    bpm = detect_bpm(filepath)
+    key = detect_key(filepath)
+    if metadata:
+        if bpm:
+            metadata["bpm"] = bpm
+        if key:
+            metadata["key"] = key
 
     if metadata and (metadata.get("artist") or metadata.get("title")):
         ok = write_tags(filepath, metadata, cover_bytes)

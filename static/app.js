@@ -339,6 +339,15 @@ function castToDevice(streamId, deviceId, enabled) {
     if (!enabled) return;
     if (_castMenu) { _castMenu.remove(); _castMenu = null; }
 
+    // Check max cast limit client-side
+    var activeSids = Object.keys(_castActiveCache).filter(function(sid) {
+        return parseInt(sid) !== streamId;
+    });
+    if (activeSids.length >= MAX_CASTS) {
+        alert(t('cast.max_reached'));
+        return;
+    }
+
     // Remove any previous cast on the same device (switch stream)
     Object.keys(_castActiveCache).forEach(function(sid) {
         if (_castActiveCache[sid] === deviceId) {
@@ -395,12 +404,15 @@ function _updateCastIcons() {
     });
 }
 
-// --- Cast Player Bar (external devices only) ---
+// --- Multi-Cast Player Bars ---
 var _playerData = null;
-var _playerVolumeDebounce = null;
-var _playerVolumeLocal = null;
+var _playerVolumeDebounce = {};  // deviceId -> timeout
+var _playerVolumeLocal = {};     // deviceId -> value or true
 var _multiroomOpen = false;
-var _lastStreamStatus = {}; // stream_id -> status from /api/status
+var _lastStreamStatus = {};
+var _volState = {};              // deviceId -> {value, dragging}
+var _volStepResetTimers = {};
+var MAX_CASTS = 4;
 
 function _updatePlayerBar() {
     fetch('/api/cast/player', {credentials: 'include'})
@@ -412,81 +424,126 @@ function _updatePlayerBar() {
         .catch(function() {});
 }
 
-function _refreshPlayerBar() {
-    var bar = document.getElementById('player-bar');
-    if (!bar) return;
+function _getVolState(deviceId) {
+    if (!_volState[deviceId]) _volState[deviceId] = {value: 50, dragging: false};
+    return _volState[deviceId];
+}
 
-    var cover = document.getElementById('player-cover');
-    var placeholder = document.getElementById('player-cover-placeholder');
-    var trackEl = document.getElementById('player-track');
-    var streamEl = document.getElementById('player-stream');
-    var stopBtn = document.getElementById('player-stop-btn');
-    var volSlider = document.getElementById('vol-slider');
-    var valSpan = document.getElementById('player-volume-value');
-    var devName = document.getElementById('player-device-name');
-    var mrBtn = document.getElementById('player-multiroom-btn');
-    var mrPanel = document.getElementById('player-multiroom');
-
-    var hasCast = _playerData && _playerData.active && _playerData.players && _playerData.players.length > 0;
-
-    // === IDLE — no active cast ===
-    if (!hasCast) {
-        cover.style.display = 'none';
-        placeholder.style.display = '';
-        trackEl.textContent = t('player.no_cast');
-        streamEl.textContent = '';
-        stopBtn.style.display = 'none';
-        devName.textContent = '';
-        mrPanel.style.display = 'none';
-        _setVolSlider(0);
-        valSpan.textContent = '-';
-        volSlider.removeAttribute('data-device-id');
-        return;
-    }
-
-    // === CAST active ===
-    var p = _playerData.players[0];
+function _renderPlayerHTML(p, idx) {
     var st = _lastStreamStatus[p.stream_id] || {};
-    // Prefer stream status track info (always up-to-date from ICY metadata)
     var castTrack = st.current_track || p.current_track || '';
     var castHasTrack = castTrack && castTrack.replace(/[\s\-]/g, '') !== '';
     var castCover = st.cover_url || p.cover_url || null;
+    var vol = _getVolState(p.device_id);
+    var curVol = (_playerVolumeLocal[p.device_id] != null && _playerVolumeLocal[p.device_id] !== true)
+        ? _playerVolumeLocal[p.device_id] : (p.volume != null ? p.volume : 50);
 
-    if (castCover) {
-        cover.src = castCover;
-        cover.style.display = '';
-        placeholder.style.display = 'none';
-    } else {
-        cover.style.display = 'none';
-        placeholder.style.display = '';
+    var coverHtml = castCover
+        ? '<img src="' + castCover + '" alt="">'
+        : '<div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>';
+
+    var html = '<div class="player-bar" data-player-idx="' + idx + '">'
+        + '<div class="player-bar-inner">'
+        + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+        + '<div class="player-info">'
+        + '<div class="player-track">' + (castHasTrack ? _escHtmlPlayer(castTrack) : t('player.waiting_track')) + '</div>'
+        + '<div class="player-stream">' + _escHtmlPlayer(p.stream_name) + '</div>'
+        + '</div>'
+        + '<div class="player-controls">'
+        + '<button class="player-btn" onclick="playerStop(' + p.stream_id + ')" title="' + t('player.stop_title') + '">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
+        + '</button>'
+        + '</div>'
+        + '<div class="player-volume">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="#888" style="flex-shrink:0;"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>'
+        + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + p.device_id + '\', -2)">&#8722;</button>'
+        + '<div class="vol-slider" data-device-id="' + p.device_id + '">'
+        + '<div class="vol-slider-track"></div>'
+        + '<div class="vol-slider-fill" style="width:' + curVol + '%"></div>'
+        + '<div class="vol-slider-handle" style="left:' + curVol + '%"></div>'
+        + '</div>'
+        + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + p.device_id + '\', 2)">+</button>'
+        + '<span class="player-volume-value">' + curVol + '</span>'
+        + '</div>';
+
+    // Multiroom only on first player
+    if (idx === 0) {
+        html += '<div class="player-multiroom">'
+            + '<button class="player-btn player-multiroom-btn' + (_multiroomGroupCount > 1 ? ' has-group' : '') + '" onclick="toggleMultiroomPanel()" title="Multiroom">'
+            + '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M18.2 1C15.53 1 13.27 2.56 12.34 4.78l-1.55-.64C11.91 1.33 14.79-1 18.2-1c4.42 0 8 3.58 8 8 0 3.41-2.33 6.29-5.14 7.41l-.64-1.55C22.64 11.73 24.2 9.47 24.2 7c0-3.31-2.69-6-6-6z" transform="scale(0.7) translate(5,5)"/><circle cx="12" cy="12" r="3"/><path d="M7 12c0-2.76 2.24-5 5-5v-2c-3.87 0-7 3.13-7 7s3.13 7 7 7v-2c-2.76 0-5-2.24-5-5z"/></svg>'
+            + '</button>'
+            + '<div id="multiroom-panel" style="display:none;"></div>'
+            + '</div>';
     }
-    trackEl.textContent = castHasTrack ? castTrack : t('player.waiting_track');
-    streamEl.textContent = p.stream_name;
-    stopBtn.style.display = '';
-    stopBtn.setAttribute('data-stream-id', p.stream_id);
-    devName.textContent = p.device_name;
-    mrPanel.style.display = '';
 
-    // Volume
-    if (volSlider && !_volDragging && _playerVolumeLocal === null) {
-        var vol = p.volume !== null && p.volume !== undefined ? p.volume : 50;
-        _setVolSlider(vol);
-        valSpan.textContent = vol;
+    html += '<div class="player-device-name">' + _escHtmlPlayer(p.device_name) + '</div>'
+        + '</div></div>';
+    return html;
+}
+
+var _multiroomGroupCount = 0;
+
+function _refreshPlayerBar() {
+    var container = document.getElementById('player-container');
+    if (!container) return;
+
+    var hasCast = _playerData && _playerData.active && _playerData.players && _playerData.players.length > 0;
+
+    if (!hasCast) {
+        container.innerHTML = '<div class="player-bar">'
+            + '<div class="player-bar-inner">'
+            + '<div class="player-cover-wrap"><div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div></div>'
+            + '<div class="player-info"><div class="player-track">' + t('player.no_cast') + '</div><div class="player-stream"></div></div>'
+            + '</div></div>';
+        _updateVersionPosition(1);
+        _initVolSliders();
+        return;
     }
-    volSlider.setAttribute('data-device-id', p.device_id);
 
-    // Multiroom button
-    var groupCount = 0;
+    // Multiroom group count
+    _multiroomGroupCount = 0;
     if (_playerData.speakers) {
-        _playerData.speakers.forEach(function(s) { if (s.active_for) groupCount++; });
+        _playerData.speakers.forEach(function(s) { if (s.active_for) _multiroomGroupCount++; });
     }
-    mrBtn.classList.toggle('has-group', groupCount > 1);
+
+    var players = _playerData.players.slice(0, MAX_CASTS);
+    var html = '';
+    players.forEach(function(p, idx) {
+        html += _renderPlayerHTML(p, idx);
+    });
+    container.innerHTML = html;
+
+    // Update volume sliders from server data (only if not dragging/stepping)
+    players.forEach(function(p) {
+        var vs = _getVolState(p.device_id);
+        if (!vs.dragging && _playerVolumeLocal[p.device_id] == null) {
+            var vol = p.volume != null ? p.volume : 50;
+            _setVolSlider(p.device_id, vol);
+        }
+    });
+
+    _updateVersionPosition(players.length);
+    _initVolSliders();
+
     if (_multiroomOpen) _renderMultiroomPanel(_playerData);
 }
 
-function playerStop() {
-    if (!_playerData || !_playerData.players || !_playerData.players.length) return;
-    var streamId = _playerData.players[0].stream_id;
+function _updateVersionPosition(playerCount) {
+    var vi = document.getElementById('version-info');
+    var totalH = playerCount * 70;
+    if (vi) vi.style.bottom = (totalH + 4) + 'px';
+    var mainEl = document.querySelector('main.container');
+    if (mainEl) mainEl.style.paddingBottom = (totalH + 20) + 'px';
+}
+
+function _escHtmlPlayer(s) {
+    if (!s) return '';
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function playerStop(streamId) {
     fetch('/api/cast/stop', {
         method: 'POST', credentials: 'include',
         headers: {'Content-Type': 'application/json'},
@@ -498,86 +555,120 @@ function playerStop() {
     });
 }
 
-// --- Custom volume slider (matches trim slider design) ---
-var _volValue = 50;
-var _volDragging = false;
+// --- Per-player volume control ---
 
-function _setVolSlider(val) {
-    _volValue = Math.max(0, Math.min(100, Math.round(val)));
-    var fill = document.getElementById('vol-slider-fill');
-    var handle = document.getElementById('vol-slider-handle');
-    if (fill) { fill.style.width = _volValue + '%'; }
-    if (handle) { handle.style.left = _volValue + '%'; }
+function _setVolSlider(deviceId, val) {
+    val = Math.max(0, Math.min(100, Math.round(val)));
+    _getVolState(deviceId).value = val;
+    var slider = document.querySelector('.vol-slider[data-device-id="' + deviceId + '"]');
+    if (!slider) return;
+    var fill = slider.querySelector('.vol-slider-fill');
+    var handle = slider.querySelector('.vol-slider-handle');
+    if (fill) fill.style.width = val + '%';
+    if (handle) handle.style.left = val + '%';
 }
 
-function _volFromEvent(e) {
-    var slider = document.getElementById('vol-slider');
-    if (!slider) return _volValue;
+function _volFromEvent(e, deviceId) {
+    var slider = document.querySelector('.vol-slider[data-device-id="' + deviceId + '"]');
+    if (!slider) return _getVolState(deviceId).value;
     var rect = slider.getBoundingClientRect();
     var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
     return Math.max(0, Math.min(100, Math.round(x / rect.width * 100)));
 }
 
-function _volCommit(val) {
-    _setVolSlider(val);
-    var valSpan = document.getElementById('player-volume-value');
-    if (valSpan) valSpan.textContent = val;
-    var devId = document.getElementById('vol-slider').getAttribute('data-device-id');
-    if (devId) {
-        clearTimeout(_playerVolumeDebounce);
-        _playerVolumeDebounce = setTimeout(function() {
-            fetch('/api/cast/volume/' + encodeURIComponent(devId), {
-                method: 'POST', credentials: 'include',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({volume: val}),
-            }).catch(function() {});
-        }, 100);
-    }
-}
-
-function playerVolumeStep(delta) {
-    var newVal = Math.max(0, Math.min(100, _volValue + delta));
-    _playerVolumeLocal = newVal;
-    _volCommit(newVal);
-    // Keep _playerVolumeLocal set briefly so polling doesn't overwrite
-    clearTimeout(_volStepResetTimer);
-    _volStepResetTimer = setTimeout(function() { _playerVolumeLocal = null; }, 2000);
-}
-var _volStepResetTimer = null;
-
-document.addEventListener('DOMContentLoaded', function() {
-    var slider = document.getElementById('vol-slider');
-    if (!slider) return;
-
-    function startDrag(e) {
-        e.preventDefault();
-        _volDragging = true;
-        _playerVolumeLocal = true;
-        var val = _volFromEvent(e);
-        _setVolSlider(val);
-        var valSpan = document.getElementById('player-volume-value');
+function _volCommit(deviceId, val) {
+    _setVolSlider(deviceId, val);
+    // Update value display
+    var slider = document.querySelector('.vol-slider[data-device-id="' + deviceId + '"]');
+    if (slider) {
+        var valSpan = slider.parentNode.querySelector('.player-volume-value');
         if (valSpan) valSpan.textContent = val;
     }
-    function moveDrag(e) {
-        if (!_volDragging) return;
-        var val = _volFromEvent(e);
-        _setVolSlider(val);
-        var valSpan = document.getElementById('player-volume-value');
+    clearTimeout(_playerVolumeDebounce[deviceId]);
+    _playerVolumeDebounce[deviceId] = setTimeout(function() {
+        fetch('/api/cast/volume/' + encodeURIComponent(deviceId), {
+            method: 'POST', credentials: 'include',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({volume: val}),
+        }).catch(function() {});
+    }, 100);
+}
+
+function playerVolumeStep(deviceId, delta) {
+    var vs = _getVolState(deviceId);
+    var newVal = Math.max(0, Math.min(100, vs.value + delta));
+    _playerVolumeLocal[deviceId] = newVal;
+    _volCommit(deviceId, newVal);
+    clearTimeout(_volStepResetTimers[deviceId]);
+    _volStepResetTimers[deviceId] = setTimeout(function() { _playerVolumeLocal[deviceId] = null; }, 2000);
+}
+
+// Attach drag listeners to all volume sliders (called after each render)
+var _activeVolDrag = null; // deviceId string
+
+function _initVolSliders() {
+    document.querySelectorAll('.vol-slider').forEach(function(slider) {
+        var deviceId = slider.getAttribute('data-device-id');
+        if (!deviceId) return;
+
+        slider.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            _activeVolDrag = deviceId;
+            _getVolState(deviceId).dragging = true;
+            _playerVolumeLocal[deviceId] = true;
+            var val = _volFromEvent(e, deviceId);
+            _setVolSlider(deviceId, val);
+            var valSpan = slider.parentNode.querySelector('.player-volume-value');
+            if (valSpan) valSpan.textContent = val;
+        });
+        slider.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            _activeVolDrag = deviceId;
+            _getVolState(deviceId).dragging = true;
+            _playerVolumeLocal[deviceId] = true;
+            var val = _volFromEvent(e, deviceId);
+            _setVolSlider(deviceId, val);
+            var valSpan = slider.parentNode.querySelector('.player-volume-value');
+            if (valSpan) valSpan.textContent = val;
+        }, {passive: false});
+    });
+}
+
+document.addEventListener('mousemove', function(e) {
+    if (!_activeVolDrag) return;
+    var val = _volFromEvent(e, _activeVolDrag);
+    _setVolSlider(_activeVolDrag, val);
+    var slider = document.querySelector('.vol-slider[data-device-id="' + _activeVolDrag + '"]');
+    if (slider) {
+        var valSpan = slider.parentNode.querySelector('.player-volume-value');
         if (valSpan) valSpan.textContent = val;
     }
-    function endDrag() {
-        if (!_volDragging) return;
-        _volDragging = false;
-        _playerVolumeLocal = null;
-        _volCommit(_volValue);
+});
+document.addEventListener('touchmove', function(e) {
+    if (!_activeVolDrag) return;
+    var val = _volFromEvent(e, _activeVolDrag);
+    _setVolSlider(_activeVolDrag, val);
+    var slider = document.querySelector('.vol-slider[data-device-id="' + _activeVolDrag + '"]');
+    if (slider) {
+        var valSpan = slider.parentNode.querySelector('.player-volume-value');
+        if (valSpan) valSpan.textContent = val;
     }
-
-    slider.addEventListener('mousedown', startDrag);
-    slider.addEventListener('touchstart', startDrag, {passive: false});
-    document.addEventListener('mousemove', moveDrag);
-    document.addEventListener('touchmove', moveDrag, {passive: false});
-    document.addEventListener('mouseup', endDrag);
-    document.addEventListener('touchend', endDrag);
+}, {passive: false});
+document.addEventListener('mouseup', function() {
+    if (!_activeVolDrag) return;
+    var deviceId = _activeVolDrag;
+    _getVolState(deviceId).dragging = false;
+    _playerVolumeLocal[deviceId] = null;
+    _volCommit(deviceId, _getVolState(deviceId).value);
+    _activeVolDrag = null;
+});
+document.addEventListener('touchend', function() {
+    if (!_activeVolDrag) return;
+    var deviceId = _activeVolDrag;
+    _getVolState(deviceId).dragging = false;
+    _playerVolumeLocal[deviceId] = null;
+    _volCommit(deviceId, _getVolState(deviceId).value);
+    _activeVolDrag = null;
 });
 
 // Multiroom panel
@@ -600,8 +691,8 @@ function toggleMultiroomPanel() {
 
 function _closeMultiroomOutside(e) {
     var panel = document.getElementById('multiroom-panel');
-    var btn = document.getElementById('player-multiroom-btn');
-    if (panel && !panel.contains(e.target) && !btn.contains(e.target)) {
+    var btn = document.querySelector('.player-multiroom-btn');
+    if (panel && !panel.contains(e.target) && (!btn || !btn.contains(e.target))) {
         _multiroomOpen = false;
         panel.style.display = 'none';
         document.removeEventListener('click', _closeMultiroomOutside);

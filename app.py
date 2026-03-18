@@ -22,18 +22,21 @@ import dlna_server
 import i18n
 from scheduler import SyncScheduler
 
+VERSION = "0.0.1a"
+
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 scheduler = None
 
-# Make t() and language info available in all templates
+# Make t(), language info and version available in all templates
 @app.context_processor
-def inject_i18n():
+def inject_globals():
     lang = i18n.get_language()
     return {
         "t": lambda key: i18n.t(key, lang),
         "current_lang": lang,
         "all_translations_json": i18n.get_all_translations(lang),
+        "version": VERSION,
     }
 
 
@@ -684,6 +687,13 @@ def api_cast_play():
         if did == device_id and sid != int(stream_id):
             cast.remove_active_cast(sid)
 
+    # Limit to 4 simultaneous casts
+    active = cast.get_active_casts()
+    # Don't count if this stream is already casting (switching device)
+    active_count = len([sid for sid in active if sid != int(stream_id)])
+    if active_count >= 4:
+        return jsonify({"success": False, "message": i18n.t("cast.max_reached")}), 400
+
     ok, msg = cast.cast_stream(stream["url"], device_id)
     if ok:
         cast.set_active_cast(int(stream_id), device_id)
@@ -731,6 +741,20 @@ def api_cast_player():
             continue
 
         st = process_manager.get_status(stream)
+        current_track = st.get("current_track", "")
+        cover_url = st.get("cover_url")
+
+        # If stream is not recording, try ICY metadata from cache/poll
+        if not st.get("running") and not current_track:
+            # Poll in background thread (non-blocking)
+            import threading as _thr
+            _thr.Thread(target=cast.poll_icy_for_cast,
+                        args=(stream_id, stream["url"]), daemon=True).start()
+            icy = cast.get_icy_cache(stream_id)
+            if icy:
+                current_track = icy["track"]
+                cover_url = icy.get("cover_url") or cover_url
+
         vol = cast.get_volume(device_id)
         players.append({
             "stream_id": stream_id,
@@ -738,8 +762,8 @@ def api_cast_player():
             "device_id": device_id,
             "device_name": device.get("name", device_id),
             "device_type": device.get("type", ""),
-            "current_track": st.get("current_track", ""),
-            "cover_url": st.get("cover_url"),
+            "current_track": current_track,
+            "cover_url": cover_url,
             "volume": vol,
             "running": st.get("running", False),
         })
