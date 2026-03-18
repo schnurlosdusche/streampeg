@@ -13,19 +13,19 @@
             <li><a href="{{ url_for('dashboard') }}"><img src="{{ url_for('static', filename='streampeg.svg') }}" alt="Streampeg" style="height:75px;vertical-align:middle;"></a></li>
         </ul>
         <ul>
-            <li><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
-            <li><a href="{{ url_for('browse') }}">Radio Browser</a></li>
-            <li><a href="{{ url_for('logs') }}">Logs</a></li>
-            <li><a href="{{ url_for('yt_download') }}">YT Download</a></li>
-            <li><a href="{{ url_for('stream_new') }}">+ Stream</a></li>
-            <li><a href="{{ url_for('settings') }}">Settings</a></li>
-            <li><a href="#" id="restart-service-btn" onclick="restartService(event)" title="Service neu starten">Restart</a></li>
+            <li><a href="{{ url_for('dashboard') }}">{{ t('nav.dashboard') }}</a></li>
+            <li><a href="{{ url_for('browse') }}">{{ t('nav.radio_browser') }}</a></li>
+            <li><a href="{{ url_for('logs') }}">{{ t('nav.logs') }}</a></li>
+            <li><a href="{{ url_for('yt_download') }}">{{ t('nav.yt_download') }}</a></li>
+            <li><a href="{{ url_for('stream_new') }}">{{ t('nav.add_stream') }}</a></li>
+            <li><a href="{{ url_for('settings') }}">{{ t('nav.settings') }}</a></li>
+            <li><a href="#" id="restart-service-btn" onclick="restartService(event)" title="{{ t('nav.restart_title') }}">{{ t('nav.restart') }}</a></li>
         </ul>
     </nav>
 
     <main class="container">
         <div id="disk-info" class="disk-bar">
-            <small>Worker: <span id="disk-worker">--</span> frei | NAS: <span id="disk-nas">--</span> frei</small>
+            <small>{{ t('disk.worker') }} <span id="disk-worker">--</span> {{ t('disk.free') }} | {{ t('disk.nas') }} <span id="disk-nas">--</span> {{ t('disk.free') }}</small>
         </div>
 
         {% block content %}{% endblock %}
@@ -39,11 +39,11 @@
                 <div id="player-cover-placeholder"><svg width="24" height="24" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>
             </div>
             <div id="player-info">
-                <div id="player-track">Kein aktiver Cast</div>
+                <div id="player-track">{{ t('player.no_cast') }}</div>
                 <div id="player-stream"></div>
             </div>
             <div id="player-controls">
-                <button id="player-stop-btn" class="player-btn" onclick="playerStop()" title="Cast stoppen" style="display:none;">
+                <button id="player-stop-btn" class="player-btn" onclick="playerStop()" title="{{ t('player.stop_title') }}" style="display:none;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
                 </button>
             </div>
@@ -63,14 +63,18 @@
     </div>
 
     <script>
+    var _t = {{ all_translations_json|tojson }};
+    function t(key) { return _t[key] || key; }
+    </script>
+    <script>
     var _restarting = false;
     function restartService(e) {
         e.preventDefault();
-        if (!confirm('Service wirklich neu starten?')) return;
+        if (!confirm(t('nav.restart_confirm'))) return;
         _restarting = true;
         var btn = document.getElementById('restart-service-btn');
         btn.textContent = '...';
-        showRestartModal('Service wird neu gestartet...');
+        showRestartModal(t('nav.restart_modal'));
         fetch('/api/restart-service', {method: 'POST', credentials: 'include'})
             .then(r => r.json())
             .then(data => {
@@ -80,7 +84,7 @@
                     _restarting = false;
                     hideRestartModal();
                     alert(data.error);
-                    btn.textContent = 'Restart';
+                    btn.textContent = t('nav.restart');
                 }
             })
             .catch(() => { waitForRestart(); });
@@ -92,7 +96,7 @@
         var dotInterval = setInterval(function() {
             dots = (dots + 1) % 4;
             var msgEl = document.getElementById('restart-modal-msg');
-            if (msgEl) msgEl.textContent = 'Warte auf Server' + '.'.repeat(dots);
+            if (msgEl) msgEl.textContent = t('nav.restart_waiting') + '.'.repeat(dots);
         }, 500);
         function tryReload() {
             attempts++;
@@ -101,7 +105,7 @@
                     if (r.ok) {
                         clearInterval(dotInterval);
                         var msgEl = document.getElementById('restart-modal-msg');
-                        if (msgEl) msgEl.textContent = 'Verbunden!';
+                        if (msgEl) msgEl.textContent = t('nav.restart_connected');
                         setTimeout(function() { location.reload(); }, 400);
                     } else { throw 'not ready'; }
                 })

@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}YT Download - Streampeg{% endblock %}
+
+{% block content %}
+<h3>YouTube Audio Download</h3>
+
+<form id="yt-url-form" onsubmit="return checkUrl(event)">
+    <fieldset role="group">
+        <input type="url" id="yt-url" name="url" placeholder="YouTube-URL eingeben (Video oder Playlist)..." required>
+        <button type="submit" id="btn-check">Pruefen</button>
+    </fieldset>
+</form>
+
+<div id="yt-dest-group" style="margin-bottom:1rem;">
+    <label for="yt-dest">Zielordner</label>
+    <input type="text" id="yt-dest" value="yt-downloads" placeholder="yt-downloads">
+    <small>Unterordner in /recording/ und auf dem NAS</small>
+</div>
+
+<!-- Info / Playlist choice -->
+<div id="yt-info" style="display:none;">
+    <article>
+        <header id="yt-info-header">Video-Info</header>
+        <div id="yt-playlist-buttons-top" style="display:none; margin-bottom:1rem;"></div>
+        <div id="yt-info-body"></div>
+        <div id="yt-playlist-buttons-bottom" style="display:none; margin-top:1rem;"></div>
+    </article>
+</div>
+
+<!-- Single video download button -->
+<div id="yt-single-action" style="display:none;">
+    <button id="btn-dl-go" onclick="startDownload('single')" class="btn-start">Download starten</button>
+</div>
+
+<!-- Progress -->
+<div id="yt-progress" style="display:none;">
+    <article>
+        <header>Download-Fortschritt</header>
+        <div id="yt-progress-title" style="margin-bottom:0.5rem; font-weight:bold;"></div>
+        <progress id="yt-progress-bar" value="0" max="100" style="width:100%; margin-bottom:0.3rem;"></progress>
+        <div id="yt-progress-detail" style="font-size:0.8rem; color:var(--pico-muted-color); margin-bottom:1rem;"></div>
+        <div id="yt-progress-log" style="max-height:300px; overflow-y:auto; font-family:monospace; font-size:0.8rem; line-height:1.6;"></div>
+    </article>
+</div>
+
+<!-- Result -->
+<div id="yt-result" style="display:none;">
+    <article id="yt-result-article">
+        <header id="yt-result-header"></header>
+        <div id="yt-result-body"></div>
+    </article>
+</div>
+
+<script>
+let currentUrl = '';
+let isPlaylist = false;
+
+function checkUrl(e) {
+    e.preventDefault();
+    const url = document.getElementById('yt-url').value.trim();
+    if (!url) return;
+
+    currentUrl = url;
+    const btn = document.getElementById('btn-check');
+    btn.disabled = true;
+    btn.textContent = 'Pruefe...';
+    btn.setAttribute('aria-busy', 'true');
+
+    hide('yt-info'); hide('yt-single-action'); hide('yt-progress'); hide('yt-result');
+    hide('yt-playlist-buttons-top'); hide('yt-playlist-buttons-bottom');
+
+    fetch('/api/yt-download/check', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: url}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.textContent = 'Pruefen';
+        btn.removeAttribute('aria-busy');
+
+        if (!data.ok) {
+            alert(data.error || 'Fehler beim Pruefen der URL');
+            return;
+        }
+
+        show('yt-info');
+
+        if (data.is_playlist && data.has_single_video && data.single_title) {
+            // Video aus einer Playlist: Song zuerst, Playlist als Option
+            isPlaylist = true;
+            const header = document.getElementById('yt-info-header');
+            header.textContent = 'Video gefunden';
+
+            let html = '<p><strong>' + escHtml(data.single_title) + '</strong>';
+            if (data.single_duration) html += ' (' + formatDuration(data.single_duration) + ')';
+            html += '</p>';
+            html += '<button onclick="startDownload(\'single\')" class="btn-start">Diesen Song laden</button>';
+
+            html += '<hr style="margin:1.5rem 0;">';
+            let plTitle = data.playlist_title + ' (' + data.count + ' Videos)';
+            if (data.capped) plTitle += ' — Liste gekuerzt';
+            html += '<p><strong>Playlist:</strong> ' + escHtml(plTitle) + '</p>';
+
+            // Playlist buttons top
+            html += '<div style="margin-bottom:0.5rem;"><button onclick="startDownload(\'playlist\')" class="outline">Ganze Playlist laden (' + data.count + ')</button></div>';
+
+            // Playlist table (collapsed by default)
+            html += '<details><summary style="cursor:pointer;">Playlist anzeigen</summary>';
+            html += '<table role="grid"><thead><tr><th>#</th><th>Titel</th><th>Dauer</th></tr></thead><tbody>';
+            data.items.forEach((item, i) => {
+                const dur = item.duration ? formatDuration(item.duration) : '?';
+                html += '<tr><td>' + (i+1) + '</td><td>' + escHtml(item.title) + '</td><td>' + dur + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            html += '<div style="margin-top:0.5rem;"><button onclick="startDownload(\'playlist\')" class="outline">Ganze Playlist laden (' + data.count + ')</button></div>';
+            html += '</details>';
+
+            document.getElementById('yt-info-body').innerHTML = html;
+            hide('yt-playlist-buttons-top');
+            hide('yt-playlist-buttons-bottom');
+
+        } else if (data.is_playlist) {
+            // Reine Playlist-URL (kein einzelnes Video)
+            isPlaylist = true;
+            const header = document.getElementById('yt-info-header');
+            let headerText = data.playlist_title + ' (' + data.count + ' Videos)';
+            if (data.capped) headerText += ' — Liste gekuerzt';
+            header.textContent = headerText;
+
+            let html = '';
+            if (data.is_mix) {
+                html += '<p><small style="color:var(--pico-muted-color);">Dies ist ein automatisch generierter YouTube-Mix. Die Liste kann variieren.</small></p>';
+            }
+
+            html += '<table role="grid"><thead><tr><th>#</th><th>Titel</th><th>Dauer</th></tr></thead><tbody>';
+            data.items.forEach((item, i) => {
+                const dur = item.duration ? formatDuration(item.duration) : '?';
+                html += '<tr><td>' + (i+1) + '</td><td>' + escHtml(item.title) + '</td><td>' + dur + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            document.getElementById('yt-info-body').innerHTML = html;
+
+            const btnHtml = '<button onclick="startDownload(\'playlist\')" class="btn-start">Ganze Playlist laden (' + data.count + ')</button>';
+            document.getElementById('yt-playlist-buttons-top').innerHTML = btnHtml;
+            document.getElementById('yt-playlist-buttons-top').style.display = '';
+            document.getElementById('yt-playlist-buttons-bottom').innerHTML = btnHtml;
+            document.getElementById('yt-playlist-buttons-bottom').style.display = '';
+        } else {
+            isPlaylist = false;
+            const header = document.getElementById('yt-info-header');
+            header.textContent = 'Video gefunden';
+
+            let html = '<p><strong>' + escHtml(data.title) + '</strong>';
+            if (data.uploader) html += ' &mdash; ' + escHtml(data.uploader);
+            if (data.duration) html += ' (' + formatDuration(data.duration) + ')';
+            html += '</p>';
+            document.getElementById('yt-info-body').innerHTML = html;
+            hide('yt-playlist-buttons-top');
+            hide('yt-playlist-buttons-bottom');
+
+            show('yt-single-action');
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.textContent = 'Pruefen';
+        btn.removeAttribute('aria-busy');
+        alert('Fehler: ' + err);
+    });
+}
+
+function startDownload(mode) {
+    hide('yt-single-action');
+    hide('yt-info');
+    show('yt-progress');
+    hide('yt-result');
+
+    const log = document.getElementById('yt-progress-log');
+    const bar = document.getElementById('yt-progress-bar');
+    const titleEl = document.getElementById('yt-progress-title');
+    const detailEl = document.getElementById('yt-progress-detail');
+    log.innerHTML = '';
+    bar.value = 0;
+    bar.removeAttribute('data-converting');
+    titleEl.textContent = '';
+    detailEl.textContent = '';
+
+    const dest = document.getElementById('yt-dest').value.trim() || 'yt-downloads';
+    const params = new URLSearchParams({url: currentUrl, mode: mode, dest: dest});
+    const evtSource = new EventSource('/api/yt-download/start?' + params.toString());
+
+    evtSource.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+
+        if (data.error) {
+            addLog(log, 'Fehler: ' + data.error, '#e6a8a8');
+            bar.value = 0;
+            evtSource.close();
+            return;
+        }
+
+        if (data.status === 'done') {
+            evtSource.close();
+            bar.value = 100;
+            bar.removeAttribute('data-converting');
+            titleEl.textContent = 'Fertig';
+            detailEl.textContent = data.message;
+            addLog(log, data.message, '#a8e6a8');
+
+            show('yt-result');
+            const rh = document.getElementById('yt-result-header');
+            const rb = document.getElementById('yt-result-body');
+            rh.textContent = 'Fertig';
+            rh.style.color = '#a8e6a8';
+            rb.innerHTML = '<p>' + escHtml(data.message) + '</p>';
+            return;
+        }
+
+        if (data.status === 'error') {
+            addLog(log, data.message, '#e6a8a8');
+            bar.value = 0;
+            evtSource.close();
+            return;
+        }
+
+        if (data.status === 'downloading') {
+            titleEl.textContent = data.message;
+            bar.removeAttribute('data-converting');
+        } else if (data.status === 'progress') {
+            // Parse percentage from yt-dlp output like "[download]  45.2% of ..."
+            const match = data.message.match(/([\d.]+)%/);
+            if (match) {
+                bar.value = parseFloat(match[1]);
+            }
+            detailEl.textContent = data.message.replace(/^\[download\]\s*/, '');
+        } else if (data.status === 'converting') {
+            titleEl.textContent = data.message;
+            detailEl.textContent = '';
+            // Indeterminate progress bar for conversion
+            bar.removeAttribute('value');
+        } else if (data.status === 'syncing') {
+            titleEl.textContent = data.message;
+            bar.removeAttribute('value');
+        } else if (data.status === 'skip') {
+            addLog(log, data.message, '#ff9800');
+        } else {
+            addLog(log, data.message);
+        }
+        log.scrollTop = log.scrollHeight;
+    };
+
+    evtSource.onerror = function() {
+        evtSource.close();
+        // Don't show error — download continues in background
+        titleEl.textContent = 'Download laeuft im Hintergrund weiter...';
+        detailEl.textContent = 'Konvertierung und Sync finden auch ohne diese Seite statt.';
+    };
+}
+
+function addLog(container, text, color) {
+    const el = document.createElement('div');
+    el.textContent = text;
+    if (color) el.style.color = color;
+    container.appendChild(el);
+    container.scrollTop = container.scrollHeight;
+}
+
+function formatDuration(sec) {
+    if (!sec) return '?';
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m + ':' + String(Math.floor(s)).padStart(2, '0');
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function show(id) { document.getElementById(id).style.display = ''; }
+function hide(id) { document.getElementById(id).style.display = 'none'; }
+</script>
+{% endblock %}

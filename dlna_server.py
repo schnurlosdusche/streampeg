@@ -433,10 +433,18 @@ def start():
     _active_name = get_friendly_name()
     _ssdp_stop.clear()
 
-    # Start HTTP server
-    _http_server = HTTPServer(("0.0.0.0", _active_port), DLNAHandler)
-    _http_thread = threading.Thread(target=_http_server.serve_forever, daemon=True)
-    _http_thread.start()
+    # Start HTTP server (allow reuse of port after restart)
+    class ReusableHTTPServer(HTTPServer):
+        allow_reuse_address = True
+        allow_reuse_port = True
+    try:
+        _http_server = ReusableHTTPServer(("0.0.0.0", _active_port), DLNAHandler)
+        _http_thread = threading.Thread(target=_http_server.serve_forever, daemon=True)
+        _http_thread.start()
+    except OSError as e:
+        _http_server = None
+        print(f"DLNA server failed to start: {e}")
+        return
 
     # Start SSDP
     _ssdp_thread = threading.Thread(target=_ssdp_loop, daemon=True)

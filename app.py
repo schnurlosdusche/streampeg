@@ -19,11 +19,22 @@ import cast_queue
 import cover_art
 import autotag
 import dlna_server
+import i18n
 from scheduler import SyncScheduler
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 scheduler = None
+
+# Make t() and language info available in all templates
+@app.context_processor
+def inject_i18n():
+    lang = i18n.get_language()
+    return {
+        "t": lambda key: i18n.t(key, lang),
+        "current_lang": lang,
+        "all_translations_json": i18n.get_all_translations(lang),
+    }
 
 
 def _sanitize_subdir(name):
@@ -480,7 +491,8 @@ def settings():
                            acoustid_key=acoustid_key,
                            fpcalc_ok=fpcalc_ok,
                            dlna_enabled=dlna_enabled,
-                           dlna_status=dlna_status)
+                           dlna_status=dlna_status,
+                           languages=i18n.LANGUAGES)
 
 
 @app.route("/settings/module/<name>/toggle", methods=["POST"])
@@ -498,6 +510,14 @@ def settings_cover_art_toggle():
     currently = cover_art.is_enabled()
     cover_art.set_enabled(not currently)
     return jsonify({"ok": True, "enabled": not currently})
+
+
+@app.route("/settings/language", methods=["POST"])
+def settings_language():
+    data = request.get_json() or {}
+    lang = data.get("language", "en")
+    i18n.set_language(lang)
+    return jsonify({"ok": True, "language": lang})
 
 
 @app.route("/settings/cast/sonos/toggle", methods=["POST"])
@@ -1341,6 +1361,9 @@ if __name__ == "__main__":
 
     # Start DLNA server if enabled
     if dlna_server.is_enabled():
-        dlna_server.start()
+        try:
+            dlna_server.start()
+        except Exception as e:
+            print(f"DLNA server start failed: {e}")
 
     app.run(host=HOST, port=PORT, threaded=True)

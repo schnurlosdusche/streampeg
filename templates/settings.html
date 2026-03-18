@@ -1,16 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Settings - Streampeg{% endblock %}
+{% block title %}{{ t('settings.title') }} - Streampeg{% endblock %}
 {% block content %}
-<h2>Settings</h2>
+<h2>{{ t('settings.title') }}</h2>
 
-<h4>Aufnahmemodi</h4>
+<h4>{{ t('settings.language') }}</h4>
+<p><small style="color:var(--pico-muted-color,#888);">{{ t('settings.language_desc') }}</small></p>
+<select id="language-select" onchange="changeLanguage(this.value)" style="max-width:200px;margin-bottom:1rem;">
+    {% for code, name in languages.items() %}
+    <option value="{{ code }}" {{ 'selected' if code == current_lang }}>{{ name }}</option>
+    {% endfor %}
+</select>
+<hr>
+
+<h4>{{ t('settings.recording_modes') }}</h4>
 
 <table>
     <thead>
         <tr>
-            <th>Modus</th>
-            <th>Typ</th>
-            <th>Status</th>
+            <th>{{ t('settings.mode') }}</th>
+            <th>{{ t('settings.type') }}</th>
+            <th>{{ t('settings.status') }}</th>
         </tr>
     </thead>
     <tbody>
@@ -18,17 +27,17 @@
         <tr>
             <td>
                 {% if mode == 'streamripper' %}
-                    <span style="font-size:15px;">&#127911;</span> Streamripper (ICY-Metadaten)
+                    <span style="font-size:15px;">&#127911;</span> {{ t('settings.streamripper_label') }}
                 {% elif mode == 'ffmpeg_icy' %}
-                    <span style="font-size:15px;">&#127897;&#65039;</span> FFmpeg + ICY-Metadaten
+                    <span style="font-size:15px;">&#127897;&#65039;</span> {{ t('settings.ffmpeg_icy_label') }}
                 {% elif mode == 'ffmpeg_api' %}
-                    <span style="font-size:15px;">&#128225;</span> FFmpeg + Shoutcast-API
+                    <span style="font-size:15px;">&#128225;</span> {{ t('settings.ffmpeg_api_label') }}
                 {% else %}
                     {{ mode }}
                 {% endif %}
             </td>
-            <td><small>Built-in</small></td>
-            <td><span style="color:var(--pico-color-green-500,green);">Aktiv</span></td>
+            <td><small>{{ t('settings.builtin') }}</small></td>
+            <td><span style="color:var(--pico-color-green-500,green);">{{ t('settings.active') }}</span></td>
         </tr>
         {% endfor %}
         {% for name, mod in modules.items() %}
@@ -38,40 +47,40 @@
                 <strong>{{ mod.label }}</strong>
                 {% if mod.description %}<br><small style="color:var(--pico-muted-color,#888);">{{ mod.description }}</small>{% endif %}
             </td>
-            <td><small>Modul</small></td>
+            <td><small>{{ t('settings.module') }}</small></td>
             <td>
                 <button class="outline btn-icon module-toggle" data-module="{{ name }}"
                         style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if enabled[name] else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
-                    {{ "Aktiviert" if enabled[name] else "Deaktiviert" }}
+                    {{ t('settings.enabled') if enabled[name] else t('settings.disabled') }}
                 </button>
             </td>
         </tr>
         {% endfor %}
         {% if not modules %}
         <tr>
-            <td colspan="3"><small style="color:var(--pico-muted-color,#888);">Keine Module installiert. Module koennen im <code>modules/</code> Verzeichnis abgelegt werden.</small></td>
+            <td colspan="3"><small style="color:var(--pico-muted-color,#888);">{{ t('settings.no_modules') }}</small></td>
         </tr>
         {% endif %}
     </tbody>
 </table>
 
-<small style="color:var(--pico-muted-color,#888);">Nach Installation oder Entfernung von Modulen ist ein Neustart erforderlich.</small>
+<small style="color:var(--pico-muted-color,#888);">{{ t('settings.modules_restart') }}</small>
 
 <hr>
 
-<h4>Anzeige</h4>
+<h4>{{ t('settings.display') }}</h4>
 <table>
     <tbody>
         <tr>
             <td>
-                <strong>Cover Art</strong>
-                <br><small style="color:var(--pico-muted-color,#888);">Album-Cover im Dashboard anzeigen (iTunes Search API)</small>
+                <strong>{{ t('settings.cover_art') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.cover_art_desc') }}</small>
             </td>
             <td>
                 <button class="outline btn-icon" id="cover-art-toggle"
                         onclick="toggleCoverArt()"
                         style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if cover_art_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
-                    {{ "Aktiviert" if cover_art_enabled else "Deaktiviert" }}
+                    {{ t('settings.enabled') if cover_art_enabled else t('settings.disabled') }}
                 </button>
             </td>
         </tr>
@@ -80,31 +89,31 @@
 
 <hr>
 
-<h4>Cast</h4>
-<p><small style="color:var(--pico-muted-color,#888);">Streams an Netzwerk-Audiogeräte senden. LMS (Max2Play / Squeezebox) ist immer aktiv.</small></p>
+<h4>{{ t('settings.cast') }}</h4>
+<p><small style="color:var(--pico-muted-color,#888);">{{ t('settings.cast_desc') }}</small></p>
 
 <table>
     <thead>
-        <tr><th>Backend</th><th>Status</th></tr>
+        <tr><th>{{ t('settings.backend') }}</th><th>{{ t('settings.status') }}</th></tr>
     </thead>
     <tbody>
         <tr>
             <td>
-                <strong>LMS</strong> (Logitech Media Server / Squeezebox / Max2Play)
-                <br><small style="color:var(--pico-muted-color,#888);">Auto-Discovery via UDP-Broadcast</small>
+                <strong>{{ t('settings.lms_label') }}</strong> {{ t('settings.lms_desc') }}
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.lms_discovery') }}</small>
             </td>
-            <td><span style="color:var(--pico-color-green-500,green);">Aktiv</span></td>
+            <td><span style="color:var(--pico-color-green-500,green);">{{ t('settings.active') }}</span></td>
         </tr>
         <tr>
             <td>
-                <strong>Sonos</strong>
-                <br><small style="color:var(--pico-muted-color,#888);">Auto-Discovery via SSDP</small>
+                <strong>{{ t('settings.sonos_label') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.sonos_discovery') }}</small>
             </td>
             <td>
                 <button class="outline btn-icon" id="sonos-toggle"
                         onclick="toggleSonos()"
                         style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if sonos_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
-                    {{ "Aktiviert" if sonos_enabled else "Deaktiviert" }}
+                    {{ t('settings.enabled') if sonos_enabled else t('settings.disabled') }}
                 </button>
             </td>
         </tr>
@@ -113,46 +122,46 @@
 
 <hr>
 
-<h4>Auto-Tagging</h4>
-<p><small style="color:var(--pico-muted-color,#888);">Automatisches Taggen von MP3-Dateien nach der Aufnahme (AcoustID + MusicBrainz + Cover Art Archive).</small></p>
+<h4>{{ t('settings.autotag') }}</h4>
+<p><small style="color:var(--pico-muted-color,#888);">{{ t('settings.autotag_desc') }}</small></p>
 
 <table>
     <tbody>
         <tr>
             <td>
-                <strong>Auto-Tagging</strong>
-                <br><small style="color:var(--pico-muted-color,#888);">ID3-Tags (Artist, Title, Album, Genre, Cover) automatisch setzen</small>
+                <strong>{{ t('settings.autotag') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.autotag_detail') }}</small>
             </td>
             <td>
                 <button class="outline btn-icon" id="autotag-toggle"
                         onclick="toggleAutotag()"
                         style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if autotag_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
-                    {{ "Aktiviert" if autotag_enabled else "Deaktiviert" }}
+                    {{ t('settings.enabled') if autotag_enabled else t('settings.disabled') }}
                 </button>
             </td>
         </tr>
         <tr>
             <td>
-                <strong>AcoustID API Key</strong>
-                <br><small style="color:var(--pico-muted-color,#888);">Kostenlos registrieren auf <a href="https://acoustid.org/api-key" target="_blank">acoustid.org</a></small>
+                <strong>{{ t('settings.acoustid_key') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.acoustid_register') }} <a href="https://acoustid.org/api-key" target="_blank">acoustid.org</a></small>
             </td>
             <td>
                 <div style="display:flex;gap:0.3rem;align-items:center;">
-                    <input type="text" id="acoustid-key" value="{{ acoustid_key }}" placeholder="API Key eingeben" style="margin:0;padding:4px 8px;font-size:12px;max-width:220px;">
-                    <button class="outline btn-icon" onclick="saveAcoustidKey()" style="font-size:12px;padding:4px 12px;">Speichern</button>
+                    <input type="text" id="acoustid-key" value="{{ acoustid_key }}" placeholder="{{ t('settings.acoustid_placeholder') }}" style="margin:0;padding:4px 8px;font-size:12px;max-width:220px;">
+                    <button class="outline btn-icon" onclick="saveAcoustidKey()" style="font-size:12px;padding:4px 12px;">{{ t('settings.save') }}</button>
                 </div>
             </td>
         </tr>
         <tr>
             <td>
-                <strong>fpcalc</strong> (Chromaprint)
-                <br><small style="color:var(--pico-muted-color,#888);">Audio-Fingerprinting Binary</small>
+                <strong>{{ t('settings.fpcalc') }}</strong> (Chromaprint)
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.fpcalc_desc') }}</small>
             </td>
             <td>
                 {% if fpcalc_ok %}
-                <span style="color:var(--pico-color-green-500,green);">Installiert</span>
+                <span style="color:var(--pico-color-green-500,green);">{{ t('settings.fpcalc_installed') }}</span>
                 {% else %}
-                <span style="color:var(--pico-color-red-500,red);">Nicht gefunden</span>
+                <span style="color:var(--pico-color-red-500,red);">{{ t('settings.fpcalc_missing') }}</span>
                 <br><small style="color:var(--pico-muted-color,#888);">apt install libchromaprint-tools</small>
                 {% endif %}
             </td>
@@ -162,42 +171,42 @@
 
 <hr>
 
-<h4>DLNA Media Server</h4>
-<p><small style="color:var(--pico-muted-color,#888);">Aufgenommene Tracks als DLNA/UPnP Media Server im Netzwerk bereitstellen.</small></p>
+<h4>{{ t('settings.dlna') }}</h4>
+<p><small style="color:var(--pico-muted-color,#888);">{{ t('settings.dlna_desc') }}</small></p>
 
 <table>
     <tbody>
         <tr>
             <td>
-                <strong>DLNA Server</strong>
-                <br><small style="color:var(--pico-muted-color,#888);">Stellt MP3-Dateien vom NAS für Sonos, LMS und andere DLNA-Renderer bereit</small>
+                <strong>{{ t('settings.dlna_label') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.dlna_detail') }}</small>
             </td>
             <td>
                 <button class="outline btn-icon" id="dlna-toggle"
                         onclick="toggleDlna()"
                         style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if dlna_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
-                    {{ "Aktiviert" if dlna_enabled else "Deaktiviert" }}
+                    {{ t('settings.enabled') if dlna_enabled else t('settings.disabled') }}
                 </button>
             </td>
         </tr>
         <tr>
-            <td><strong>Server-Name</strong></td>
+            <td><strong>{{ t('settings.dlna_name') }}</strong></td>
             <td><input type="text" id="dlna-name" value="{{ dlna_status.name }}" style="margin:0;padding:4px 8px;font-size:12px;max-width:250px;"></td>
         </tr>
         <tr>
-            <td><strong>Port</strong><br><small style="color:var(--pico-muted-color,#888);">1024–65535</small></td>
+            <td><strong>{{ t('settings.dlna_port') }}</strong><br><small style="color:var(--pico-muted-color,#888);">1024–65535</small></td>
             <td><input type="number" id="dlna-port" value="{{ dlna_status.port }}" min="1024" max="65535" style="margin:0;padding:4px 8px;font-size:12px;max-width:100px;"></td>
         </tr>
         <tr>
-            <td><strong>Medien-Verzeichnis</strong><br><small style="color:var(--pico-muted-color,#888);">Pfad zu den aufgenommenen Dateien</small></td>
+            <td><strong>{{ t('settings.dlna_media_path') }}</strong><br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.dlna_media_desc') }}</small></td>
             <td><input type="text" id="dlna-media-path" value="{{ dlna_status.media_path }}" style="margin:0;padding:4px 8px;font-size:12px;max-width:300px;"></td>
         </tr>
         <tr>
             <td></td>
             <td>
-                <button class="outline btn-icon" onclick="saveDlnaSettings()" style="font-size:12px;padding:4px 12px;">Speichern</button>
+                <button class="outline btn-icon" onclick="saveDlnaSettings()" style="font-size:12px;padding:4px 12px;">{{ t('settings.save') }}</button>
                 {% if dlna_status.running %}
-                <small style="margin-left:0.5rem;color:var(--pico-muted-color,#888);">Läuft auf <strong>{{ dlna_status.ip }}:{{ dlna_status.port }}</strong></small>
+                <small style="margin-left:0.5rem;color:var(--pico-muted-color,#888);">{{ t('settings.dlna_running') }} <strong>{{ dlna_status.ip }}:{{ dlna_status.port }}</strong></small>
                 {% endif %}
             </td>
         </tr>
@@ -206,23 +215,31 @@
 
 <hr>
 
-<h4>Sync</h4>
+<h4>{{ t('settings.sync') }}</h4>
 
 <form method="post" action="{{ url_for('settings_sync') }}">
     <label>
         <input type="checkbox" name="sync_enabled" value="1" {{ 'checked' if sync_enabled }}>
-        Automatischer Sync aktiviert
+        {{ t('settings.sync_enabled') }}
     </label>
-    <small style="display:block;margin-bottom:16px;color:var(--pico-muted-color,#888);">Aufgenommene Dateien werden automatisch zum Zielverzeichnis synchronisiert und lokal geloescht.</small>
+    <small style="display:block;margin-bottom:16px;color:var(--pico-muted-color,#888);">{{ t('settings.sync_desc') }}</small>
 
-    <label for="sync_target">Zielverzeichnis (SMB/NFS Mount)</label>
+    <label for="sync_target">{{ t('settings.sync_target') }}</label>
     <input type="text" id="sync_target" name="sync_target" value="{{ sync_target }}" placeholder="/mnt/unraid-streams">
-    <small style="display:block;margin-bottom:16px;color:var(--pico-muted-color,#888);">Pfad zum gemounteten Netzwerk-Share (z.B. /mnt/nas/music). Muss als Mountpoint verfuegbar sein.</small>
+    <small style="display:block;margin-bottom:16px;color:var(--pico-muted-color,#888);">{{ t('settings.sync_target_desc') }}</small>
 
-    <button type="submit" style="width:auto;">Speichern</button>
+    <button type="submit" style="width:auto;">{{ t('settings.save') }}</button>
 </form>
 
 <script>
+function changeLanguage(lang) {
+    fetch('/settings/language', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({language: lang}),
+    }).then(function() { location.reload(); });
+}
+
 document.querySelectorAll('.module-toggle').forEach(function(btn) {
     btn.addEventListener('click', function() {
         var name = this.dataset.module;
@@ -232,11 +249,11 @@ document.querySelectorAll('.module-toggle').forEach(function(btn) {
             .then(function(data) {
                 if (data.ok) {
                     if (data.enabled) {
-                        self.textContent = 'Aktiviert';
+                        self.textContent = t('settings.enabled');
                         self.style.color = 'var(--pico-color-green-500,green)';
                         self.style.borderColor = 'var(--pico-color-green-500,green)';
                     } else {
-                        self.textContent = 'Deaktiviert';
+                        self.textContent = t('settings.disabled');
                         self.style.color = 'var(--pico-color-red-500,red)';
                         self.style.borderColor = 'var(--pico-color-red-500,red)';
                     }
@@ -252,11 +269,11 @@ function toggleCoverArt() {
         .then(function(data) {
             if (data.ok) {
                 if (data.enabled) {
-                    btn.textContent = 'Aktiviert';
+                    btn.textContent = t('settings.enabled');
                     btn.style.color = 'var(--pico-color-green-500,green)';
                     btn.style.borderColor = 'var(--pico-color-green-500,green)';
                 } else {
-                    btn.textContent = 'Deaktiviert';
+                    btn.textContent = t('settings.disabled');
                     btn.style.color = 'var(--pico-color-red-500,red)';
                     btn.style.borderColor = 'var(--pico-color-red-500,red)';
                 }
@@ -271,11 +288,11 @@ function toggleSonos() {
         .then(function(data) {
             if (data.ok) {
                 if (data.enabled) {
-                    btn.textContent = 'Aktiviert';
+                    btn.textContent = t('settings.enabled');
                     btn.style.color = 'var(--pico-color-green-500,green)';
                     btn.style.borderColor = 'var(--pico-color-green-500,green)';
                 } else {
-                    btn.textContent = 'Deaktiviert';
+                    btn.textContent = t('settings.disabled');
                     btn.style.color = 'var(--pico-color-red-500,red)';
                     btn.style.borderColor = 'var(--pico-color-red-500,red)';
                 }
@@ -296,7 +313,7 @@ function saveDlnaSettings() {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.ok) {
-            alert('DLNA-Einstellungen gespeichert' + (data.status.running ? ' (Server neu gestartet)' : ''));
+            alert(t('settings.dlna_saved') + (data.status.running ? ' ' + t('settings.dlna_restarted') : ''));
             location.reload();
         }
     });
@@ -323,11 +340,11 @@ function toggleDlna() {
     .then(function(data) {
         if (data.ok) {
             if (data.enabled) {
-                btn.textContent = 'Aktiviert';
+                btn.textContent = t('settings.enabled');
                 btn.style.color = 'var(--pico-color-green-500,green)';
                 btn.style.borderColor = 'var(--pico-color-green-500,green)';
             } else {
-                btn.textContent = 'Deaktiviert';
+                btn.textContent = t('settings.disabled');
                 btn.style.color = 'var(--pico-color-red-500,red)';
                 btn.style.borderColor = 'var(--pico-color-red-500,red)';
             }
@@ -335,7 +352,7 @@ function toggleDlna() {
             setTimeout(function() { location.reload(); }, 500);
         }
     })
-    .catch(function() { btn.disabled = false; btn.textContent = 'Fehler'; });
+    .catch(function() { btn.disabled = false; btn.textContent = t('general.error'); });
 }
 
 function toggleAutotag() {
@@ -345,11 +362,11 @@ function toggleAutotag() {
         .then(function(data) {
             if (data.ok) {
                 if (data.enabled) {
-                    btn.textContent = 'Aktiviert';
+                    btn.textContent = t('settings.enabled');
                     btn.style.color = 'var(--pico-color-green-500,green)';
                     btn.style.borderColor = 'var(--pico-color-green-500,green)';
                 } else {
-                    btn.textContent = 'Deaktiviert';
+                    btn.textContent = t('settings.disabled');
                     btn.style.color = 'var(--pico-color-red-500,red)';
                     btn.style.borderColor = 'var(--pico-color-red-500,red)';
                 }
@@ -366,7 +383,7 @@ function saveAcoustidKey() {
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-        if (data.ok) alert('AcoustID Key gespeichert');
+        if (data.ok) alert(t('settings.acoustid_saved'));
     });
 }
 </script>

@@ -29,21 +29,21 @@ function updateStatus() {
                 if (statusCell) {
                     var rs = s.rec_state || '';
                     if (s.running && rs === 'skipping') {
-                        statusCell.innerHTML = '<span class="status-skipping">skipping</span>';
+                        statusCell.innerHTML = '<span class="status-skipping">' + t('dash.status_skipping') + '</span>';
                     } else if (s.running && rs === 'recording') {
-                        statusCell.innerHTML = '<span class="status-recording">recording</span>';
+                        statusCell.innerHTML = '<span class="status-recording">' + t('dash.status_recording') + '</span>';
                     } else if (s.running && rs === 'waiting') {
-                        statusCell.innerHTML = '<span class="status-running">running</span>';
+                        statusCell.innerHTML = '<span class="status-running">' + t('dash.status_running') + '</span>';
                     } else if (s.running) {
                         var ct = (s.current_track || '').trim();
                         var hasTrack = ct && ct !== 'recording' && ct !== '-' && ct.replace(/[\s-]/g, '') !== '';
                         if (hasTrack) {
-                            statusCell.innerHTML = '<span class="status-recording">recording</span>';
+                            statusCell.innerHTML = '<span class="status-recording">' + t('dash.status_recording') + '</span>';
                         } else {
-                            statusCell.innerHTML = '<span class="status-running">running</span>';
+                            statusCell.innerHTML = '<span class="status-running">' + t('dash.status_running') + '</span>';
                         }
                     } else {
-                        statusCell.innerHTML = '<span class="status-stopped">stop</span>';
+                        statusCell.innerHTML = '<span class="status-stopped">' + t('dash.status_stopped') + '</span>';
                     }
                 }
 
@@ -54,9 +54,9 @@ function updateStatus() {
                     var rs = s.rec_state || '';
                     var ct = s.current_track || '';
                     var hasTrack = ct && ct !== 'recording' && ct !== '-' && ct.replace(/[\s-]/g, '') !== '';
-                    if (rs === 'waiting') { trackHtml = 'waiting for next track'; }
+                    if (rs === 'waiting') { trackHtml = t('dash.waiting'); }
                     else if (hasTrack) { trackHtml = ct; }
-                    else if (s.running) { trackHtml = 'waiting for next track'; }
+                    else if (s.running) { trackHtml = t('dash.waiting'); }
                     else { trackHtml = '-'; }
                     if (s.yt_stats) {
                         var sub;
@@ -67,11 +67,11 @@ function updateStatus() {
                             sub = s.yt_stats.dl_yt + ' YT';
                             if (s.dl_fallback) sub += ' + ' + s.yt_stats.dl_sc + ' SC';
                         }
-                        sub += ' / ' + s.yt_stats.songs_seen + ' gehört';
+                        sub += ' / ' + s.yt_stats.songs_seen + ' ' + t('dash.heard');
                         if (s.running && s.bitrate) sub += ' · ' + s.bitrate + ' kbps';
                         trackHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + sub + '</small>';
                     } else if (s.track_stats && (s.track_stats.recorded + s.track_stats.skipped) > 0) {
-                        var recSub = s.track_stats.recorded + ' rec / ' + (s.track_stats.recorded + s.track_stats.skipped) + ' gehört';
+                        var recSub = s.track_stats.recorded + ' ' + t('dash.rec') + ' / ' + (s.track_stats.recorded + s.track_stats.skipped) + ' ' + t('dash.heard');
                         if (s.running && s.bitrate) recSub += ' · ' + s.bitrate + ' kbps';
                         trackHtml += '<small style="display:block;color:var(--pico-muted-color,#888);">' + recSub + '</small>';
                     }
@@ -197,7 +197,7 @@ function startAll(btn) {
     fetch('/api/start-all', {method: 'POST', credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest'}})
         .then(r => r.json())
         .then(data => {
-            btn.textContent = data.started + ' gestartet';
+            btn.textContent = data.started + ' ' + t('dash.started');
             setTimeout(() => { btn.textContent = 'Start All'; btn.disabled = false; }, 2000);
             updateStatus();
         })
@@ -205,13 +205,13 @@ function startAll(btn) {
 }
 
 function stopAll(btn) {
-    if (!confirm('Alle Streams stoppen?')) return;
+    if (!confirm(t('dash.stop_all_confirm'))) return;
     btn.disabled = true;
     btn.textContent = '...';
     fetch('/api/stop-all', {method: 'POST', credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest'}})
         .then(r => r.json())
         .then(data => {
-            btn.textContent = data.stopped + ' gestoppt';
+            btn.textContent = data.stopped + ' ' + t('dash.stopped');
             setTimeout(() => { btn.textContent = 'Stop All'; btn.disabled = false; }, 2000);
             updateStatus();
         })
@@ -233,14 +233,16 @@ function toggleCastMenu(btn, streamId) {
     // Show loading menu
     var menu = document.createElement('div');
     menu.className = 'cast-menu';
-    menu.innerHTML = '<div class="cast-menu-loading">Suche Geräte...</div>';
-    // Position below button
+    menu.innerHTML = '<div class="cast-menu-loading">' + t('cast.searching') + '</div>';
+    // Position: prefer below button, flip above if not enough space
     var rect = btn.getBoundingClientRect();
     menu.style.position = 'fixed';
     menu.style.left = rect.left + 'px';
-    menu.style.top = rect.bottom + 2 + 'px';
+    menu.style.visibility = 'hidden';
     document.body.appendChild(menu);
     _castMenu = menu;
+
+    _repositionCastMenu(menu, rect);
 
     // Fetch devices
     fetch('/api/cast/devices?refresh=1', {credentials: 'include'})
@@ -250,16 +252,37 @@ function toggleCastMenu(btn, streamId) {
             _castDevicesCache = data.devices || [];
             _castActiveCache = data.active_casts || {};
             _renderCastMenu(menu, streamId);
+            // Reposition after content changed
+            _repositionCastMenu(menu, rect);
         })
         .catch(function() {
             if (!_castMenu) return;
-            menu.innerHTML = '<div class="cast-menu-empty">Fehler beim Laden</div>';
+            menu.innerHTML = '<div class="cast-menu-empty">' + t('cast.load_error') + '</div>';
         });
 
     // Close on outside click
     setTimeout(function() {
         document.addEventListener('click', _closeCastMenuOutside);
     }, 10);
+}
+
+function _repositionCastMenu(menu, btnRect) {
+    requestAnimationFrame(function() {
+        var menuH = menu.offsetHeight;
+        var availableBelow = window.innerHeight - 60 - btnRect.bottom - 4;
+        if (availableBelow >= menuH) {
+            menu.style.top = btnRect.bottom + 2 + 'px';
+        } else {
+            menu.style.top = Math.max(4, btnRect.top - menuH - 2) + 'px';
+        }
+        var menuW = menu.offsetWidth;
+        var left = btnRect.left;
+        if (left + menuW > window.innerWidth - 8) {
+            left = window.innerWidth - menuW - 8;
+        }
+        menu.style.left = Math.max(4, left) + 'px';
+        menu.style.visibility = '';
+    });
 }
 
 function _closeCastMenuOutside(e) {
@@ -276,7 +299,7 @@ function _renderCastMenu(menu, streamId) {
     var hasDevices = false;
 
     if (_castDevicesCache.length === 0) {
-        html = '<div class="cast-menu-empty">Keine Geräte gefunden</div>';
+        html = '<div class="cast-menu-empty">' + t('cast.no_devices') + '</div>';
     } else {
         _castDevicesCache.forEach(function(d) {
             hasDevices = true;
@@ -291,14 +314,14 @@ function _renderCastMenu(menu, streamId) {
                 : '<span class="cast-device-badge badge-sonos">Sonos</span>';
 
             var label = d.name + badge;
-            if (!isEnabled) label += '<span class="cast-device-type"> (deaktiviert)</span>';
+            if (!isEnabled) label += '<span class="cast-device-type"> (' + t('cast.disabled') + ')</span>';
             if (isActive) label = '&#9654; ' + label;
             if (d.model) label += '<span class="cast-device-type"> ' + d.model + '</span>';
 
             html += '<div class="cast-menu-device">';
-            html += '<button class="' + cls + '" data-device-id="' + d.id + '" data-enabled="' + isEnabled + '" onclick="castToDevice(' + streamId + ', \'' + d.id + '\', ' + isEnabled + ')">&#9654; Abspielen: ' + label + '</button>';
+            html += '<button class="' + cls + '" data-device-id="' + d.id + '" data-enabled="' + isEnabled + '" onclick="castToDevice(' + streamId + ', \'' + d.id + '\', ' + isEnabled + ')">&#9654; ' + t('cast.play') + '' + label + '</button>';
             if (isEnabled) {
-                html += '<button class="cast-menu-item cast-menu-queue-add" onclick="addToQueue(' + streamId + ', \'' + d.id + '\')">+ Warteschlange: ' + d.name + '</button>';
+                html += '<button class="cast-menu-item cast-menu-queue-add" onclick="addToQueue(' + streamId + ', \'' + d.id + '\')">' + t('cast.queue_add') + '' + d.name + '</button>';
             }
             html += '</div>';
         });
@@ -306,7 +329,7 @@ function _renderCastMenu(menu, streamId) {
 
     // Stop button if actively casting
     if (activeDeviceId) {
-        html += '<button class="cast-menu-item cast-menu-stop" onclick="stopCast(' + streamId + ')">Wiedergabe stoppen</button>';
+        html += '<button class="cast-menu-item cast-menu-stop" onclick="stopCast(' + streamId + ')">' + t('cast.stop_playback') + '</button>';
     }
 
     menu.innerHTML = html;
@@ -336,10 +359,10 @@ function castToDevice(streamId, deviceId, enabled) {
             _updateCastIcons();
             _updatePlayerBar();
         } else {
-            alert(data.message || 'Cast fehlgeschlagen');
+            alert(data.message || t('cast.failed'));
         }
     })
-    .catch(function() { alert('Cast fehlgeschlagen'); });
+    .catch(function() { alert(t('cast.failed')); });
 }
 
 function stopCast(streamId) {
@@ -410,7 +433,7 @@ function _refreshPlayerBar() {
     if (!hasCast) {
         cover.style.display = 'none';
         placeholder.style.display = '';
-        trackEl.textContent = 'Kein Cast aktiv';
+        trackEl.textContent = t('player.no_cast');
         streamEl.textContent = '';
         stopBtn.style.display = 'none';
         devName.textContent = '';
@@ -436,7 +459,7 @@ function _refreshPlayerBar() {
         cover.style.display = 'none';
         placeholder.style.display = '';
     }
-    trackEl.textContent = castHasTrack ? castTrack : 'Warte auf Track...';
+    trackEl.textContent = castHasTrack ? castTrack : t('player.waiting_track');
     streamEl.textContent = p.stream_name;
     stopBtn.style.display = '';
     stopBtn.setAttribute('data-stream-id', p.stream_id);
@@ -548,12 +571,12 @@ function _renderMultiroomPanel(data) {
             : '<span class="multiroom-speaker-badge badge-sonos">Sonos</span>';
         html += '<div class="multiroom-speaker" onclick="toggleMultiroomSpeaker(\'' + s.id + '\', ' + isActive + ', ' + isMaster + ')">';
         html += '<div class="' + checkCls + '"></div>';
-        html += '<span class="multiroom-speaker-name">' + s.name + (isMaster ? ' (Master)' : '') + '</span>';
+        html += '<span class="multiroom-speaker-name">' + s.name + (isMaster ? ' (' + t('player.master') + ')' : '') + '</span>';
         html += badge;
         html += '</div>';
     });
 
-    if (!html) html = '<div style="padding:0.5rem 0.8rem;color:#888;">Keine weiteren Geräte</div>';
+    if (!html) html = '<div style="padding:0.5rem 0.8rem;color:#888;">' + t('player.multiroom_empty') + '</div>';
     panel.innerHTML = html;
 }
 
@@ -597,7 +620,7 @@ function addToQueue(streamId, deviceId) {
             alert(data.error || 'Fehler');
         }
     })
-    .catch(function() { alert('Fehler beim Hinzufuegen zur Warteschlange'); });
+    .catch(function() { alert(t('queue.add_error')); });
 }
 
 function removeFromQueue(deviceId, index) {
@@ -618,7 +641,7 @@ function advanceQueue(deviceId) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (!data.success) {
-            alert(data.error || 'Warteschlange ist leer');
+            alert(data.error || t('queue.empty'));
         }
         _renderQueuePanel();
     })
@@ -692,15 +715,15 @@ function _renderQueuePanel() {
                 });
 
                 html += '<div class="queue-controls">';
-                html += '<button class="btn-icon outline queue-btn" onclick="advanceQueue(\'' + deviceId + '\')">Naechster</button>';
-                html += '<button class="btn-icon outline queue-btn queue-btn-clear" onclick="clearQueue(\'' + deviceId + '\')">Leeren</button>';
+                html += '<button class="btn-icon outline queue-btn" onclick="advanceQueue(\'' + deviceId + '\')">' + t('queue.next') + '</button>';
+                html += '<button class="btn-icon outline queue-btn queue-btn-clear" onclick="clearQueue(\'' + deviceId + '\')">' + t('queue.clear') + '</button>';
 
                 if (info.timer) {
-                    html += '<span class="queue-timer-info">Timer: ' + info.timer.remaining + ' Min verbleibend</span>';
-                    html += '<button class="btn-icon outline queue-btn queue-btn-timer-stop" onclick="cancelQueueTimer(\'' + deviceId + '\')">Timer stoppen</button>';
+                    html += '<span class="queue-timer-info">' + t('queue.timer') + '' + info.timer.remaining + ' ' + t('queue.min_remaining') + '</span>';
+                    html += '<button class="btn-icon outline queue-btn queue-btn-timer-stop" onclick="cancelQueueTimer(\'' + deviceId + '\')">' + t('queue.stop_timer') + '</button>';
                 } else {
                     html += '<input type="number" class="queue-timer-input" data-device-id="' + deviceId + '" value="30" min="1" max="999" title="Minuten">';
-                    html += '<button class="btn-icon outline queue-btn" onclick="setQueueTimer(\'' + deviceId + '\')">Timer setzen</button>';
+                    html += '<button class="btn-icon outline queue-btn" onclick="setQueueTimer(\'' + deviceId + '\')">' + t('queue.set_timer') + '</button>';
                 }
 
                 html += '</div>';
