@@ -1090,6 +1090,7 @@ def api_library_playlist_tracks(playlist_id):
 
 
 @app.route("/api/library/playlists/<int:playlist_id>/add", methods=["POST"])
+@app.route("/api/library/playlists/<int:playlist_id>/tracks", methods=["POST"])
 def api_library_playlist_add(playlist_id):
     data = request.get_json()
     track_ids = data.get("track_ids", [])

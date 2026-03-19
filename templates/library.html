@@ -366,7 +366,93 @@
     color: var(--pico-muted-color, #888);
     font-size: 0.85rem;
 }
+
+/* Folder grid view */
+.lib-folders {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.8rem;
+    padding: 0.5rem 0;
+}
+.lib-folder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 1rem 0.8rem;
+    background: #1e1e2e;
+    border: 1px solid #2a2a3a;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.lib-folder:hover {
+    background: #252540;
+    border-color: #3a3a5a;
+}
+.lib-folder-icon {
+    font-size: 2rem;
+    color: #64b5f6;
+}
+.lib-folder-name {
+    font-size: 0.82rem;
+    color: #ccc;
+    text-align: center;
+    word-break: break-word;
+    line-height: 1.2;
+}
+.lib-folder-count {
+    font-size: 0.7rem;
+    color: #888;
+}
+.lib-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.82rem;
+}
+.lib-breadcrumb a {
+    color: #64b5f6;
+    text-decoration: none;
+    cursor: pointer;
+}
+.lib-breadcrumb a:hover { text-decoration: underline; }
+.lib-breadcrumb .lib-bc-sep { color: #555; }
+.lib-breadcrumb .lib-bc-current { color: #ccc; }
+.lib-folder-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+.lib-folder-header .lib-scan-all-btn {
+    margin-left: auto;
+}
 </style>
+
+<!-- Folder view (shown initially) -->
+<div id="lib-folder-view">
+    <div class="lib-folder-header">
+        <h3 style="margin:0;font-size:1rem;">{{ t('library.title') }}</h3>
+        <button class="lib-scan-btn outline lib-scan-all-btn" onclick="startScan()">{{ t('library.scan') }}</button>
+        <span class="lib-scan-progress" id="lib-scan-progress-folders" style="display:none;">
+            <div class="lib-scan-progress-bar"><div class="lib-scan-progress-fill" id="lib-scan-fill-folders"></div></div>
+            <span id="lib-scan-text-folders">{{ t('library.scanning') }}</span>
+        </span>
+    </div>
+    <div class="lib-folders" id="lib-folders-grid"></div>
+</div>
+
+<!-- Track view (shown when a folder is selected) -->
+<div id="lib-track-view" style="display:none;">
+
+<!-- Breadcrumb -->
+<div class="lib-breadcrumb" id="lib-breadcrumb">
+    <a onclick="showFolderView()">{{ t('library.title') }}</a>
+    <span class="lib-bc-sep">/</span>
+    <span class="lib-bc-current" id="lib-bc-folder"></span>
+</div>
 
 <!-- Top Bar -->
 <div class="lib-top-bar">
@@ -466,6 +552,8 @@
     </div>
 </div>
 
+</div><!-- close lib-track-view -->
+
 <script>
 /* --- Library state --- */
 var _libPage = 1;
@@ -505,7 +593,7 @@ function loadTracks() {
 
 function renderTracks(data) {
     _libTracks = data.tracks || [];
-    _libTotalPages = data.total_pages || 1;
+    _libTotalPages = data.pages || 1;
     _libTotalTracks = data.total || 0;
     _libPage = data.page || 1;
 
@@ -528,13 +616,13 @@ function renderTracks(data) {
         var tr = _libTracks[i];
         var isSelected = !!_selectedTrackIds[tr.id];
         var isPlaying = _libPlayingTrackId === tr.id;
-        var dur = tr.duration ? formatDuration(tr.duration) : '-';
+        var dur = tr.duration_sec ? formatDuration(tr.duration_sec) : '-';
         html += '<tr data-track-id="' + tr.id + '"' + (isSelected ? ' class="selected"' : '') + '>';
         html += '<td><input type="checkbox" onchange="toggleTrackSelect(' + tr.id + ', this.checked)"' + (isSelected ? ' checked' : '') + '></td>';
         html += '<td><button class="lib-play-btn' + (isPlaying ? ' playing' : '') + '" onclick="playLibraryTrack(' + tr.id + ', \'' + escHtml(tr.title || '') + '\', \'' + escHtml(tr.artist || '') + '\')">' + (isPlaying ? '&#9646;&#9646;' : '&#9654;') + '</button></td>';
         html += '<td title="' + escAttr(tr.title || '') + '">' + escHtml(tr.title || '') + '</td>';
         html += '<td title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
-        html += '<td title="' + escAttr(tr.stream || '') + '">' + escHtml(tr.stream || '') + '</td>';
+        html += '<td title="' + escAttr(tr.stream_subdir || '') + '">' + escHtml(tr.stream_subdir || '') + '</td>';
         html += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
         html += '<td>' + (tr.key ? escHtml(tr.key) : '-') + '</td>';
         html += '<td>' + dur + '</td>';
@@ -983,15 +1071,30 @@ function reorderPlaylistTrack(playlistId, fromPos, toPos) {
 
 /* --- Scan --- */
 function startScan() {
-    var progress = document.getElementById('lib-scan-progress');
-    progress.style.display = 'flex';
-    document.getElementById('lib-scan-fill').style.width = '0%';
-    document.getElementById('lib-scan-text').textContent = t('library.scanning');
+    // Show progress in both views
+    _showScanProgress(true, 0, t('library.scanning'));
 
-    fetch('/api/library/scan', {method: 'POST', credentials: 'include'})
+    fetch('/api/library/scan', {method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'}, body: '{}'})
         .then(function(r) { return r.json(); })
         .then(function() { pollScanStatus(); })
-        .catch(function() { progress.style.display = 'none'; });
+        .catch(function() { _showScanProgress(false, 0, ''); });
+}
+
+function _showScanProgress(show, pct, text) {
+    // Track view progress
+    var p1 = document.getElementById('lib-scan-progress');
+    var f1 = document.getElementById('lib-scan-fill');
+    var t1 = document.getElementById('lib-scan-text');
+    if (p1) { p1.style.display = show ? 'flex' : 'none'; }
+    if (f1) f1.style.width = pct + '%';
+    if (t1) t1.textContent = text;
+    // Folder view progress
+    var p2 = document.getElementById('lib-scan-progress-folders');
+    var f2 = document.getElementById('lib-scan-fill-folders');
+    var t2 = document.getElementById('lib-scan-text-folders');
+    if (p2) { p2.style.display = show ? 'flex' : 'none'; }
+    if (f2) f2.style.width = pct + '%';
+    if (t2) t2.textContent = text;
 }
 
 function pollScanStatus() {
@@ -999,37 +1102,37 @@ function pollScanStatus() {
     fetch('/api/library/scan/status', {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var fill = document.getElementById('lib-scan-fill');
-            var text = document.getElementById('lib-scan-text');
-            var progress = document.getElementById('lib-scan-progress');
-            if (data.scanning) {
-                var pct = data.total > 0 ? Math.round((data.scanned / data.total) * 100) : 0;
-                fill.style.width = pct + '%';
-                text.textContent = t('library.scanning') + ' ' + (data.scanned || 0) + '/' + (data.total || 0);
+            if (data.running) {
+                var pct = data.files_total > 0 ? Math.round((data.files_scanned / data.files_total) * 100) : 0;
+                _showScanProgress(true, pct, t('library.scanning') + ' ' + (data.files_scanned || 0) + '/' + (data.files_total || 0));
                 _scanPollTimer = setTimeout(pollScanStatus, 2000);
             } else {
-                fill.style.width = '100%';
-                text.textContent = t('library.scan_complete');
-                setTimeout(function() { progress.style.display = 'none'; }, 3000);
-                loadTracks();
+                _showScanProgress(true, 100, t('library.scan_complete'));
+                setTimeout(function() { _showScanProgress(false, 0, ''); }, 3000);
+                // Reload current view
+                if (_currentFolder !== null) {
+                    loadTracks();
+                } else {
+                    loadFolders();
+                }
             }
         })
         .catch(function() {
-            document.getElementById('lib-scan-progress').style.display = 'none';
+            _showScanProgress(false, 0, '');
         });
 }
 
 /* --- Stream filter population --- */
 function loadStreamFilters() {
-    fetch('/api/library/streams', {credentials: 'include'})
+    fetch('/api/library/subdirs', {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {
             var sel = document.getElementById('lib-stream-filter');
-            var streams = data.streams || [];
-            for (var i = 0; i < streams.length; i++) {
+            var subdirs = data.subdirs || [];
+            for (var i = 0; i < subdirs.length; i++) {
                 var opt = document.createElement('option');
-                opt.value = streams[i];
-                opt.textContent = streams[i];
+                opt.value = subdirs[i];
+                opt.textContent = subdirs[i];
                 sel.appendChild(opt);
             }
         })
@@ -1094,6 +1197,73 @@ function bindFilters() {
     }
 }
 
+/* --- Folder view --- */
+var _folderStats = {};
+var _currentFolder = null;
+
+function loadFolders() {
+    fetch('/api/library/stats', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            _folderStats = data.per_stream || {};
+            renderFolders(data);
+        })
+        .catch(function() {});
+}
+
+function renderFolders(stats) {
+    var grid = document.getElementById('lib-folders-grid');
+    var subdirs = Object.keys(_folderStats).sort();
+
+    if (!subdirs.length) {
+        grid.innerHTML = '<div class="lib-no-tracks">' + t('library.no_tracks') + '</div>';
+        return;
+    }
+
+    var html = '';
+    // "All" folder first
+    html += '<div class="lib-folder" onclick="openFolder(\'\')">';
+    html += '<div class="lib-folder-icon">&#128218;</div>';
+    html += '<div class="lib-folder-name">' + t('library.all_streams') + '</div>';
+    html += '<div class="lib-folder-count">' + (stats.total_tracks || 0) + ' ' + t('library.tracks_count') + '</div>';
+    html += '</div>';
+
+    for (var i = 0; i < subdirs.length; i++) {
+        var name = subdirs[i];
+        var count = _folderStats[name] || 0;
+        html += '<div class="lib-folder" onclick="openFolder(\'' + escAttr(name) + '\')">';
+        html += '<div class="lib-folder-icon">&#128193;</div>';
+        html += '<div class="lib-folder-name">' + escHtml(name) + '</div>';
+        html += '<div class="lib-folder-count">' + count + ' ' + t('library.tracks_count') + '</div>';
+        html += '</div>';
+    }
+    grid.innerHTML = html;
+}
+
+function openFolder(subdir) {
+    _currentFolder = subdir;
+    _libFilters.stream = subdir;
+    _libPage = 1;
+
+    document.getElementById('lib-folder-view').style.display = 'none';
+    document.getElementById('lib-track-view').style.display = '';
+    document.getElementById('lib-bc-folder').textContent = subdir || t('library.all_streams');
+
+    // Set stream filter dropdown to match
+    var sel = document.getElementById('lib-stream-filter');
+    if (sel) sel.value = subdir;
+
+    loadTracks();
+}
+
+function showFolderView() {
+    _currentFolder = null;
+    _libFilters = {};
+    document.getElementById('lib-folder-view').style.display = '';
+    document.getElementById('lib-track-view').style.display = 'none';
+    loadFolders();
+}
+
 /* --- Init --- */
 function initLibrary() {
     _libPage = 1;
@@ -1103,11 +1273,16 @@ function initLibrary() {
     _selectedTrackIds = {};
     _selectedPlaylistId = null;
     _libPlayingTrackId = null;
+    _currentFolder = null;
+
+    // Show folder view initially
+    document.getElementById('lib-folder-view').style.display = '';
+    document.getElementById('lib-track-view').style.display = 'none';
 
     updateSortIndicators();
     bindFilters();
     loadStreamFilters();
-    loadTracks();
+    loadFolders();
     loadPlaylists();
 }
 

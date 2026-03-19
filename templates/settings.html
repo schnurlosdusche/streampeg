@@ -3,6 +3,9 @@
 {% block content %}
 <h2>{{ t('settings.title') }}</h2>
 
+<p><a href="{{ url_for('logs') }}">{{ t('nav.logs') }}</a></p>
+<hr>
+
 <h4>{{ t('settings.language') }}</h4>
 <p><small style="color:var(--pico-muted-color,#888);">{{ t('settings.language_desc') }}</small></p>
 <select id="language-select" onchange="changeLanguage(this.value)" style="max-width:200px;margin-bottom:1rem;">
