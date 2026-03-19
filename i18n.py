@@ -73,9 +73,11 @@ TRANSLATIONS = {
         # Player bar
         "player.no_cast": "No active cast",
         "player.stop_title": "Stop cast",
+        "player.pause_title": "Pause",
         "player.waiting_track": "Waiting for track...",
         "player.multiroom_empty": "No additional speakers",
         "player.master": "Master",
+        "player.browser": "Browser",
 
         # Dashboard
         "dash.streams": "Streams",
@@ -86,6 +88,7 @@ TRANSLATIONS = {
         "dash.status": "Status",
         "dash.track_info": "Track Info",
         "dash.tracks": "Tracks",
+        "dash.size": "Size",
         "dash.start_all": "Start All",
         "dash.stop_all": "Stop All",
         "dash.start_all_title": "Start all",
@@ -389,8 +392,10 @@ TRANSLATIONS = {
         "disk.free": "frei",
         "player.no_cast": "Kein aktiver Cast",
         "player.stop_title": "Cast stoppen",
+        "player.pause_title": "Pause",
         "player.waiting_track": "Warte auf Track...",
         "player.multiroom_empty": "Keine weiteren Geräte",
+        "player.browser": "Browser",
         "dash.streams": "Streams",
         "dash.no_streams": "Keine Streams konfiguriert.",
         "dash.add_stream": "Stream hinzufügen",

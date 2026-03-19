@@ -3,14 +3,6 @@ function updateStatus() {
     fetch('/api/status', {credentials: 'include'})
     .then(r => r.json())
     .then(data => {
-        // Update disk info
-        if (data.disk) {
-            const w = document.getElementById('disk-worker');
-            const n = document.getElementById('disk-nas');
-            if (w) w.textContent = data.disk.worker_free_gb + ' GB / ' + data.disk.worker_total_gb + ' GB';
-            if (n) n.textContent = data.disk.nas_free_gb + ' GB / ' + data.disk.nas_total_gb + ' GB';
-        }
-
         // Update stream rows on dashboard
         if (data.streams) {
             data.streams.forEach(s => {
@@ -87,10 +79,10 @@ function updateStatus() {
                     files.textContent = s.file_count;
                 }
 
-                // const recPct = row.querySelector('.rec-pct-cell');
-                // if (recPct) {
-                //     recPct.textContent = s.rec_pct !== undefined ? s.rec_pct : '-';
-                // }
+                const sizeCell = row.querySelector('.size-cell');
+                if (sizeCell) {
+                    sizeCell.innerHTML = s.disk_usage_mb > 0 ? (s.disk_usage_mb / 1024).toFixed(1) + ' <small style="opacity:0.6">GB</small>' : '-';
+                }
 
                 // Update start/stop button
                 const actions = row.querySelector('.actions-cell');
@@ -134,15 +126,22 @@ document.querySelectorAll('.sync-form').forEach(form => {
     });
 });
 
-// --- Browser listen (completely independent from cast player bar) ---
+// --- Browser listen (persistent across page navigation via localStorage) ---
 var _playerAudio = null;
 var _playerStreamId = null;
+var _playerStreamUrl = null;
+var _browserVolume = parseFloat(localStorage.getItem('_browserVolume') || '1');
 
-function toggleListen(streamId, url) {
+function _initBrowserAudio() {
     if (!_playerAudio) {
         _playerAudio = new Audio();
+        _playerAudio.volume = _browserVolume;
         _playerAudio.addEventListener('error', function() { stopListen(); });
     }
+}
+
+function toggleListen(streamId, url) {
+    _initBrowserAudio();
     if (_playerStreamId === streamId) {
         stopListen();
         return;
@@ -151,9 +150,15 @@ function toggleListen(streamId, url) {
     _playerAudio.removeAttribute('src');
     _playerAudio.load();
     _playerStreamId = streamId;
+    _playerStreamUrl = url;
+    _playerAudio.volume = _browserVolume;
     _playerAudio.src = url;
     _playerAudio.play();
+    // Persist in localStorage
+    localStorage.setItem('_listenStreamId', streamId);
+    localStorage.setItem('_listenStreamUrl', url);
     _updateListenIcons(streamId);
+    _refreshPlayerBar();
 }
 
 function stopListen() {
@@ -163,7 +168,31 @@ function stopListen() {
         _playerAudio.load();
     }
     _playerStreamId = null;
+    _playerStreamUrl = null;
+    localStorage.removeItem('_listenStreamId');
+    localStorage.removeItem('_listenStreamUrl');
     _updateListenIcons(null);
+    _refreshPlayerBar();
+}
+
+function _restoreListenState() {
+    var savedId = localStorage.getItem('_listenStreamId');
+    var savedUrl = localStorage.getItem('_listenStreamUrl');
+    if (savedId && savedUrl) {
+        _initBrowserAudio();
+        _playerStreamId = parseInt(savedId);
+        _playerStreamUrl = savedUrl;
+        _playerAudio.volume = _browserVolume;
+        _playerAudio.src = savedUrl;
+        _playerAudio.play().catch(function() {});
+        _updateListenIcons(_playerStreamId);
+    }
+}
+
+function setBrowserVolume(val) {
+    _browserVolume = Math.max(0, Math.min(1, val));
+    localStorage.setItem('_browserVolume', _browserVolume);
+    if (_playerAudio) _playerAudio.volume = _browserVolume;
 }
 
 function _updateListenIcons(activeId) {
@@ -295,7 +324,7 @@ function _closeCastMenuOutside(e) {
 
 function _renderCastMenu(menu, streamId) {
     var html = '';
-    var activeDeviceId = _castActiveCache[streamId];
+    var activeDeviceIds = _castActiveCache[streamId] || [];
     var hasDevices = false;
 
     if (_castDevicesCache.length === 0) {
@@ -303,7 +332,7 @@ function _renderCastMenu(menu, streamId) {
     } else {
         _castDevicesCache.forEach(function(d) {
             hasDevices = true;
-            var isActive = (d.id === activeDeviceId);
+            var isActive = activeDeviceIds.indexOf(d.id) !== -1;
             var isEnabled = d.enabled !== false;
             var cls = 'cast-menu-item';
             if (!isEnabled) cls += ' disabled';
@@ -328,7 +357,7 @@ function _renderCastMenu(menu, streamId) {
     }
 
     // Stop button if actively casting
-    if (activeDeviceId) {
+    if (activeDeviceIds.length > 0) {
         html += '<button class="cast-menu-item cast-menu-stop" onclick="stopCast(' + streamId + ')">' + t('cast.stop_playback') + '</button>';
     }
 
@@ -339,20 +368,22 @@ function castToDevice(streamId, deviceId, enabled) {
     if (!enabled) return;
     if (_castMenu) { _castMenu.remove(); _castMenu = null; }
 
-    // Check max cast limit client-side
-    var activeSids = Object.keys(_castActiveCache).filter(function(sid) {
-        return parseInt(sid) !== streamId;
+    // Check max cast limit client-side (count total active devices)
+    var totalActive = 0;
+    Object.keys(_castActiveCache).forEach(function(sid) {
+        totalActive += (_castActiveCache[sid] || []).length;
     });
-    if (activeSids.length >= MAX_CASTS) {
+    if (totalActive >= MAX_CASTS) {
         alert(t('cast.max_reached'));
         return;
     }
 
-    // Remove any previous cast on the same device (switch stream)
+    // Remove device from any other stream's list (device can only play one stream)
     Object.keys(_castActiveCache).forEach(function(sid) {
-        if (_castActiveCache[sid] === deviceId) {
-            delete _castActiveCache[sid];
-        }
+        var arr = _castActiveCache[sid] || [];
+        var idx = arr.indexOf(deviceId);
+        if (idx !== -1) arr.splice(idx, 1);
+        if (arr.length === 0) delete _castActiveCache[sid];
     });
 
     fetch('/api/cast/play', {
@@ -364,7 +395,10 @@ function castToDevice(streamId, deviceId, enabled) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.success) {
-            _castActiveCache[streamId] = deviceId;
+            if (!_castActiveCache[streamId]) _castActiveCache[streamId] = [];
+            if (_castActiveCache[streamId].indexOf(deviceId) === -1) {
+                _castActiveCache[streamId].push(deviceId);
+            }
             _updateCastIcons();
             _updatePlayerBar();
         } else {
@@ -396,7 +430,7 @@ function stopCast(streamId) {
 function _updateCastIcons() {
     document.querySelectorAll('.btn-cast').forEach(function(el) {
         var sid = parseInt(el.getAttribute('data-stream-id'));
-        if (_castActiveCache[sid]) {
+        if (_castActiveCache[sid] && _castActiveCache[sid].length > 0) {
             el.classList.add('casting');
         } else {
             el.classList.remove('casting');
@@ -413,6 +447,7 @@ var _lastStreamStatus = {};
 var _volState = {};              // deviceId -> {value, dragging}
 var _volStepResetTimers = {};
 var MAX_CASTS = 4;
+var MAX_PLAYERS = 5; // 4 cast + 1 browser
 
 function _updatePlayerBar() {
     fetch('/api/cast/player', {credentials: 'include'})
@@ -431,9 +466,10 @@ function _getVolState(deviceId) {
 
 function _renderPlayerHTML(p, idx) {
     var st = _lastStreamStatus[p.stream_id] || {};
-    var castTrack = st.current_track || p.current_track || '';
+    // Prefer player API data (includes ICY) over SSE status (only has recording data)
+    var castTrack = p.current_track || st.current_track || '';
     var castHasTrack = castTrack && castTrack.replace(/[\s\-]/g, '') !== '';
-    var castCover = st.cover_url || p.cover_url || null;
+    var castCover = p.cover_url || st.cover_url || null;
     var vol = _getVolState(p.device_id);
     var curVol = (_playerVolumeLocal[p.device_id] != null && _playerVolumeLocal[p.device_id] !== true)
         ? _playerVolumeLocal[p.device_id] : (p.volume != null ? p.volume : 50);
@@ -449,14 +485,26 @@ function _renderPlayerHTML(p, idx) {
         + '<div class="player-track">' + (castHasTrack ? _escHtmlPlayer(castTrack) : t('player.waiting_track')) + '</div>'
         + '<div class="player-stream">' + _escHtmlPlayer(p.stream_name) + '</div>'
         + '</div>'
-        + '<div class="player-controls">'
-        + '<button class="player-btn" onclick="playerStop(' + p.stream_id + ')" title="' + t('player.stop_title') + '">'
+        + '<div class="player-volume">';
+
+    var pauseKey = p.stream_id + ':' + p.device_id;
+    var isPaused = !!_pausedStreams[pauseKey];
+    if (isPaused) {
+        // Show play button (resume)
+        html += '<button class="player-btn" onclick="playerPause(' + p.stream_id + ',\'' + p.device_id + '\')" title="Play">'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'
+            + '</button>';
+    } else {
+        // Show pause button
+        html += '<button class="player-btn" onclick="playerPause(' + p.stream_id + ',\'' + p.device_id + '\')" title="' + t('player.pause_title') + '">'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18" rx="1"/><rect x="15" y="3" width="4" height="18" rx="1"/></svg>'
+            + '</button>';
+    }
+
+    html += '<button class="player-btn" onclick="playerStop(' + p.stream_id + ',\'' + p.device_id + '\')" title="' + t('player.stop_title') + '">'
         + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
         + '</button>'
-        + '</div>'
-        + '<div class="player-volume">'
-        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="#888" style="flex-shrink:0;"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>'
-        + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + p.device_id + '\', -2)">&#8722;</button>'
+        + '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="playerVolumeStep(\'' + p.device_id + '\', -2)">&#8722;</button>'
         + '<div class="vol-slider" data-device-id="' + p.device_id + '">'
         + '<div class="vol-slider-track"></div>'
         + '<div class="vol-slider-fill" style="width:' + curVol + '%"></div>'
@@ -464,7 +512,8 @@ function _renderPlayerHTML(p, idx) {
         + '</div>'
         + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + p.device_id + '\', 2)">+</button>'
         + '<span class="player-volume-value">' + curVol + '</span>'
-        + '</div>';
+        + '</div>'
+        + '<div class="player-right">';
 
     // Multiroom only on first player
     if (idx === 0) {
@@ -477,55 +526,121 @@ function _renderPlayerHTML(p, idx) {
     }
 
     html += '<div class="player-device-name">' + _escHtmlPlayer(p.device_name) + '</div>'
+        + '</div>'
         + '</div></div>';
     return html;
 }
 
 var _multiroomGroupCount = 0;
 
+function _renderBrowserPlayerHTML() {
+    var st = _lastStreamStatus[_playerStreamId] || {};
+    var trackName = st.current_track || '';
+    var hasTrack = trackName && trackName !== 'recording' && trackName !== '-' && trackName.replace(/[\s\-]/g, '') !== '';
+    var coverUrl = st.cover_url || null;
+    var streamName = st.stream_name || ('Stream ' + _playerStreamId);
+    var volPct = Math.round(_browserVolume * 100);
+
+    var coverHtml = coverUrl
+        ? '<img src="' + coverUrl + '" alt="">'
+        : '<div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>';
+
+    return '<div class="player-bar player-bar-browser">'
+        + '<div class="player-bar-inner">'
+        + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+        + '<div class="player-info">'
+        + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
+        + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
+        + '</div>'
+        + '<div class="player-volume">'
+        + '<button class="player-btn" onclick="stopListen()" title="' + t('player.stop_title') + '">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
+        + '</button>'
+        + '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="_browserVolumeStep(-5)">&#8722;</button>'
+        + '<div class="vol-slider" data-device-id="browser">'
+        + '<div class="vol-slider-track"></div>'
+        + '<div class="vol-slider-fill" style="width:' + volPct + '%"></div>'
+        + '<div class="vol-slider-handle" style="left:' + volPct + '%"></div>'
+        + '</div>'
+        + '<button class="player-vol-btn" onclick="_browserVolumeStep(5)">+</button>'
+        + '<span class="player-volume-value">' + volPct + '</span>'
+        + '</div>'
+        + '<div class="player-right">'
+        + '<div class="player-device-name">' + t('player.browser') + '</div>'
+        + '</div>'
+        + '</div></div>';
+}
+
+function _browserVolumeStep(delta) {
+    var newPct = Math.max(0, Math.min(100, Math.round(_browserVolume * 100) + delta));
+    setBrowserVolume(newPct / 100);
+    _setVolSlider('browser', newPct);
+    var valSpan = document.querySelector('.vol-slider[data-device-id="browser"]');
+    if (valSpan) {
+        var span = valSpan.parentNode.querySelector('.player-volume-value');
+        if (span) span.textContent = newPct;
+    }
+}
+
 function _refreshPlayerBar() {
     var container = document.getElementById('player-container');
     if (!container) return;
 
     var hasCast = _playerData && _playerData.active && _playerData.players && _playerData.players.length > 0;
+    var hasBrowser = !!_playerStreamId;
+    var totalPlayers = 0;
 
-    if (!hasCast) {
-        container.innerHTML = '<div class="player-bar">'
+    var html = '';
+
+    // Render browser player bar first (if listening)
+    if (hasBrowser) {
+        html += _renderBrowserPlayerHTML();
+        totalPlayers++;
+    }
+
+    if (hasCast) {
+        // Multiroom group count
+        _multiroomGroupCount = 0;
+        if (_playerData.speakers) {
+            _playerData.speakers.forEach(function(s) { if (s.active_for) _multiroomGroupCount++; });
+        }
+
+        var players = _playerData.players.slice(0, MAX_CASTS);
+        players.forEach(function(p, idx) {
+            html += _renderPlayerHTML(p, idx);
+        });
+        totalPlayers += players.length;
+
+        // Update volume sliders from server data (only if not dragging/stepping)
+        // (deferred to after innerHTML set)
+    }
+
+    if (!hasCast && !hasBrowser) {
+        html = '<div class="player-bar">'
             + '<div class="player-bar-inner">'
             + '<div class="player-cover-wrap"><div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div></div>'
             + '<div class="player-info"><div class="player-track">' + t('player.no_cast') + '</div><div class="player-stream"></div></div>'
             + '</div></div>';
-        _updateVersionPosition(1);
-        _initVolSliders();
-        return;
+        totalPlayers = 1;
     }
 
-    // Multiroom group count
-    _multiroomGroupCount = 0;
-    if (_playerData.speakers) {
-        _playerData.speakers.forEach(function(s) { if (s.active_for) _multiroomGroupCount++; });
-    }
-
-    var players = _playerData.players.slice(0, MAX_CASTS);
-    var html = '';
-    players.forEach(function(p, idx) {
-        html += _renderPlayerHTML(p, idx);
-    });
     container.innerHTML = html;
 
-    // Update volume sliders from server data (only if not dragging/stepping)
-    players.forEach(function(p) {
-        var vs = _getVolState(p.device_id);
-        if (!vs.dragging && _playerVolumeLocal[p.device_id] == null) {
-            var vol = p.volume != null ? p.volume : 50;
-            _setVolSlider(p.device_id, vol);
-        }
-    });
+    // Update cast volume sliders from server data
+    if (hasCast) {
+        _playerData.players.slice(0, MAX_CASTS).forEach(function(p) {
+            var vs = _getVolState(p.device_id);
+            if (!vs.dragging && _playerVolumeLocal[p.device_id] == null) {
+                var serverVol = p.volume != null ? p.volume : 50;
+                _setVolSlider(p.device_id, serverVol);
+            }
+        });
+    }
 
-    _updateVersionPosition(players.length);
+    _updateVersionPosition(totalPlayers);
     _initVolSliders();
 
-    if (_multiroomOpen) _renderMultiroomPanel(_playerData);
+    if (_multiroomOpen && hasCast) _renderMultiroomPanel(_playerData);
 }
 
 function _updateVersionPosition(playerCount) {
@@ -543,13 +658,33 @@ function _escHtmlPlayer(s) {
     return d.innerHTML;
 }
 
-function playerStop(streamId) {
-    fetch('/api/cast/stop', {
+var _pausedStreams = {};
+
+function playerPause(streamId, deviceId) {
+    fetch('/api/cast/pause', {
         method: 'POST', credentials: 'include',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({stream_id: parseInt(streamId)}),
     }).then(function() {
-        delete _castActiveCache[streamId];
+        var key = streamId + ':' + deviceId;
+        _pausedStreams[key] = !_pausedStreams[key];
+        _refreshPlayerBar();
+    }).catch(function() {});
+}
+
+function playerStop(streamId, deviceId) {
+    fetch('/api/cast/stop', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: deviceId}),
+    }).then(function() {
+        // Remove this device from the stream's active list
+        var arr = _castActiveCache[streamId] || [];
+        var idx = arr.indexOf(deviceId);
+        if (idx !== -1) arr.splice(idx, 1);
+        if (arr.length === 0) delete _castActiveCache[streamId];
+        var key = streamId + ':' + deviceId;
+        delete _pausedStreams[key];
         _updateCastIcons();
         _updatePlayerBar();
     });
@@ -659,7 +794,11 @@ document.addEventListener('mouseup', function() {
     var deviceId = _activeVolDrag;
     _getVolState(deviceId).dragging = false;
     _playerVolumeLocal[deviceId] = null;
-    _volCommit(deviceId, _getVolState(deviceId).value);
+    if (deviceId === 'browser') {
+        setBrowserVolume(_getVolState(deviceId).value / 100);
+    } else {
+        _volCommit(deviceId, _getVolState(deviceId).value);
+    }
     _activeVolDrag = null;
 });
 document.addEventListener('touchend', function() {
@@ -667,7 +806,11 @@ document.addEventListener('touchend', function() {
     var deviceId = _activeVolDrag;
     _getVolState(deviceId).dragging = false;
     _playerVolumeLocal[deviceId] = null;
-    _volCommit(deviceId, _getVolState(deviceId).value);
+    if (deviceId === 'browser') {
+        setBrowserVolume(_getVolState(deviceId).value / 100);
+    } else {
+        _volCommit(deviceId, _getVolState(deviceId).value);
+    }
     _activeVolDrag = null;
 });
 
@@ -898,6 +1041,12 @@ updateStatus = function() {
     // Update player bar
     _updatePlayerBar();
 };
+
+// Restore browser listen state from localStorage (persists across page navigation)
+_restoreListenState();
+
+// Initialize browser volume state for slider
+_getVolState('browser').value = Math.round(_browserVolume * 100);
 
 // Start polling
 setInterval(updateStatus, 5000);
