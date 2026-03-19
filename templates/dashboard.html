@@ -1,12 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Dashboard - Streampeg{% endblock %}
 {% block content %}
-<h2>{{ t('dash.streams') }}</h2>
 
 {% if not streams %}
 <p>{{ t('dash.no_streams') }} <a href="{{ url_for('stream_new') }}">{{ t('dash.add_stream') }}</a></p>
 {% else %}
-<div class="overflow-auto" style="overflow:visible;">
 <table id="streams-table">
     <thead>
         <tr>
@@ -15,7 +13,7 @@
             <th>{{ t('dash.status') }}</th>
             <th>{{ t('dash.track_info') }}</th>
             <th>{{ t('dash.tracks') }}</th>
-            <!-- <th>% rec</th> -->
+            <th>{{ t('dash.size') }}</th>
             <th>
                 <button class="btn-icon btn-start" onclick="startAll(this)" title="{{ t('dash.start_all_title') }}" style="padding:0.2rem 0.5rem; font-size:0.7rem;">{{ t('dash.start_all') }}</button>
                 <button class="btn-icon btn-stop outline" onclick="stopAll(this)" title="{{ t('dash.stop_all_title') }}" style="padding:0.2rem 0.5rem; font-size:0.7rem; margin-left:0.2rem;">{{ t('dash.stop_all') }}</button>
@@ -84,7 +82,9 @@
             <td class="files-cell">
                 {{ st.file_count }}
             </td>
-            <!-- <td class="rec-pct-cell">{{ st.rec_pct if st.rec_pct is defined else "-" }}</td> -->
+            <td class="size-cell">
+                {% if st.disk_usage_mb and st.disk_usage_mb > 0 %}{{ "%.1f"|format(st.disk_usage_mb / 1024) }} <small style="opacity:0.6">GB</small>{% else %}-{% endif %}
+            </td>
             <td class="actions-cell">
                 {% if st.running %}
                 <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" class="inline">
@@ -107,6 +107,5 @@
         {% endfor %}
     </tbody>
 </table>
-</div>
 {% endif %}
 {% endblock %}

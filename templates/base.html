@@ -15,6 +15,7 @@
         <ul>
             <li><a href="{{ url_for('dashboard') }}">{{ t('nav.dashboard') }}</a></li>
             <li><a href="{{ url_for('browse') }}">{{ t('nav.radio_browser') }}</a></li>
+            <li><a href="{{ url_for('library') }}">{{ t('nav.library') }}</a></li>
             <li><a href="{{ url_for('logs') }}">{{ t('nav.logs') }}</a></li>
             <li><a href="{{ url_for('yt_download') }}">{{ t('nav.yt_download') }}</a></li>
             <li><a href="{{ url_for('stream_new') }}">{{ t('nav.add_stream') }}</a></li>
@@ -135,6 +136,17 @@
 
                     if (newMain) {
                         mainEl.innerHTML = newMain.innerHTML;
+                        // Execute inline scripts from new page
+                        newMain.querySelectorAll('script').forEach(function(oldScript) {
+                            var newScript = document.createElement('script');
+                            if (oldScript.src) {
+                                newScript.src = oldScript.src;
+                            } else {
+                                newScript.textContent = oldScript.textContent;
+                            }
+                            document.body.appendChild(newScript);
+                            document.body.removeChild(newScript);
+                        });
                     } else {
                         // Fallback: full page load
                         location.href = url;
@@ -205,6 +217,11 @@
 
             // Update listen icons
             if (_playerStreamId) _updateListenIcons(_playerStreamId);
+
+            // Init library page if loaded via PJAX
+            if (document.getElementById('library-table') && typeof initLibrary === 'function') {
+                initLibrary();
+            }
 
             // Trigger a status update to refresh dashboard data
             updateStatus();

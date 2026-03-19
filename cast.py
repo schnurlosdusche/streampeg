@@ -21,7 +21,8 @@ _devices_lock = threading.Lock()
 _last_discovery = 0
 DISCOVERY_CACHE_SECS = 30  # re-discover at most every 30s
 
-# Currently casting: stream_id -> {device_id, type}
+# Currently casting: device_id -> stream_id  (one device plays one stream,
+# but the same stream may be cast to multiple devices simultaneously)
 _active_casts = {}
 _casts_lock = threading.Lock()
 
@@ -111,6 +112,42 @@ def lms_stop(device):
     )
 
 
+def lms_pause(device):
+    """Toggle pause on an LMS player."""
+    _lms_request(
+        device["host"], device["port"], device["player_id"],
+        ["pause"],
+    )
+
+
+def lms_get_current_track(device):
+    """Get current track title and artist from LMS player."""
+    result = _lms_request(
+        device["host"], device["port"], device["player_id"],
+        ["status", "-", "1", "tags:aAlc"],
+    )
+    if not result:
+        return None, None, None
+    r = result.get("result", {})
+    # remoteMeta has parsed artist/title for remote streams
+    meta = r.get("remoteMeta", {})
+    artist = meta.get("artist", "")
+    title = meta.get("title", "")
+    cover_id = meta.get("coverid", "")
+    # Build cover URL from LMS if available
+    cover_url = None
+    if cover_id:
+        cover_url = f"http://{device['host']}:{device['port']}/music/{cover_id}/cover.jpg"
+    # Combine artist - title
+    if artist and title:
+        track = f"{artist} - {title}"
+    elif r.get("current_title"):
+        track = r["current_title"]
+    else:
+        track = title or None
+    return track, cover_url, r.get("mode")
+
+
 # ===== Sonos discovery (SoCo) =============================================
 # NOTE: Sonos streaming is DISABLED. Only discovery is active so devices
 # show up in the UI (greyed out / marked as unavailable).
@@ -193,33 +230,76 @@ def get_device(device_id):
 
 # ===== Cast control ========================================================
 
+def _sonos_play_uri(sp, name, stream_url):
+    """Play a stream URL on a Sonos speaker with DIDL-Lite metadata."""
+    from xml.sax.saxutils import escape
+    didl = (
+        '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/"'
+        ' xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"'
+        ' xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">'
+        '<item id="R:0/0/0" parentID="R:0/0" restricted="true">'
+        '<dc:title>{name}</dc:title>'
+        '<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>'
+        '<res protocolInfo="http-get:*:audio/mpeg:*">{url}</res>'
+        '</item></DIDL-Lite>'
+    ).format(name=escape(name), url=escape(stream_url))
+    sp.play_uri(stream_url, meta=didl)
+
+
 def sonos_play(device, stream_url):
-    """Tell a Sonos speaker to play a stream URL."""
+    """Tell a Sonos speaker to play a stream URL. Returns (success, error_msg)."""
     try:
         sp = soco.SoCo(device["host"])
-        # Sonos rejects streams without proper MIME metadata (UPnP Error 714).
-        # Provide DIDL-Lite with audioBroadcast class and audio/mpeg MIME type.
-        from xml.sax.saxutils import escape
-        didl = (
-            '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/"'
-            ' xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"'
-            ' xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">'
-            '<item id="R:0/0/0" parentID="R:0/0" restricted="true">'
-            '<dc:title>{name}</dc:title>'
-            '<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>'
-            '<res protocolInfo="http-get:*:audio/mpeg:*">{url}</res>'
-            '</item></DIDL-Lite>'
-        ).format(name=escape(device.get("name", "Stream")), url=escape(stream_url))
-        sp.play_uri(stream_url, meta=didl)
+        # Unjoin from any group so this speaker becomes its own coordinator
+        try:
+            if sp.group and sp.group.coordinator.ip_address != sp.ip_address:
+                sp.unjoin()
+                import time as _t
+                _t.sleep(0.5)
+        except Exception:
+            pass
+        _sonos_play_uri(sp, device.get("name", "Stream"), stream_url)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def _sonos_get_coordinator(sp):
+    """Return the coordinator for this speaker, or sp itself if already coordinator."""
+    try:
+        coord = sp.group.coordinator
+        if coord.ip_address != sp.ip_address:
+            return coord
     except Exception:
         pass
+    return sp
 
 
 def sonos_stop(device):
     """Stop playback on a Sonos speaker."""
     try:
         sp = soco.SoCo(device["host"])
+        sp = _sonos_get_coordinator(sp)
         sp.stop()
+    except Exception:
+        pass
+
+
+def sonos_pause(device, stream_url=None):
+    """Toggle pause on a Sonos speaker. For streams, resume = replay URL."""
+    try:
+        sp = soco.SoCo(device["host"])
+        sp = _sonos_get_coordinator(sp)
+        info = sp.get_current_transport_info()
+        state = info.get("current_transport_state", "")
+        if state in ("PAUSED_PLAYBACK", "STOPPED"):
+            if stream_url:
+                # Streams can't truly resume — replay with DIDL-Lite metadata
+                _sonos_play_uri(sp, device.get("name", "Stream"), stream_url)
+            else:
+                sp.play()
+        else:
+            sp.pause()
     except Exception:
         pass
 
@@ -240,8 +320,10 @@ def cast_stream(stream_url, device_id):
         return True, f"Stream gestartet auf {device['name']}"
 
     if device["type"] == "sonos":
-        sonos_play(device, stream_url)
-        return True, f"Stream gestartet auf {device['name']}"
+        ok, err = sonos_play(device, stream_url)
+        if ok:
+            return True, f"Stream gestartet auf {device['name']}"
+        return False, f"Sonos-Fehler auf {device['name']}: {err}"
 
     return False, f"Unbekannter Gerätetyp: {device['type']}"
 
@@ -263,6 +345,23 @@ def stop_cast(device_id):
     return False, f"Unbekannter Gerätetyp: {device['type']}"
 
 
+def pause_cast(device_id, stream_url=None):
+    """Toggle pause on a device. Returns (success, message)."""
+    device = get_device(device_id)
+    if not device:
+        return False, "Device not found"
+
+    if device["type"] == "lms":
+        lms_pause(device)
+        return True, f"Pause toggled on {device['name']}"
+
+    if device["type"] == "sonos":
+        sonos_pause(device, stream_url=stream_url)
+        return True, f"Pause toggled on {device['name']}"
+
+    return False, f"Unknown device type: {device['type']}"
+
+
 def _persist_casts():
     """Save active casts to DB so they survive restarts."""
     from db import set_setting
@@ -272,7 +371,9 @@ def _persist_casts():
 
 
 def _load_casts():
-    """Load active casts from DB on startup."""
+    """Load active casts from DB on startup.
+    Stored format is device_id -> stream_id (string keys in JSON).
+    Migrates old format (stream_id -> device_id) automatically."""
     from db import get_setting
     raw = get_setting("active_casts")
     if raw:
@@ -280,35 +381,69 @@ def _load_casts():
             data = json.loads(raw)
             with _casts_lock:
                 for k, v in data.items():
-                    _active_casts[int(k) if str(k).isdigit() else k] = v
+                    # Detect old format: key is numeric (stream_id), value is device string
+                    if str(k).isdigit() and isinstance(v, str) and not str(v).isdigit():
+                        # Old format: stream_id -> device_id → invert
+                        _active_casts[v] = int(k)
+                    else:
+                        # New format: device_id -> stream_id
+                        _active_casts[k] = int(v) if isinstance(v, (int, float)) or str(v).isdigit() else v
         except (ValueError, TypeError):
             pass
+    _persist_casts()  # re-save in new format
 
 
 def set_active_cast(stream_id, device_id):
     """Track which stream is casting to which device."""
     with _casts_lock:
-        _active_casts[stream_id] = device_id
+        _active_casts[device_id] = stream_id
     _persist_casts()
 
 
-def remove_active_cast(stream_id):
-    """Remove active cast tracking."""
+def remove_active_cast_by_device(device_id):
+    """Remove active cast tracking for a device."""
     with _casts_lock:
-        _active_casts.pop(stream_id, None)
+        _active_casts.pop(device_id, None)
+    _persist_casts()
+
+
+def remove_active_casts_for_stream(stream_id):
+    """Remove all active casts for a given stream (all devices)."""
+    with _casts_lock:
+        to_remove = [did for did, sid in _active_casts.items() if sid == stream_id]
+        for did in to_remove:
+            del _active_casts[did]
     _persist_casts()
 
 
 def get_active_casts():
-    """Return dict of stream_id -> device_id."""
+    """Return dict of device_id -> stream_id."""
     with _casts_lock:
         return dict(_active_casts)
 
 
-def get_active_cast_for_stream(stream_id):
-    """Return device_id if stream is being cast, else None."""
+def get_active_casts_by_stream():
+    """Return dict of stream_id -> [device_ids] for API compatibility."""
     with _casts_lock:
-        return _active_casts.get(stream_id)
+        result = {}
+        for device_id, stream_id in _active_casts.items():
+            result.setdefault(stream_id, []).append(device_id)
+        return result
+
+
+def get_active_cast_for_stream(stream_id):
+    """Return first device_id if stream is being cast, else None."""
+    with _casts_lock:
+        for device_id, sid in _active_casts.items():
+            if sid == stream_id:
+                return device_id
+    return None
+
+
+def get_devices_for_stream(stream_id):
+    """Return all device_ids casting a given stream."""
+    with _casts_lock:
+        return [did for did, sid in _active_casts.items() if sid == stream_id]
 
 
 # ===== Volume control =====================================================
@@ -583,6 +718,81 @@ def clear_icy_cache(stream_id):
     """Clear ICY cache when a stream stops being cast."""
     with _icy_cache_lock:
         _icy_cache.pop(stream_id, None)
+
+
+def get_cast_track_info(device_id, stream_id, stream_url):
+    """Get current track and cover for a cast, using the best source available.
+    LMS: query the server directly (most reliable).
+    Sonos: fall back to ICY metadata polling.
+    Cover art: always via iTunes (cover_art module).
+    Returns (track, cover_url)."""
+    import cover_art
+
+    device = get_device(device_id)
+    if not device:
+        return None, None
+
+    track = None
+
+    if device["type"] == "lms":
+        t, _lms_cover, mode = lms_get_current_track(device)
+        if t:
+            track = t
+
+    # Sonos or LMS without track info: use ICY cache
+    if not track:
+        icy = get_icy_cache(stream_id)
+        if not icy:
+            poll_icy_for_cast(stream_id, stream_url)
+            icy = get_icy_cache(stream_id)
+        if icy:
+            track = icy["track"]
+
+    # Cover art via iTunes lookup (non-blocking, cached)
+    cover_url = cover_art.get_cover_url(stream_id, track) if track else None
+
+    return track, cover_url
+
+
+# ===== Background ICY poller for active casts ================================
+
+_icy_poller_running = False
+
+def _icy_poller_loop():
+    """Background thread that continuously polls ICY metadata for active casts
+    that are not being recorded."""
+    import db as _db
+    import process_manager as _pm
+    while True:
+        try:
+            active = get_active_casts()  # device_id -> stream_id
+            if active:
+                # Get unique stream_ids
+                stream_ids = set(active.values())
+                all_streams = {s["id"]: s for s in _db.get_all_streams()}
+                for stream_id in stream_ids:
+                    stream = all_streams.get(stream_id)
+                    if not stream:
+                        continue
+                    # Check if stream is being recorded
+                    st = _pm.get_status(stream)
+                    if st.get("running") and st.get("current_track"):
+                        continue  # recording provides track info
+                    # Not recording or no track — poll ICY
+                    poll_icy_for_cast(stream_id, stream["url"])
+        except Exception:
+            pass
+        time.sleep(_ICY_POLL_INTERVAL)
+
+
+def start_icy_poller():
+    """Start the background ICY poller thread (called once at app startup)."""
+    global _icy_poller_running
+    if _icy_poller_running:
+        return
+    _icy_poller_running = True
+    t = threading.Thread(target=_icy_poller_loop, daemon=True)
+    t.start()
 
 
 # Load persisted casts on module import

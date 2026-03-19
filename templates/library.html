@@ -1,0 +1,1118 @@
+{% extends "base.html" %}
+{% block title %}{{ t('library.title') }} - Streampeg{% endblock %}
+{% block content %}
+
+<style>
+/* Library layout */
+.lib-top-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
+}
+.lib-top-bar input,
+.lib-top-bar select {
+    margin-bottom: 0;
+    height: 32px;
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+}
+.lib-top-bar input[type="text"] { width: 200px; }
+.lib-top-bar input[type="number"] { width: 70px; }
+.lib-top-bar select { width: 140px; }
+.lib-top-bar .lib-track-count {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--pico-muted-color, #888);
+}
+.lib-scan-btn {
+    padding: 0.2rem 0.6rem !important;
+    font-size: 0.78rem !important;
+    margin-bottom: 0 !important;
+}
+.lib-scan-progress {
+    font-size: 0.72rem;
+    color: #64b5f6;
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+}
+.lib-scan-progress-bar {
+    width: 80px;
+    height: 6px;
+    background: #2a2a3a;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.lib-scan-progress-fill {
+    height: 100%;
+    background: #4caf50;
+    width: 0%;
+    transition: width 0.3s;
+}
+
+/* Main area: table + sidebar */
+.lib-main {
+    display: flex;
+    gap: 0.8rem;
+    min-height: 0;
+}
+.lib-table-wrap {
+    flex: 3;
+    min-width: 0;
+    overflow-x: auto;
+}
+.lib-sidebar {
+    flex: 1;
+    min-width: 220px;
+    max-width: 300px;
+    background: #1a1a2a;
+    border-radius: 8px;
+    padding: 0.6rem;
+    overflow-y: auto;
+    max-height: calc(100vh - 260px);
+}
+
+/* Track table */
+#lib-table {
+    font-size: 13px;
+    table-layout: fixed;
+    width: 100%;
+    border-collapse: collapse;
+}
+#lib-table th,
+#lib-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0.25rem 0.4rem;
+}
+#lib-table thead th {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--pico-muted-color, #999);
+    border-bottom: 1px solid var(--pico-muted-border-color, #444);
+}
+#lib-table thead th:hover {
+    color: #ccc;
+}
+#lib-table thead th .sort-arrow {
+    font-size: 0.65rem;
+    margin-left: 2px;
+    opacity: 0.5;
+}
+#lib-table thead th.sorted .sort-arrow {
+    opacity: 1;
+    color: #64b5f6;
+}
+#lib-table tbody tr {
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+#lib-table tbody tr:hover {
+    background: rgba(255,255,255,0.04);
+}
+#lib-table tbody tr.selected {
+    background: rgba(100,181,246,0.1);
+}
+/* Column widths */
+#lib-table th:nth-child(1),
+#lib-table td:nth-child(1) { width: 30px; text-align: center; }  /* checkbox */
+#lib-table th:nth-child(2),
+#lib-table td:nth-child(2) { width: 30px; text-align: center; }  /* play */
+#lib-table th:nth-child(3),
+#lib-table td:nth-child(3) { width: auto; }                       /* title */
+#lib-table th:nth-child(4),
+#lib-table td:nth-child(4) { width: 18%; }                        /* artist */
+#lib-table th:nth-child(5),
+#lib-table td:nth-child(5) { width: 12%; }                        /* stream */
+#lib-table th:nth-child(6),
+#lib-table td:nth-child(6) { width: 55px; text-align: right; font-family: monospace; }  /* bpm */
+#lib-table th:nth-child(7),
+#lib-table td:nth-child(7) { width: 55px; text-align: center; font-family: monospace; } /* key */
+#lib-table th:nth-child(8),
+#lib-table td:nth-child(8) { width: 55px; text-align: right; }    /* duration */
+#lib-table th:nth-child(9),
+#lib-table td:nth-child(9) { width: 30px; text-align: center; }   /* add */
+
+/* Play button */
+.lib-play-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+}
+.lib-play-btn:hover { color: #4caf50; }
+.lib-play-btn.playing { color: #4caf50; }
+
+/* Add to playlist button */
+.lib-add-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1;
+    position: relative;
+}
+.lib-add-btn:hover { color: #64b5f6; }
+
+/* Add-to-playlist dropdown (cast-menu pattern) */
+.lib-pl-menu {
+    position: absolute;
+    z-index: 100;
+    background: var(--pico-card-background-color, #1a1a2e);
+    border: 1px solid var(--pico-muted-border-color, #444);
+    border-radius: 6px;
+    padding: 0.3rem 0;
+    min-width: 180px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    font-size: 0.78rem;
+}
+.lib-pl-menu-item {
+    display: block;
+    width: 100%;
+    border: none;
+    background: none;
+    color: var(--pico-color, #ccc);
+    padding: 0.35rem 0.7rem;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.lib-pl-menu-item:hover {
+    background: var(--pico-primary-background, #2a2a4a);
+}
+
+/* Checkbox */
+#lib-table input[type="checkbox"] {
+    margin: 0;
+    width: 14px;
+    height: 14px;
+}
+
+/* Pagination */
+.lib-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    font-size: 0.78rem;
+}
+.lib-pagination button {
+    padding: 0.15rem 0.5rem !important;
+    font-size: 0.75rem !important;
+    margin-bottom: 0 !important;
+}
+.lib-pagination .lib-page-num {
+    color: var(--pico-muted-color, #888);
+}
+
+/* Bulk action bar */
+.lib-bulk-bar {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.5rem;
+    margin-bottom: 0.3rem;
+    background: rgba(100,181,246,0.1);
+    border-radius: 4px;
+    font-size: 0.78rem;
+}
+.lib-bulk-bar.visible { display: flex; }
+.lib-bulk-bar button {
+    padding: 0.15rem 0.5rem !important;
+    font-size: 0.75rem !important;
+    margin-bottom: 0 !important;
+}
+
+/* Sidebar styles */
+.lib-sidebar h4 {
+    font-size: 0.82rem;
+    margin-bottom: 0.4rem;
+    color: #ccc;
+}
+.lib-pl-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.5rem 0;
+}
+.lib-pl-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: #ccc;
+}
+.lib-pl-list li:hover {
+    background: rgba(255,255,255,0.06);
+}
+.lib-pl-list li.active {
+    background: rgba(100,181,246,0.15);
+    color: #64b5f6;
+}
+.lib-pl-list .pl-badge {
+    font-size: 0.65rem;
+    background: rgba(255,255,255,0.1);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    color: #888;
+}
+.lib-new-pl {
+    display: flex;
+    gap: 0.3rem;
+    margin-bottom: 0.6rem;
+}
+.lib-new-pl input {
+    flex: 1;
+    height: 28px;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    margin-bottom: 0;
+}
+.lib-new-pl button {
+    padding: 0.15rem 0.5rem !important;
+    font-size: 0.72rem !important;
+    margin-bottom: 0 !important;
+    white-space: nowrap;
+}
+
+/* Playlist detail in sidebar */
+.lib-pl-detail {
+    display: none;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding-top: 0.4rem;
+    margin-top: 0.4rem;
+}
+.lib-pl-detail.visible { display: block; }
+.lib-pl-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.3rem;
+}
+.lib-pl-detail-header h5 {
+    font-size: 0.78rem;
+    margin: 0;
+    color: #ccc;
+}
+.lib-pl-detail-actions {
+    display: flex;
+    gap: 0.3rem;
+}
+.lib-pl-detail-actions button {
+    padding: 0.1rem 0.4rem !important;
+    font-size: 0.68rem !important;
+    margin-bottom: 0 !important;
+}
+.lib-pl-tracks {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: calc(100vh - 480px);
+    overflow-y: auto;
+}
+.lib-pl-tracks li {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.3rem;
+    font-size: 0.72rem;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.lib-pl-tracks li:hover { background: rgba(255,255,255,0.04); }
+.lib-pl-track-drag {
+    cursor: grab;
+    color: #555;
+    font-size: 0.65rem;
+}
+.lib-pl-track-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #bbb;
+}
+.lib-pl-track-remove {
+    background: none;
+    border: none;
+    color: #e6a8a8;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+.lib-pl-track-remove:hover { color: #ff6666; }
+.lib-pl-delete-btn {
+    --pico-color: #e6a8a8 !important;
+    --pico-border-color: #6a2d2d !important;
+}
+.lib-no-tracks {
+    text-align: center;
+    padding: 2rem;
+    color: var(--pico-muted-color, #888);
+    font-size: 0.85rem;
+}
+</style>
+
+<!-- Top Bar -->
+<div class="lib-top-bar">
+    <input type="text" id="lib-search" placeholder="{{ t('library.search_placeholder') }}">
+    <select id="lib-stream-filter">
+        <option value="">{{ t('library.all_streams') }}</option>
+    </select>
+    <input type="number" id="lib-bpm-min" placeholder="BPM min" min="0" max="300">
+    <input type="number" id="lib-bpm-max" placeholder="BPM max" min="0" max="300">
+    <select id="lib-key-filter">
+        <option value="">{{ t('library.key') }}</option>
+        <optgroup label="Major">
+            <option value="C">C</option>
+            <option value="C#/Db">C#/Db</option>
+            <option value="D">D</option>
+            <option value="D#/Eb">D#/Eb</option>
+            <option value="E">E</option>
+            <option value="F">F</option>
+            <option value="F#/Gb">F#/Gb</option>
+            <option value="G">G</option>
+            <option value="G#/Ab">G#/Ab</option>
+            <option value="A">A</option>
+            <option value="A#/Bb">A#/Bb</option>
+            <option value="B">B</option>
+        </optgroup>
+        <optgroup label="Minor">
+            <option value="Am">Am</option>
+            <option value="A#m/Bbm">A#m/Bbm</option>
+            <option value="Bm">Bm</option>
+            <option value="Cm">Cm</option>
+            <option value="C#m/Dbm">C#m/Dbm</option>
+            <option value="Dm">Dm</option>
+            <option value="D#m/Ebm">D#m/Ebm</option>
+            <option value="Em">Em</option>
+            <option value="Fm">Fm</option>
+            <option value="F#m/Gbm">F#m/Gbm</option>
+            <option value="Gm">Gm</option>
+            <option value="G#m/Abm">G#m/Abm</option>
+        </optgroup>
+    </select>
+    <button class="lib-scan-btn outline" onclick="startScan()">{{ t('library.scan') }}</button>
+    <span class="lib-scan-progress" id="lib-scan-progress">
+        <div class="lib-scan-progress-bar"><div class="lib-scan-progress-fill" id="lib-scan-fill"></div></div>
+        <span id="lib-scan-text">{{ t('library.scanning') }}</span>
+    </span>
+    <span class="lib-track-count" id="lib-track-count"></span>
+</div>
+
+<!-- Bulk action bar -->
+<div class="lib-bulk-bar" id="lib-bulk-bar">
+    <span id="lib-selected-count">0</span> {{ t('library.select_all') }}
+    <button class="outline" onclick="showBulkPlaylistMenu(this)">{{ t('library.add_selected') }}</button>
+</div>
+
+<!-- Main area -->
+<div class="lib-main">
+    <!-- Track table -->
+    <div class="lib-table-wrap">
+        <table id="lib-table">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="lib-select-all" onchange="toggleSelectAll(this.checked)"></th>
+                    <th></th>
+                    <th data-sort="title" onclick="sortBy('title')">{{ t('library.title_col') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="artist" onclick="sortBy('artist')">{{ t('library.artist_col') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="stream" onclick="sortBy('stream')">{{ t('library.stream_col') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="bpm" onclick="sortBy('bpm')">{{ t('library.bpm') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="duration" onclick="sortBy('duration')">{{ t('library.duration') }} <span class="sort-arrow"></span></th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="lib-tbody"></tbody>
+        </table>
+        <div class="lib-no-tracks" id="lib-no-tracks" style="display:none;">{{ t('library.no_tracks') }}</div>
+        <div class="lib-pagination" id="lib-pagination"></div>
+    </div>
+
+    <!-- Playlist sidebar -->
+    <div class="lib-sidebar">
+        <h4>{{ t('library.playlists') }}</h4>
+        <div class="lib-new-pl">
+            <input type="text" id="lib-new-pl-name" placeholder="{{ t('library.playlist_name') }}">
+            <button class="outline" onclick="createPlaylist()">{{ t('library.new_playlist') }}</button>
+        </div>
+        <ul class="lib-pl-list" id="lib-pl-list"></ul>
+        <div class="lib-pl-detail" id="lib-pl-detail">
+            <div class="lib-pl-detail-header">
+                <h5 id="lib-pl-detail-name"></h5>
+                <div class="lib-pl-detail-actions">
+                    <button class="outline" onclick="downloadM3U(_selectedPlaylistId)">{{ t('library.download_m3u') }}</button>
+                    <button class="outline lib-pl-delete-btn" onclick="deletePlaylist(_selectedPlaylistId)">{{ t('library.delete_playlist') }}</button>
+                </div>
+            </div>
+            <ul class="lib-pl-tracks" id="lib-pl-tracks"></ul>
+        </div>
+    </div>
+</div>
+
+<script>
+/* --- Library state --- */
+var _libPage = 1;
+var _libSort = 'title';
+var _libOrder = 'asc';
+var _libFilters = {};
+var _libTotalPages = 1;
+var _libTotalTracks = 0;
+var _libTracks = [];
+var _selectedTrackIds = {};
+var _libPlMenu = null;
+var _playlists = [];
+var _selectedPlaylistId = null;
+var _libPlayingTrackId = null;
+var _scanPollTimer = null;
+var _searchTimer = null;
+
+/* --- Track loading --- */
+function loadTracks() {
+    var params = new URLSearchParams({
+        page: _libPage,
+        per_page: 200,
+        sort: _libSort,
+        order: _libOrder
+    });
+    if (_libFilters.search) params.set('search', _libFilters.search);
+    if (_libFilters.stream) params.set('stream', _libFilters.stream);
+    if (_libFilters.bpm_min) params.set('bpm_min', _libFilters.bpm_min);
+    if (_libFilters.bpm_max) params.set('bpm_max', _libFilters.bpm_max);
+    if (_libFilters.key) params.set('key', _libFilters.key);
+
+    fetch('/api/library/tracks?' + params, {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) { renderTracks(data); })
+        .catch(function() {});
+}
+
+function renderTracks(data) {
+    _libTracks = data.tracks || [];
+    _libTotalPages = data.total_pages || 1;
+    _libTotalTracks = data.total || 0;
+    _libPage = data.page || 1;
+
+    var countEl = document.getElementById('lib-track-count');
+    if (countEl) countEl.textContent = _libTotalTracks + ' ' + t('library.tracks_count');
+
+    var tbody = document.getElementById('lib-tbody');
+    var noTracks = document.getElementById('lib-no-tracks');
+
+    if (!_libTracks.length) {
+        tbody.innerHTML = '';
+        noTracks.style.display = 'block';
+        renderPagination();
+        return;
+    }
+    noTracks.style.display = 'none';
+
+    var html = '';
+    for (var i = 0; i < _libTracks.length; i++) {
+        var tr = _libTracks[i];
+        var isSelected = !!_selectedTrackIds[tr.id];
+        var isPlaying = _libPlayingTrackId === tr.id;
+        var dur = tr.duration ? formatDuration(tr.duration) : '-';
+        html += '<tr data-track-id="' + tr.id + '"' + (isSelected ? ' class="selected"' : '') + '>';
+        html += '<td><input type="checkbox" onchange="toggleTrackSelect(' + tr.id + ', this.checked)"' + (isSelected ? ' checked' : '') + '></td>';
+        html += '<td><button class="lib-play-btn' + (isPlaying ? ' playing' : '') + '" onclick="playLibraryTrack(' + tr.id + ', \'' + escHtml(tr.title || '') + '\', \'' + escHtml(tr.artist || '') + '\')">' + (isPlaying ? '&#9646;&#9646;' : '&#9654;') + '</button></td>';
+        html += '<td title="' + escAttr(tr.title || '') + '">' + escHtml(tr.title || '') + '</td>';
+        html += '<td title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
+        html += '<td title="' + escAttr(tr.stream || '') + '">' + escHtml(tr.stream || '') + '</td>';
+        html += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
+        html += '<td>' + (tr.key ? escHtml(tr.key) : '-') + '</td>';
+        html += '<td>' + dur + '</td>';
+        html += '<td><button class="lib-add-btn" onclick="showAddToPlaylistMenu(this, ' + tr.id + ')" title="' + t('library.add_to_playlist') + '">+</button></td>';
+        html += '</tr>';
+    }
+    tbody.innerHTML = html;
+    renderPagination();
+    updateSelectAllCheckbox();
+}
+
+function formatDuration(seconds) {
+    var m = Math.floor(seconds / 60);
+    var s = Math.floor(seconds % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function escHtml(str) {
+    var d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function escAttr(str) {
+    return escHtml(str).replace(/"/g, '&quot;');
+}
+
+/* --- Sorting --- */
+function sortBy(col) {
+    if (_libSort === col) {
+        _libOrder = _libOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+        _libSort = col;
+        _libOrder = 'asc';
+    }
+    _libPage = 1;
+    updateSortIndicators();
+    loadTracks();
+}
+
+function updateSortIndicators() {
+    var ths = document.querySelectorAll('#lib-table thead th[data-sort]');
+    for (var i = 0; i < ths.length; i++) {
+        var th = ths[i];
+        var arrow = th.querySelector('.sort-arrow');
+        if (th.getAttribute('data-sort') === _libSort) {
+            th.classList.add('sorted');
+            arrow.textContent = _libOrder === 'asc' ? '\u25B2' : '\u25BC';
+        } else {
+            th.classList.remove('sorted');
+            arrow.textContent = '';
+        }
+    }
+}
+
+/* --- Pagination --- */
+function renderPagination() {
+    var el = document.getElementById('lib-pagination');
+    if (_libTotalPages <= 1) { el.innerHTML = ''; return; }
+
+    var html = '';
+    html += '<button class="outline" onclick="goPage(' + (_libPage - 1) + ')"' + (_libPage <= 1 ? ' disabled' : '') + '>&laquo; Prev</button>';
+
+    var start = Math.max(1, _libPage - 3);
+    var end = Math.min(_libTotalPages, _libPage + 3);
+    for (var p = start; p <= end; p++) {
+        if (p === _libPage) {
+            html += '<strong>' + p + '</strong>';
+        } else {
+            html += '<button class="outline" onclick="goPage(' + p + ')">' + p + '</button>';
+        }
+    }
+
+    html += '<span class="lib-page-num">' + t('library.of') + ' ' + _libTotalPages + '</span>';
+    html += '<button class="outline" onclick="goPage(' + (_libPage + 1) + ')"' + (_libPage >= _libTotalPages ? ' disabled' : '') + '>Next &raquo;</button>';
+    el.innerHTML = html;
+}
+
+function goPage(p) {
+    if (p < 1 || p > _libTotalPages) return;
+    _libPage = p;
+    loadTracks();
+}
+
+/* --- Selection --- */
+function toggleTrackSelect(trackId, checked) {
+    if (checked) {
+        _selectedTrackIds[trackId] = true;
+    } else {
+        delete _selectedTrackIds[trackId];
+    }
+    var row = document.querySelector('#lib-table tr[data-track-id="' + trackId + '"]');
+    if (row) row.classList.toggle('selected', checked);
+    updateBulkBar();
+    updateSelectAllCheckbox();
+}
+
+function toggleSelectAll(checked) {
+    for (var i = 0; i < _libTracks.length; i++) {
+        if (checked) {
+            _selectedTrackIds[_libTracks[i].id] = true;
+        } else {
+            delete _selectedTrackIds[_libTracks[i].id];
+        }
+    }
+    var cbs = document.querySelectorAll('#lib-tbody input[type="checkbox"]');
+    for (var j = 0; j < cbs.length; j++) cbs[j].checked = checked;
+    var rows = document.querySelectorAll('#lib-tbody tr');
+    for (var k = 0; k < rows.length; k++) rows[k].classList.toggle('selected', checked);
+    updateBulkBar();
+}
+
+function updateSelectAllCheckbox() {
+    var el = document.getElementById('lib-select-all');
+    if (!el) return;
+    var allChecked = _libTracks.length > 0;
+    for (var i = 0; i < _libTracks.length; i++) {
+        if (!_selectedTrackIds[_libTracks[i].id]) { allChecked = false; break; }
+    }
+    el.checked = allChecked;
+}
+
+function updateBulkBar() {
+    var count = Object.keys(_selectedTrackIds).length;
+    var bar = document.getElementById('lib-bulk-bar');
+    var countEl = document.getElementById('lib-selected-count');
+    if (count > 0) {
+        bar.classList.add('visible');
+        countEl.textContent = count;
+    } else {
+        bar.classList.remove('visible');
+    }
+}
+
+/* --- Play track --- */
+function playLibraryTrack(trackId, title, artist) {
+    _initBrowserAudio();
+    if (_libPlayingTrackId === trackId) {
+        // Stop playback
+        _playerAudio.pause();
+        _playerAudio.removeAttribute('src');
+        _playerAudio.load();
+        _libPlayingTrackId = null;
+        _playerStreamId = null;
+        localStorage.removeItem('_listenStreamId');
+        localStorage.removeItem('_listenStreamUrl');
+        _refreshPlayerBar();
+        updatePlayButtons();
+        return;
+    }
+    _playerAudio.pause();
+    _playerAudio.removeAttribute('src');
+    _playerAudio.load();
+    var url = '/api/library/track/' + trackId + '/play';
+    _libPlayingTrackId = trackId;
+    _playerStreamId = null;
+    _playerStreamUrl = null;
+    localStorage.removeItem('_listenStreamId');
+    localStorage.removeItem('_listenStreamUrl');
+    _playerAudio.src = url;
+    _playerAudio.play().catch(function() {});
+
+    // Update player bar info
+    _browserIcyTrack = (artist ? artist + ' - ' : '') + title;
+    _browserIcyCover = null;
+    _refreshPlayerBar();
+    updatePlayButtons();
+}
+
+function updatePlayButtons() {
+    var btns = document.querySelectorAll('.lib-play-btn');
+    for (var i = 0; i < btns.length; i++) {
+        var row = btns[i].closest('tr');
+        var tid = row ? parseInt(row.getAttribute('data-track-id')) : null;
+        if (tid === _libPlayingTrackId) {
+            btns[i].classList.add('playing');
+            btns[i].innerHTML = '&#9646;&#9646;';
+        } else {
+            btns[i].classList.remove('playing');
+            btns[i].innerHTML = '&#9654;';
+        }
+    }
+}
+
+/* --- Add to playlist menu --- */
+function showAddToPlaylistMenu(btn, trackId) {
+    closePlaylistMenu();
+    var menu = document.createElement('div');
+    menu.className = 'lib-pl-menu';
+    if (!_playlists.length) {
+        menu.innerHTML = '<div style="padding:0.4rem 0.7rem;color:#888;font-style:italic;">' + t('library.no_tracks') + '</div>';
+    } else {
+        var html = '';
+        for (var i = 0; i < _playlists.length; i++) {
+            html += '<button class="lib-pl-menu-item" onclick="addToPlaylist(' + _playlists[i].id + ', [' + trackId + '])">' + escHtml(_playlists[i].name) + '</button>';
+        }
+        menu.innerHTML = html;
+    }
+    // Position near button
+    var rect = btn.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = (rect.left - 150) + 'px';
+    menu.style.top = rect.bottom + 'px';
+    document.body.appendChild(menu);
+    _libPlMenu = menu;
+
+    // Adjust if off-screen
+    var menuRect = menu.getBoundingClientRect();
+    if (menuRect.bottom > window.innerHeight) {
+        menu.style.top = (rect.top - menuRect.height) + 'px';
+    }
+    if (menuRect.left < 0) {
+        menu.style.left = '4px';
+    }
+}
+
+function showBulkPlaylistMenu(btn) {
+    closePlaylistMenu();
+    var ids = Object.keys(_selectedTrackIds).map(function(k) { return parseInt(k); });
+    if (!ids.length) return;
+
+    var menu = document.createElement('div');
+    menu.className = 'lib-pl-menu';
+    if (!_playlists.length) {
+        menu.innerHTML = '<div style="padding:0.4rem 0.7rem;color:#888;font-style:italic;">No playlists</div>';
+    } else {
+        var html = '';
+        for (var i = 0; i < _playlists.length; i++) {
+            html += '<button class="lib-pl-menu-item" onclick="addToPlaylist(' + _playlists[i].id + ', [' + ids.join(',') + '])">' + escHtml(_playlists[i].name) + '</button>';
+        }
+        menu.innerHTML = html;
+    }
+    var rect = btn.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = rect.left + 'px';
+    menu.style.top = rect.bottom + 'px';
+    document.body.appendChild(menu);
+    _libPlMenu = menu;
+}
+
+function closePlaylistMenu() {
+    if (_libPlMenu) {
+        _libPlMenu.remove();
+        _libPlMenu = null;
+    }
+}
+
+document.addEventListener('click', function(e) {
+    if (_libPlMenu && !_libPlMenu.contains(e.target) && !e.target.classList.contains('lib-add-btn') && !e.target.closest('.lib-bulk-bar')) {
+        closePlaylistMenu();
+    }
+});
+
+function addToPlaylist(playlistId, trackIds) {
+    closePlaylistMenu();
+    fetch('/api/library/playlists/' + playlistId + '/tracks', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({track_ids: trackIds})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+        loadPlaylists();
+        if (_selectedPlaylistId === playlistId) loadPlaylistTracks(playlistId);
+    })
+    .catch(function() {});
+}
+
+/* --- Playlist management --- */
+function loadPlaylists() {
+    fetch('/api/library/playlists', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            _playlists = data.playlists || [];
+            renderPlaylists();
+        })
+        .catch(function() {});
+}
+
+function renderPlaylists() {
+    var list = document.getElementById('lib-pl-list');
+    if (!_playlists.length) {
+        list.innerHTML = '';
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < _playlists.length; i++) {
+        var pl = _playlists[i];
+        var active = _selectedPlaylistId === pl.id ? ' active' : '';
+        html += '<li class="' + active + '" onclick="selectPlaylist(' + pl.id + ')">';
+        html += '<span>' + escHtml(pl.name) + '</span>';
+        html += '<span class="pl-badge">' + (pl.track_count || 0) + '</span>';
+        html += '</li>';
+    }
+    list.innerHTML = html;
+}
+
+function createPlaylist() {
+    var input = document.getElementById('lib-new-pl-name');
+    var name = (input.value || '').trim();
+    if (!name) return;
+    fetch('/api/library/playlists', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+        input.value = '';
+        loadPlaylists();
+    })
+    .catch(function() {});
+}
+
+function selectPlaylist(id) {
+    if (_selectedPlaylistId === id) {
+        _selectedPlaylistId = null;
+        document.getElementById('lib-pl-detail').classList.remove('visible');
+        renderPlaylists();
+        return;
+    }
+    _selectedPlaylistId = id;
+    renderPlaylists();
+    loadPlaylistTracks(id);
+}
+
+function loadPlaylistTracks(id) {
+    var detail = document.getElementById('lib-pl-detail');
+    detail.classList.add('visible');
+
+    var pl = null;
+    for (var i = 0; i < _playlists.length; i++) {
+        if (_playlists[i].id === id) { pl = _playlists[i]; break; }
+    }
+    document.getElementById('lib-pl-detail-name').textContent = pl ? pl.name : '';
+
+    fetch('/api/library/playlists/' + id + '/tracks', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var tracks = data.tracks || [];
+            var list = document.getElementById('lib-pl-tracks');
+            if (!tracks.length) {
+                list.innerHTML = '<li style="color:#888;font-style:italic;padding:0.5rem;">' + t('library.no_tracks') + '</li>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < tracks.length; i++) {
+                var tr = tracks[i];
+                html += '<li draggable="true" data-track-id="' + tr.id + '" data-position="' + i + '">';
+                html += '<span class="lib-pl-track-drag">&#9776;</span>';
+                html += '<span class="lib-pl-track-name" title="' + escAttr((tr.artist ? tr.artist + ' - ' : '') + (tr.title || '')) + '">';
+                html += escHtml((tr.artist ? tr.artist + ' - ' : '') + (tr.title || ''));
+                html += '</span>';
+                html += '<button class="lib-pl-track-remove" onclick="removeFromPlaylist(' + id + ', ' + tr.id + ')" title="' + t('library.remove') + '">&times;</button>';
+                html += '</li>';
+            }
+            list.innerHTML = html;
+            initPlaylistDragDrop(id);
+        })
+        .catch(function() {});
+}
+
+function removeFromPlaylist(playlistId, trackId) {
+    fetch('/api/library/playlists/' + playlistId + '/tracks/' + trackId, {
+        method: 'DELETE',
+        credentials: 'include'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+        loadPlaylists();
+        loadPlaylistTracks(playlistId);
+    })
+    .catch(function() {});
+}
+
+function downloadM3U(playlistId) {
+    if (!playlistId) return;
+    window.open('/api/library/playlists/' + playlistId + '/m3u', '_blank');
+}
+
+function deletePlaylist(id) {
+    if (!id) return;
+    if (!confirm(t('library.delete_playlist') + '?')) return;
+    fetch('/api/library/playlists/' + id, {
+        method: 'DELETE',
+        credentials: 'include'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+        _selectedPlaylistId = null;
+        document.getElementById('lib-pl-detail').classList.remove('visible');
+        loadPlaylists();
+    })
+    .catch(function() {});
+}
+
+/* --- Playlist drag & drop reorder --- */
+function initPlaylistDragDrop(playlistId) {
+    var list = document.getElementById('lib-pl-tracks');
+    var items = list.querySelectorAll('li[draggable="true"]');
+    var dragSrc = null;
+
+    items.forEach(function(item) {
+        item.addEventListener('dragstart', function(e) {
+            dragSrc = this;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', this.getAttribute('data-position'));
+            this.style.opacity = '0.4';
+        });
+        item.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            this.style.borderTop = '2px solid #64b5f6';
+        });
+        item.addEventListener('dragleave', function() {
+            this.style.borderTop = '';
+        });
+        item.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.style.borderTop = '';
+            if (dragSrc === this) return;
+            var fromPos = parseInt(dragSrc.getAttribute('data-position'));
+            var toPos = parseInt(this.getAttribute('data-position'));
+            reorderPlaylistTrack(playlistId, fromPos, toPos);
+        });
+        item.addEventListener('dragend', function() {
+            this.style.opacity = '';
+            items.forEach(function(it) { it.style.borderTop = ''; });
+        });
+    });
+}
+
+function reorderPlaylistTrack(playlistId, fromPos, toPos) {
+    fetch('/api/library/playlists/' + playlistId + '/reorder', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: fromPos, to: toPos})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function() { loadPlaylistTracks(playlistId); })
+    .catch(function() {});
+}
+
+/* --- Scan --- */
+function startScan() {
+    var progress = document.getElementById('lib-scan-progress');
+    progress.style.display = 'flex';
+    document.getElementById('lib-scan-fill').style.width = '0%';
+    document.getElementById('lib-scan-text').textContent = t('library.scanning');
+
+    fetch('/api/library/scan', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function() { pollScanStatus(); })
+        .catch(function() { progress.style.display = 'none'; });
+}
+
+function pollScanStatus() {
+    if (_scanPollTimer) clearTimeout(_scanPollTimer);
+    fetch('/api/library/scan/status', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var fill = document.getElementById('lib-scan-fill');
+            var text = document.getElementById('lib-scan-text');
+            var progress = document.getElementById('lib-scan-progress');
+            if (data.scanning) {
+                var pct = data.total > 0 ? Math.round((data.scanned / data.total) * 100) : 0;
+                fill.style.width = pct + '%';
+                text.textContent = t('library.scanning') + ' ' + (data.scanned || 0) + '/' + (data.total || 0);
+                _scanPollTimer = setTimeout(pollScanStatus, 2000);
+            } else {
+                fill.style.width = '100%';
+                text.textContent = t('library.scan_complete');
+                setTimeout(function() { progress.style.display = 'none'; }, 3000);
+                loadTracks();
+            }
+        })
+        .catch(function() {
+            document.getElementById('lib-scan-progress').style.display = 'none';
+        });
+}
+
+/* --- Stream filter population --- */
+function loadStreamFilters() {
+    fetch('/api/library/streams', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var sel = document.getElementById('lib-stream-filter');
+            var streams = data.streams || [];
+            for (var i = 0; i < streams.length; i++) {
+                var opt = document.createElement('option');
+                opt.value = streams[i];
+                opt.textContent = streams[i];
+                sel.appendChild(opt);
+            }
+        })
+        .catch(function() {});
+}
+
+/* --- Filter event listeners --- */
+function bindFilters() {
+    var searchEl = document.getElementById('lib-search');
+    if (searchEl) {
+        searchEl.addEventListener('input', function() {
+            if (_searchTimer) clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(function() {
+                _libFilters.search = searchEl.value.trim() || '';
+                _libPage = 1;
+                loadTracks();
+            }, 400);
+        });
+    }
+
+    var streamEl = document.getElementById('lib-stream-filter');
+    if (streamEl) {
+        streamEl.addEventListener('change', function() {
+            _libFilters.stream = streamEl.value;
+            _libPage = 1;
+            loadTracks();
+        });
+    }
+
+    var bpmMinEl = document.getElementById('lib-bpm-min');
+    var bpmMaxEl = document.getElementById('lib-bpm-max');
+    if (bpmMinEl) {
+        bpmMinEl.addEventListener('change', function() {
+            _libFilters.bpm_min = bpmMinEl.value || '';
+            _libPage = 1;
+            loadTracks();
+        });
+    }
+    if (bpmMaxEl) {
+        bpmMaxEl.addEventListener('change', function() {
+            _libFilters.bpm_max = bpmMaxEl.value || '';
+            _libPage = 1;
+            loadTracks();
+        });
+    }
+
+    var keyEl = document.getElementById('lib-key-filter');
+    if (keyEl) {
+        keyEl.addEventListener('change', function() {
+            _libFilters.key = keyEl.value;
+            _libPage = 1;
+            loadTracks();
+        });
+    }
+
+    // Enter key on new playlist input
+    var plInput = document.getElementById('lib-new-pl-name');
+    if (plInput) {
+        plInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); createPlaylist(); }
+        });
+    }
+}
+
+/* --- Init --- */
+function initLibrary() {
+    _libPage = 1;
+    _libSort = 'title';
+    _libOrder = 'asc';
+    _libFilters = {};
+    _selectedTrackIds = {};
+    _selectedPlaylistId = null;
+    _libPlayingTrackId = null;
+
+    updateSortIndicators();
+    bindFilters();
+    loadStreamFilters();
+    loadTracks();
+    loadPlaylists();
+}
+
+// Run on load
+initLibrary();
+</script>
+
+{% endblock %}

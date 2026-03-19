@@ -9,7 +9,7 @@ import urllib.parse
 import json
 import struct
 import requests as req_lib
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file
 from config import HOST, PORT, SECRET_KEY, RECORDING_BASE, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 import db
 import process_manager
@@ -21,10 +21,11 @@ import cast_queue
 import cover_art
 import autotag
 import dlna_server
+import library
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.41a"
+VERSION = "0.0.42a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -987,6 +988,158 @@ def api_sync(stream_id):
 
     result = sync.sync_stream(stream)
     return jsonify(result)
+
+
+# --- Library ---
+
+@app.route("/library")
+def library():
+    return render_template("library.html")
+
+
+@app.route("/api/library/tracks")
+def api_library_tracks():
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 200, type=int)
+    sort = request.args.get("sort", "title")
+    order = request.args.get("order", "asc")
+    stream = request.args.get("stream", None)
+    search = request.args.get("search", None)
+    bpm_min = request.args.get("bpm_min", None, type=int)
+    bpm_max = request.args.get("bpm_max", None, type=int)
+    key_filter = request.args.get("key", None)
+    tracks, total = db.get_library_tracks(
+        page=page, per_page=per_page, sort=sort, order=order,
+        stream=stream, search=search, bpm_min=bpm_min, bpm_max=bpm_max,
+        key_filter=key_filter
+    )
+    return jsonify({
+        "tracks": tracks, "total": total,
+        "page": page, "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page if per_page > 0 else 0,
+    })
+
+
+@app.route("/api/library/stats")
+def api_library_stats():
+    return jsonify(db.get_library_stats())
+
+
+@app.route("/api/library/subdirs")
+def api_library_subdirs():
+    return jsonify({"subdirs": db.get_stream_subdirs()})
+
+
+@app.route("/api/library/scan", methods=["POST"])
+def api_library_scan():
+    subdir = request.json.get("subdir") if request.is_json else None
+    library.start_scan(subdir=subdir)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/scan/status")
+def api_library_scan_status():
+    return jsonify(library.get_scan_status())
+
+
+@app.route("/api/library/playlists")
+def api_library_playlists():
+    return jsonify({"playlists": db.get_all_playlists()})
+
+
+@app.route("/api/library/playlists", methods=["POST"])
+def api_library_create_playlist():
+    data = request.get_json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+    try:
+        pid = db.create_playlist(name)
+        return jsonify({"success": True, "id": pid})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/library/playlists/<int:playlist_id>", methods=["DELETE"])
+def api_library_delete_playlist(playlist_id):
+    pl = db.get_playlist(playlist_id)
+    if not pl:
+        return jsonify({"error": "not found"}), 404
+    library.delete_m3u(pl["name"])
+    db.delete_playlist(playlist_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/rename", methods=["POST"])
+def api_library_rename_playlist(playlist_id):
+    data = request.get_json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+    old = db.get_playlist(playlist_id)
+    if old:
+        library.delete_m3u(old["name"])
+    db.rename_playlist(playlist_id, name)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/tracks")
+def api_library_playlist_tracks(playlist_id):
+    tracks = db.get_playlist_tracks(playlist_id)
+    return jsonify({"tracks": tracks})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/add", methods=["POST"])
+def api_library_playlist_add(playlist_id):
+    data = request.get_json()
+    track_ids = data.get("track_ids", [])
+    if not track_ids:
+        return jsonify({"error": "No tracks"}), 400
+    db.add_to_playlist(playlist_id, track_ids)
+    library.generate_m3u(playlist_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/tracks/<int:track_id>", methods=["DELETE"])
+def api_library_playlist_remove(playlist_id, track_id):
+    db.remove_from_playlist(playlist_id, track_id)
+    library.generate_m3u(playlist_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/reorder", methods=["POST"])
+def api_library_playlist_reorder(playlist_id):
+    data = request.get_json()
+    track_ids = data.get("track_ids", [])
+    db.reorder_playlist(playlist_id, track_ids)
+    library.generate_m3u(playlist_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/m3u")
+def api_library_playlist_m3u(playlist_id):
+    pl = db.get_playlist(playlist_id)
+    if not pl:
+        return jsonify({"error": "not found"}), 404
+    # Generate fresh M3U
+    library.generate_m3u(playlist_id)
+    sync_target = sync.get_sync_target()
+    m3u_path = os.path.join(sync_target, pl["name"] + ".m3u")
+    if not os.path.isfile(m3u_path):
+        return jsonify({"error": "M3U not found"}), 404
+    return send_file(m3u_path, mimetype="audio/x-mpegurl",
+                     as_attachment=True, download_name=pl["name"] + ".m3u")
+
+
+@app.route("/api/library/track/<int:track_id>/play")
+def api_library_track_play(track_id):
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return jsonify({"error": "file not found"}), 404
+    return send_file(filepath, mimetype="audio/mpeg")
 
 
 @app.route("/api/restart-service", methods=["POST"])
