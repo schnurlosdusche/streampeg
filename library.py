@@ -121,9 +121,12 @@ def _scan_files(files):
         _scan_status["files_updated"] = 0
         _scan_status["progress"] = 0
 
-    # Build a set of known paths from DB for cleanup later
-    existing_tracks, _ = db.get_library_tracks(page=1, per_page=999999, sort="filepath")
-    existing_paths = {t["filepath"] for t in existing_tracks}
+    # Build a map of filepath -> mtime from DB for skip check and cleanup
+    conn = db.get_db()
+    rows = conn.execute("SELECT filepath, mtime FROM library_tracks").fetchall()
+    conn.close()
+    existing_mtimes = {r["filepath"]: r["mtime"] for r in rows}
+    existing_paths = set(existing_mtimes.keys())
 
     scanned_paths = set()
 
@@ -145,22 +148,13 @@ def _scan_files(files):
         mtime = stat.st_mtime
         size_bytes = stat.st_size
 
-        # Check if already scanned with same mtime
-        if filepath in existing_paths:
-            track = None
-            # Quick DB lookup
-            conn = db.get_db()
-            row = conn.execute(
-                "SELECT mtime FROM library_tracks WHERE filepath = ?", (filepath,)
-            ).fetchone()
-            conn.close()
-            if row and abs(row["mtime"] - mtime) < 0.01:
-                # Unchanged, skip
-                with _scan_lock:
-                    _scan_status["files_scanned"] += 1
-                    total = _scan_status["files_total"]
-                    _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
-                continue
+        # Check if already scanned with same mtime (skip unchanged files)
+        if filepath in existing_mtimes and abs(existing_mtimes[filepath] - mtime) < 0.01:
+            with _scan_lock:
+                _scan_status["files_scanned"] += 1
+                total = _scan_status["files_total"]
+                _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
+            continue
 
         # Read tags
         tags = _read_id3(filepath)
