@@ -668,6 +668,12 @@ def api_stream_icy(stream_id):
         r.close()
     except Exception:
         pass
+    # Fetch cover art for the track if not already available
+    if ct and ct not in ("recording", "-", "") and not cover:
+        try:
+            cover = cover_art.get_cover_url(stream_id, ct)
+        except Exception:
+            pass
     return jsonify({"current_track": ct, "cover_url": cover})
 
 
