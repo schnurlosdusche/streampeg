@@ -10,7 +10,7 @@
 <body>
     <nav class="container">
         <ul>
-            <li><a href="{{ url_for('dashboard') }}"><img src="{{ url_for('static', filename='streampeg.svg') }}" alt="Streampeg" style="height:75px;vertical-align:middle;"></a></li>
+            <li><a href="{{ url_for('dashboard') }}"><img src="{{ url_for('static', filename='streampeg.svg') }}" alt="Streampeg" style="height:56px;vertical-align:middle;"></a></li>
         </ul>
         <ul>
             <li><a href="{{ url_for('dashboard') }}">{{ t('nav.dashboard') }}</a></li>
@@ -24,10 +24,6 @@
     </nav>
 
     <main class="container">
-        <div id="disk-info" class="disk-bar">
-            <small>{{ t('disk.worker') }} <span id="disk-worker">--</span> {{ t('disk.free') }} | {{ t('disk.nas') }} <span id="disk-nas">--</span> {{ t('disk.free') }}</small>
-        </div>
-
         {% block content %}{% endblock %}
     </main>
 
@@ -103,5 +99,154 @@
     }
     </script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script>
+    // --- PJAX: swap <main> content without full page reload to keep audio alive ---
+    (function() {
+        var mainEl = document.querySelector('main.container');
+        if (!mainEl) return;
+
+        function isSameOriginLink(a) {
+            return a.hostname === location.hostname && a.port === location.port
+                && a.protocol === location.protocol;
+        }
+
+        function isInternalNav(a) {
+            if (!isSameOriginLink(a)) return false;
+            if (a.getAttribute('target') === '_blank') return false;
+            if (a.getAttribute('download')) return false;
+            if (a.href.indexOf('#') !== -1 && a.pathname === location.pathname) return false;
+            // Skip anchors with onclick handlers (restart, etc)
+            if (a.getAttribute('onclick')) return false;
+            return true;
+        }
+
+        function pjaxNavigate(url, pushState) {
+            // Show subtle loading indicator
+            mainEl.style.opacity = '0.5';
+
+            fetch(url, {credentials: 'include', headers: {'X-PJAX': '1'}})
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
+                    // Parse response and extract <main> content
+                    var parser = new DOMParser();
+                    var doc = parser.parseFromString(html, 'text/html');
+                    var newMain = doc.querySelector('main.container');
+                    var newTitle = doc.querySelector('title');
+
+                    if (newMain) {
+                        mainEl.innerHTML = newMain.innerHTML;
+                    } else {
+                        // Fallback: full page load
+                        location.href = url;
+                        return;
+                    }
+
+                    if (newTitle) document.title = newTitle.textContent;
+                    if (pushState) history.pushState({pjax: true}, '', url);
+
+                    // Update translations if present in new page
+                    var scripts = doc.querySelectorAll('script');
+                    scripts.forEach(function(s) {
+                        var txt = s.textContent || '';
+                        if (txt.indexOf('var _t =') !== -1) {
+                            try {
+                                var m = txt.match(/var _t = ({.*?});/s);
+                                if (m) { _t = JSON.parse(m[1]); }
+                            } catch(e) {}
+                        }
+                    });
+
+                    mainEl.style.opacity = '';
+
+                    // Re-init page-specific JS (event listeners on new DOM)
+                    _pjaxReinit();
+                })
+                .catch(function() {
+                    // On error, fall back to full navigation
+                    location.href = url;
+                });
+        }
+
+        function _pjaxReinit() {
+            // Re-bind sync forms
+            document.querySelectorAll('.sync-form').forEach(function(form) {
+                if (form._pjaxBound) return;
+                form._pjaxBound = true;
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    var btn = form.querySelector('button');
+                    btn.textContent = '...';
+                    btn.disabled = true;
+                    fetch(form.action, {method: 'POST', credentials: 'include'})
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            btn.textContent = data.success ? t('general.ok') : t('general.error');
+                            setTimeout(function() { btn.textContent = 'Sync'; btn.disabled = false; }, 2000);
+                        })
+                        .catch(function() { btn.textContent = 'Sync'; btn.disabled = false; });
+                });
+            });
+
+            // Re-bind start/stop forms
+            document.querySelectorAll('form').forEach(function(form) {
+                if (form._pjaxBound) return;
+                if (!form.querySelector('.btn-start') && !form.querySelector('.btn-stop')) return;
+                form._pjaxBound = true;
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    var btn = form.querySelector('button');
+                    btn.disabled = true;
+                    btn.textContent = '...';
+                    fetch(form.action, {method: 'POST', credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+                        .then(function() { btn.disabled = false; updateStatus(); })
+                        .catch(function() { btn.disabled = false; updateStatus(); });
+                });
+            });
+
+            // Update listen icons
+            if (_playerStreamId) _updateListenIcons(_playerStreamId);
+
+            // Trigger a status update to refresh dashboard data
+            updateStatus();
+        }
+
+        // Intercept clicks on internal links
+        document.addEventListener('click', function(e) {
+            if (_restarting) return;
+            var a = e.target.closest('a');
+            if (!a) return;
+            if (!isInternalNav(a)) return;
+            // Skip if modifier keys (new tab, etc)
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+
+            e.preventDefault();
+            pjaxNavigate(a.href, true);
+        });
+
+        // Handle form submissions via PJAX (for POST forms like add stream, edit, etc.)
+        document.addEventListener('submit', function(e) {
+            var form = e.target;
+            // Only intercept forms that redirect (not AJAX forms)
+            if (form.querySelector('.btn-start') || form.querySelector('.btn-stop') || form.classList.contains('sync-form')) return;
+            if (form.method.toLowerCase() !== 'post') return;
+            if (form._pjaxBound) return;
+            // Let forms submit normally — they do a redirect which will be a full load
+            // We only PJAX on GET navigation (link clicks)
+        });
+
+        // Handle browser back/forward
+        window.addEventListener('popstate', function(e) {
+            if (e.state && e.state.pjax) {
+                pjaxNavigate(location.href, false);
+            } else {
+                // For initial page or non-pjax states, just reload main
+                pjaxNavigate(location.href, false);
+            }
+        });
+
+        // Mark initial state
+        history.replaceState({pjax: true}, '', location.href);
+    })();
+    </script>
 </body>
 </html>
