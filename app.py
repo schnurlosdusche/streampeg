@@ -7,6 +7,8 @@ import signal
 import urllib.request
 import urllib.parse
 import json
+import struct
+import requests as req_lib
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from config import HOST, PORT, SECRET_KEY, RECORDING_BASE, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
 import db
@@ -22,7 +24,7 @@ import dlna_server
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.1a"
+VERSION = "0.0.41a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -638,6 +640,37 @@ def api_status():
     return jsonify({"streams": result, "disk": _get_disk_info()})
 
 
+@app.route("/api/stream/<int:stream_id>/icy")
+def api_stream_icy(stream_id):
+    """Get ICY metadata (current track) for a stream, even when not recording."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        return jsonify({"error": "not found"}), 404
+    # First try process metadata (if recording)
+    st = process_manager.get_status(stream)
+    ct = st.get("current_track", "")
+    cover = st.get("cover_url")
+    if ct and ct not in ("recording", "-", ""):
+        return jsonify({"current_track": ct, "cover_url": cover})
+    # Fallback: fetch ICY metadata directly from stream URL
+    try:
+        r = req_lib.get(stream["url"], headers={"Icy-MetaData": "1"},
+                        stream=True, timeout=5)
+        icy_interval = int(r.headers.get("icy-metaint", 0))
+        if icy_interval > 0:
+            r.raw.read(icy_interval)
+            meta_len = struct.unpack("B", r.raw.read(1))[0] * 16
+            if meta_len > 0:
+                meta = r.raw.read(meta_len).decode("utf-8", errors="ignore").rstrip("\0")
+                m = re.search(r"StreamTitle='([^']*)'", meta)
+                if m and m.group(1).strip():
+                    ct = m.group(1).strip()
+        r.close()
+    except Exception:
+        pass
+    return jsonify({"current_track": ct, "cover_url": cover})
+
+
 @app.route("/api/disk")
 def api_disk():
     return jsonify(_get_disk_info())
@@ -650,16 +683,17 @@ def api_cast_devices():
     """Return discovered cast devices (LMS + Sonos)."""
     force = request.args.get("refresh", "0") == "1"
     devices = cast.discover_devices(force=force)
-    active = cast.get_active_casts()
+    active = cast.get_active_casts()  # device_id -> stream_id
     # Include volume for devices with active casts
-    active_device_ids = set(active.values())
     volumes = {}
     for dev in devices:
-        if dev["id"] in active_device_ids:
+        if dev["id"] in active:
             vol = cast.get_volume(dev["id"])
             if vol is not None:
                 volumes[dev["id"]] = vol
-    return jsonify({"devices": devices, "active_casts": active, "volumes": volumes})
+    # Convert to stream_id -> device_id for frontend compatibility
+    active_by_stream = cast.get_active_casts_by_stream()
+    return jsonify({"devices": devices, "active_casts": active_by_stream, "volumes": volumes})
 
 
 @app.route("/api/cast/play", methods=["POST"])
@@ -675,23 +709,15 @@ def api_cast_play():
     if not stream:
         return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
 
-    # Stop previous cast for this stream if any
-    prev = cast.get_active_cast_for_stream(int(stream_id))
-    if prev:
-        cast.stop_cast(prev)
-        cast.remove_active_cast(int(stream_id))
-
-    # Also remove any other stream casting to the same device (switch)
+    # If this device is already casting something, stop it first
     active = cast.get_active_casts()
-    for sid, did in list(active.items()):
-        if did == device_id and sid != int(stream_id):
-            cast.remove_active_cast(sid)
+    if device_id in active:
+        cast.stop_cast(device_id)
+        cast.remove_active_cast_by_device(device_id)
 
     # Limit to 4 simultaneous casts
     active = cast.get_active_casts()
-    # Don't count if this stream is already casting (switching device)
-    active_count = len([sid for sid in active if sid != int(stream_id)])
-    if active_count >= 4:
+    if len(active) >= 4:
         return jsonify({"success": False, "message": i18n.t("cast.max_reached")}), 400
 
     ok, msg = cast.cast_stream(stream["url"], device_id)
@@ -702,19 +728,49 @@ def api_cast_play():
 
 @app.route("/api/cast/stop", methods=["POST"])
 def api_cast_stop():
-    """Stop casting a stream."""
+    """Stop casting a stream. Accepts stream_id (stops all devices) or device_id (stops one)."""
     data = request.get_json() or {}
     stream_id = data.get("stream_id")
+    device_id = data.get("device_id")
+
+    if device_id:
+        # Stop a specific device
+        ok, msg = cast.stop_cast(device_id)
+        if ok:
+            cast.remove_active_cast_by_device(device_id)
+        return jsonify({"success": ok, "message": msg})
+
     if not stream_id:
         return jsonify({"success": False, "error": "stream_id erforderlich"}), 400
 
-    device_id = cast.get_active_cast_for_stream(int(stream_id))
-    if not device_id:
+    # Stop all devices casting this stream
+    devices = cast.get_devices_for_stream(int(stream_id))
+    if not devices:
         return jsonify({"success": False, "error": "Stream wird nicht gecastet"}), 400
 
-    ok, msg = cast.stop_cast(device_id)
-    if ok:
-        cast.remove_active_cast(int(stream_id))
+    for did in devices:
+        cast.stop_cast(did)
+        cast.remove_active_cast_by_device(did)
+    return jsonify({"success": True, "message": f"Cast gestoppt"})
+
+
+@app.route("/api/cast/pause", methods=["POST"])
+def api_cast_pause():
+    """Toggle pause on a cast stream."""
+    data = request.get_json() or {}
+    stream_id = data.get("stream_id")
+    if not stream_id:
+        return jsonify({"success": False, "error": "stream_id required"}), 400
+
+    device_id = cast.get_active_cast_for_stream(int(stream_id))
+    if not device_id:
+        return jsonify({"success": False, "error": "Stream not casting"}), 400
+
+    # Get stream URL for Sonos resume (streams need to be replayed)
+    stream = db.get_stream(int(stream_id))
+    stream_url = stream["url"] if stream else None
+
+    ok, msg = cast.pause_cast(device_id, stream_url=stream_url)
     return jsonify({"success": ok, "message": msg})
 
 
@@ -733,8 +789,8 @@ def api_cast_player():
     all_streams = db.get_all_streams()
     stream_map = {s["id"]: s for s in all_streams}
 
-    for stream_id_str, device_id in active.items():
-        stream_id = int(stream_id_str) if isinstance(stream_id_str, str) else stream_id_str
+    for device_id, stream_id_raw in active.items():
+        stream_id = int(stream_id_raw) if isinstance(stream_id_raw, str) else stream_id_raw
         stream = stream_map.get(stream_id)
         device = dev_map.get(device_id)
         if not stream or not device:
@@ -744,16 +800,14 @@ def api_cast_player():
         current_track = st.get("current_track", "")
         cover_url = st.get("cover_url")
 
-        # If stream is not recording, try ICY metadata from cache/poll
-        if not st.get("running") and not current_track:
-            # Poll in background thread (non-blocking)
-            import threading as _thr
-            _thr.Thread(target=cast.poll_icy_for_cast,
-                        args=(stream_id, stream["url"]), daemon=True).start()
-            icy = cast.get_icy_cache(stream_id)
-            if icy:
-                current_track = icy["track"]
-                cover_url = icy.get("cover_url") or cover_url
+        # If recording doesn't provide track info, ask the device/ICY directly
+        if not current_track:
+            cast_track, cast_cover = cast.get_cast_track_info(
+                device_id, stream_id, stream["url"])
+            if cast_track:
+                current_track = cast_track
+            if cast_cover:
+                cover_url = cast_cover or cover_url
 
         vol = cast.get_volume(device_id)
         players.append({
@@ -946,7 +1000,7 @@ def api_restart_service():
     try:
         result = subprocess.run(
             ["sudo", "systemctl", "restart", "streamripper-ui"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0:
             return jsonify({"ok": True, "message": "Service wird neu gestartet..."})
@@ -1389,5 +1443,8 @@ if __name__ == "__main__":
             dlna_server.start()
         except Exception as e:
             print(f"DLNA server start failed: {e}")
+
+    # Start background ICY metadata poller for cast players
+    cast.start_icy_poller()
 
     app.run(host=HOST, port=PORT, threaded=True)

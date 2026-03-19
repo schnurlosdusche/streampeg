@@ -130,7 +130,10 @@ document.querySelectorAll('.sync-form').forEach(form => {
 var _playerAudio = null;
 var _playerStreamId = null;
 var _playerStreamUrl = null;
-var _browserVolume = parseFloat(localStorage.getItem('_browserVolume') || '1');
+var _browserVolume = parseFloat(localStorage.getItem('_browserVolume') || '0.32');
+var _browserPaused = false;
+var _browserIcyTrack = '';
+var _browserIcyCover = null;
 
 function _initBrowserAudio() {
     if (!_playerAudio) {
@@ -193,6 +196,21 @@ function setBrowserVolume(val) {
     _browserVolume = Math.max(0, Math.min(1, val));
     localStorage.setItem('_browserVolume', _browserVolume);
     if (_playerAudio) _playerAudio.volume = _browserVolume;
+}
+
+function toggleBrowserPause() {
+    if (!_playerAudio || !_playerStreamId) return;
+    if (_browserPaused) {
+        _playerAudio.src = _playerStreamUrl;
+        _playerAudio.play().catch(function() {});
+        _browserPaused = false;
+    } else {
+        _playerAudio.pause();
+        _playerAudio.removeAttribute('src');
+        _playerAudio.load();
+        _browserPaused = true;
+    }
+    _refreshPlayerBar();
 }
 
 function _updateListenIcons(activeId) {
@@ -535,9 +553,10 @@ var _multiroomGroupCount = 0;
 
 function _renderBrowserPlayerHTML() {
     var st = _lastStreamStatus[_playerStreamId] || {};
-    var trackName = st.current_track || '';
+    // Use ICY data if available (fetched independently), fall back to recording status
+    var trackName = _browserIcyTrack || st.current_track || '';
     var hasTrack = trackName && trackName !== 'recording' && trackName !== '-' && trackName.replace(/[\s\-]/g, '') !== '';
-    var coverUrl = st.cover_url || null;
+    var coverUrl = _browserIcyCover || st.cover_url || null;
     var streamName = st.stream_name || ('Stream ' + _playerStreamId);
     var volPct = Math.round(_browserVolume * 100);
 
@@ -545,15 +564,26 @@ function _renderBrowserPlayerHTML() {
         ? '<img src="' + coverUrl + '" alt="">'
         : '<div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>';
 
-    return '<div class="player-bar player-bar-browser">'
+    var html = '<div class="player-bar player-bar-browser">'
         + '<div class="player-bar-inner">'
         + '<div class="player-cover-wrap">' + coverHtml + '</div>'
         + '<div class="player-info">'
         + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
         + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
         + '</div>'
-        + '<div class="player-volume">'
-        + '<button class="player-btn" onclick="stopListen()" title="' + t('player.stop_title') + '">'
+        + '<div class="player-volume">';
+
+    if (_browserPaused) {
+        html += '<button class="player-btn" onclick="toggleBrowserPause()" title="Play">'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'
+            + '</button>';
+    } else {
+        html += '<button class="player-btn" onclick="toggleBrowserPause()" title="' + t('player.pause_title') + '">'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18" rx="1"/><rect x="15" y="3" width="4" height="18" rx="1"/></svg>'
+            + '</button>';
+    }
+
+    html += '<button class="player-btn" onclick="stopListen()" title="' + t('player.stop_title') + '">'
         + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
         + '</button>'
         + '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="_browserVolumeStep(-5)">&#8722;</button>'
@@ -569,6 +599,7 @@ function _renderBrowserPlayerHTML() {
         + '<div class="player-device-name">' + t('player.browser') + '</div>'
         + '</div>'
         + '</div></div>';
+    return html;
 }
 
 function _browserVolumeStep(delta) {
@@ -1040,7 +1071,22 @@ updateStatus = function() {
         .catch(function() {});
     // Update player bar
     _updatePlayerBar();
+    // Poll ICY for browser listen
+    _pollBrowserIcy();
 };
+
+// Poll ICY metadata for browser listen (even when not recording)
+function _pollBrowserIcy() {
+    if (!_playerStreamId) { _browserIcyTrack = ''; _browserIcyCover = null; return; }
+    fetch('/api/stream/' + _playerStreamId + '/icy', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.current_track) _browserIcyTrack = data.current_track;
+            if (data.cover_url) _browserIcyCover = data.cover_url;
+            _refreshPlayerBar();
+        })
+        .catch(function() {});
+}
 
 // Restore browser listen state from localStorage (persists across page navigation)
 _restoreListenState();
