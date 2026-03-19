@@ -21,7 +21,7 @@ import cast_queue
 import cover_art
 import autotag
 import dlna_server
-import library
+import library as lib_module
 import i18n
 from scheduler import SyncScheduler
 
@@ -1033,13 +1033,13 @@ def api_library_subdirs():
 @app.route("/api/library/scan", methods=["POST"])
 def api_library_scan():
     subdir = request.json.get("subdir") if request.is_json else None
-    library.start_scan(subdir=subdir)
+    lib_module.start_scan(subdir=subdir)
     return jsonify({"success": True})
 
 
 @app.route("/api/library/scan/status")
 def api_library_scan_status():
-    return jsonify(library.get_scan_status())
+    return jsonify(lib_module.get_scan_status())
 
 
 @app.route("/api/library/playlists")
@@ -1065,7 +1065,7 @@ def api_library_delete_playlist(playlist_id):
     pl = db.get_playlist(playlist_id)
     if not pl:
         return jsonify({"error": "not found"}), 404
-    library.delete_m3u(pl["name"])
+    lib_module.delete_m3u(pl["name"])
     db.delete_playlist(playlist_id)
     return jsonify({"success": True})
 
@@ -1078,7 +1078,7 @@ def api_library_rename_playlist(playlist_id):
         return jsonify({"error": "Name required"}), 400
     old = db.get_playlist(playlist_id)
     if old:
-        library.delete_m3u(old["name"])
+        lib_module.delete_m3u(old["name"])
     db.rename_playlist(playlist_id, name)
     return jsonify({"success": True})
 
@@ -1097,14 +1097,14 @@ def api_library_playlist_add(playlist_id):
     if not track_ids:
         return jsonify({"error": "No tracks"}), 400
     db.add_to_playlist(playlist_id, track_ids)
-    library.generate_m3u(playlist_id)
+    lib_module.generate_m3u(playlist_id)
     return jsonify({"success": True})
 
 
 @app.route("/api/library/playlists/<int:playlist_id>/tracks/<int:track_id>", methods=["DELETE"])
 def api_library_playlist_remove(playlist_id, track_id):
     db.remove_from_playlist(playlist_id, track_id)
-    library.generate_m3u(playlist_id)
+    lib_module.generate_m3u(playlist_id)
     return jsonify({"success": True})
 
 
@@ -1113,7 +1113,7 @@ def api_library_playlist_reorder(playlist_id):
     data = request.get_json()
     track_ids = data.get("track_ids", [])
     db.reorder_playlist(playlist_id, track_ids)
-    library.generate_m3u(playlist_id)
+    lib_module.generate_m3u(playlist_id)
     return jsonify({"success": True})
 
 
@@ -1123,7 +1123,7 @@ def api_library_playlist_m3u(playlist_id):
     if not pl:
         return jsonify({"error": "not found"}), 404
     # Generate fresh M3U
-    library.generate_m3u(playlist_id)
+    lib_module.generate_m3u(playlist_id)
     sync_target = sync.get_sync_target()
     m3u_path = os.path.join(sync_target, pl["name"] + ".m3u")
     if not os.path.isfile(m3u_path):
