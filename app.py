@@ -1412,6 +1412,38 @@ def api_library_track_autotag(track_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/library/track/<int:track_id>/trash", methods=["POST"])
+def api_library_track_trash(track_id):
+    """Trash a track: delete file but keep DB entry to prevent re-download."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    filepath = track["filepath"]
+    if os.path.isfile(filepath):
+        try:
+            os.remove(filepath)
+        except OSError as e:
+            return jsonify({"error": f"Could not delete file: {e}"}), 500
+    db.trash_library_track(track_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/track/<int:track_id>/delete", methods=["POST"])
+def api_library_track_delete(track_id):
+    """Fully delete track: remove file AND DB entry (allows re-download)."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    filepath = track["filepath"]
+    if os.path.isfile(filepath):
+        try:
+            os.remove(filepath)
+        except OSError as e:
+            return jsonify({"error": f"Could not delete file: {e}"}), 500
+    db.delete_library_track(track_id)
+    return jsonify({"success": True})
+
+
 @app.route("/api/restart-service", methods=["POST"])
 def api_restart_service():
     """Restart the application. Docker: exit and let restart policy handle it.

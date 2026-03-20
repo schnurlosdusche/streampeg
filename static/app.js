@@ -216,12 +216,48 @@ function stopListen() {
     _refreshPlayerBar();
 }
 
+var _browseStreamName = '';
+
+function playBrowseStream(url, stationName) {
+    _initBrowserAudio();
+    // Stop current playback
+    if (_playerStreamId || _isLibraryTrack) {
+        _playerAudio.pause();
+        _playerAudio.removeAttribute('src');
+        _playerAudio.load();
+    }
+    _isLibraryTrack = false;
+    _waveformData = null;
+    _playerStreamId = 'browse';
+    _playerStreamUrl = '/api/listen?url=' + encodeURIComponent(url);
+    _browseStreamName = stationName || url;
+    _playerAudio.volume = _browserVolume;
+    _playerAudio.src = _playerStreamUrl;
+    _playerAudio.play().catch(function() {});
+    localStorage.setItem('_listenStreamId', 'browse');
+    localStorage.setItem('_listenStreamUrl', _playerStreamUrl);
+    localStorage.setItem('_browseStreamName', _browseStreamName);
+    _refreshPlayerBar();
+}
+
+function stopBrowseStream() {
+    if (_playerStreamId === 'browse') {
+        stopListen();
+        localStorage.removeItem('_browseStreamName');
+    }
+}
+
 function _restoreListenState() {
     var savedId = localStorage.getItem('_listenStreamId');
     var savedUrl = localStorage.getItem('_listenStreamUrl');
     if (savedId && savedUrl) {
         _initBrowserAudio();
-        _playerStreamId = parseInt(savedId);
+        if (savedId === 'browse') {
+            _playerStreamId = 'browse';
+            _browseStreamName = localStorage.getItem('_browseStreamName') || '';
+        } else {
+            _playerStreamId = parseInt(savedId);
+        }
         _playerStreamUrl = savedUrl;
         _playerAudio.volume = _browserVolume;
         _playerAudio.src = savedUrl;
@@ -602,7 +638,7 @@ function _renderBrowserPlayerHTML() {
     var trackName = _browserIcyTrack || st.current_track || '';
     var hasTrack = trackName && trackName !== 'recording' && trackName !== '-' && trackName.replace(/[\s\-]/g, '') !== '';
     var coverUrl = _browserIcyCover || st.cover_url || null;
-    var streamName = st.stream_name || ('Stream ' + _playerStreamId);
+    var streamName = (_playerStreamId === 'browse') ? _browseStreamName : (st.stream_name || ('Stream ' + _playerStreamId));
     var volPct = Math.round(_browserVolume * 100);
 
     var coverHtml = coverUrl
@@ -725,7 +761,7 @@ function _renderBrowserPlayerHTML() {
         + '<button class="player-vol-btn" onclick="_browserVolumeStep(5)">+</button>'
         + '<span class="player-volume-value">' + (_isLibraryTrack ? _seekStep + 's' : volPct) + '</span>'
         + _renderRepeatButton()
-        + (_isLibraryTrack ? _renderStarRating() + _renderPlayerPlaylistBtn() : '')
+        + (_isLibraryTrack ? _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn() : '')
         + '</div>'
         + '<div class="player-right">'
         + '<div class="player-device-name">' + t('player.browser') + '</div>'
@@ -908,6 +944,62 @@ function _renderPlayerPlaylistBtn() {
     return html;
 }
 
+function _renderPlayerTrashBtn() {
+    var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    if (!trackId) return '';
+    return '<button class="player-btn player-trash-btn" onclick="_showPlayerTrashMenu(this)" title="Delete" style="margin-left:12px;">&#128465;</button>';
+}
+
+var _playerTrashMenu = null;
+
+function _showPlayerTrashMenu(btn) {
+    _closePlayerTrashMenu();
+    var trackId = _libPlayingTrackId;
+    if (!trackId) return;
+    var menu = document.createElement('div');
+    menu.className = 'lib-pl-menu';
+    menu.style.zIndex = '10001';
+    menu.innerHTML =
+        '<button class="lib-pl-menu-item" onclick="_playerTrashAction(' + trackId + ', false)">' +
+        '&#128465; ' + t('library.trash_keep') + '</button>' +
+        '<button class="lib-pl-menu-item" style="color:#f44;" onclick="_playerTrashAction(' + trackId + ', true)">' +
+        '&#128465; ' + t('library.trash_full') + '</button>';
+    var rect = btn.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = (rect.left - 200) + 'px';
+    menu.style.top = (rect.top - 80) + 'px';
+    document.body.appendChild(menu);
+    _playerTrashMenu = menu;
+}
+
+function _closePlayerTrashMenu() {
+    if (_playerTrashMenu) { _playerTrashMenu.remove(); _playerTrashMenu = null; }
+}
+
+function _playerTrashAction(trackId, fullDelete) {
+    _closePlayerTrashMenu();
+    var endpoint = fullDelete ? '/api/library/track/' + trackId + '/delete' : '/api/library/track/' + trackId + '/trash';
+    fetch(endpoint, { method: 'POST', credentials: 'include' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                // Stop playback
+                if (_playerAudio) { _playerAudio.pause(); _playerAudio.src = ''; }
+                _libPlayingTrackId = null;
+                _refreshPlayerBar();
+                // Remove from list if visible
+                var row = document.querySelector('tr[data-track-id="' + trackId + '"]');
+                if (row) row.remove();
+            }
+        });
+}
+
+document.addEventListener('click', function(e) {
+    if (_playerTrashMenu && !_playerTrashMenu.contains(e.target) && !e.target.classList.contains('player-trash-btn')) {
+        _closePlayerTrashMenu();
+    }
+});
+
 function _loadTrackPlaylists(trackId) {
     fetch('/api/library/track/' + trackId + '/playlists', {credentials: 'include'})
         .then(function(r) { return r.json(); })
@@ -1084,6 +1176,17 @@ document.addEventListener('keydown', function(e) {
         }
         var valEl = document.querySelector('.player-volume-value');
         if (valEl) valEl.textContent = _seekStep + 's';
+    }
+
+    // Number keys 1-8: set cue point or jump to existing cue; Shift+1-8: delete cue
+    if (_isLibraryTrack && _playerAudio && !e.ctrlKey && !e.altKey && !e.metaKey && e.key >= '1' && e.key <= '8') {
+        e.preventDefault();
+        var cueNum = parseInt(e.key);
+        if (e.shiftKey) {
+            cueClear(cueNum, e);
+        } else {
+            cueAction(cueNum);
+        }
     }
 
     // +/- keys: adjust loop length
@@ -1770,7 +1873,7 @@ updateStatus = function() {
 
 // Poll ICY metadata for browser listen (even when not recording)
 function _pollBrowserIcy() {
-    if (!_playerStreamId || _isLibraryTrack) { if (!_isLibraryTrack) { _browserIcyTrack = ''; _browserIcyCover = null; } return; }
+    if (!_playerStreamId || _isLibraryTrack || _playerStreamId === 'browse') { if (!_isLibraryTrack && _playerStreamId !== 'browse') { _browserIcyTrack = ''; _browserIcyCover = null; } return; }
     fetch('/api/stream/' + _playerStreamId + '/icy', {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {

@@ -531,6 +531,7 @@
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
                     <th data-sort="duration" onclick="sortBy('duration')">{{ t('library.duration') }} <span class="sort-arrow"></span></th>
                     <th></th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody id="lib-tbody"></tbody>
@@ -638,6 +639,7 @@ function renderTracks(data) {
         html += '<td>' + (tr.key ? escHtml(tr.key) : '-') + '</td>';
         html += '<td>' + dur + '</td>';
         html += '<td><button class="lib-add-btn" onclick="showAddToPlaylistMenu(this, ' + tr.id + ')" title="' + t('library.add_to_playlist') + '">+</button></td>';
+        html += '<td class="col-trash"><button class="lib-trash-btn" onclick="showTrashMenu(event, ' + tr.id + ')" title="Delete">&#128465;</button></td>';
         html += '</tr>';
     }
     tbody.innerHTML = html;
@@ -999,9 +1001,58 @@ function closePlaylistMenu() {
     }
 }
 
+var _trashMenu = null;
+
+function closeTrashMenu() {
+    if (_trashMenu) { _trashMenu.remove(); _trashMenu = null; }
+}
+
+function showTrashMenu(e, trackId) {
+    e.stopPropagation();
+    closeTrashMenu();
+    closePlaylistMenu();
+    var menu = document.createElement('div');
+    menu.className = 'lib-pl-menu';
+    menu.innerHTML =
+        '<button class="lib-pl-menu-item" onclick="trashTrack(' + trackId + ', false)">' +
+        '&#128465; ' + t('library.trash_keep') + '</button>' +
+        '<button class="lib-pl-menu-item" style="color:#f44;" onclick="trashTrack(' + trackId + ', true)">' +
+        '&#128465; ' + t('library.trash_full') + '</button>';
+    var rect = (e.target.closest('button') || e.target).getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = (rect.left - 200) + 'px';
+    menu.style.top = rect.bottom + 'px';
+    document.body.appendChild(menu);
+    _trashMenu = menu;
+    var mr = menu.getBoundingClientRect();
+    if (mr.bottom > window.innerHeight) menu.style.top = (rect.top - mr.height) + 'px';
+    if (mr.left < 0) menu.style.left = '4px';
+}
+
+function trashTrack(trackId, fullDelete) {
+    closeTrashMenu();
+    var endpoint = fullDelete ? '/api/library/track/' + trackId + '/delete' : '/api/library/track/' + trackId + '/trash';
+    fetch(endpoint, { method: 'POST', credentials: 'include' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                // Remove from current view
+                var row = document.querySelector('tr[data-track-id="' + trackId + '"]');
+                if (row) row.remove();
+                // If currently playing, stop
+                if (typeof _libPlayingTrackId !== 'undefined' && _libPlayingTrackId === trackId) {
+                    if (typeof _playerAudio !== 'undefined' && _playerAudio) _playerAudio.pause();
+                }
+            }
+        });
+}
+
 document.addEventListener('click', function(e) {
     if (_libPlMenu && !_libPlMenu.contains(e.target) && !e.target.classList.contains('lib-add-btn') && !e.target.closest('.lib-bulk-bar')) {
         closePlaylistMenu();
+    }
+    if (_trashMenu && !_trashMenu.contains(e.target) && !e.target.classList.contains('lib-trash-btn')) {
+        closeTrashMenu();
     }
 });
 

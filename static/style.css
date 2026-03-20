@@ -218,6 +218,11 @@ button.btn-cast.casting:focus {
     color: var(--pico-muted-color, #888);
 }
 
+/* Dialogs above player */
+dialog, dialog::backdrop {
+    z-index: 10000 !important;
+}
+
 /* Restart modal */
 #restart-modal {
     position: fixed;
@@ -1003,7 +1008,7 @@ body {
 #lib-table tr:hover td { background: #252535; }
 /* Column widths are controlled via nth-child in library.html inline CSS */
 
-.lib-play-btn, .lib-add-btn {
+.lib-play-btn, .lib-add-btn, .lib-trash-btn {
     background: none;
     border: none;
     cursor: pointer;
@@ -1014,6 +1019,10 @@ body {
 }
 .lib-play-btn:hover { color: #4caf50; }
 .lib-add-btn:hover { color: #64b5f6; }
+.lib-trash-btn:hover { color: #f44336; }
+.col-trash { width: 30px; text-align: center; }
+.player-trash-btn { color: #888; font-size: 16px; }
+.player-trash-btn:hover { color: #f44336 !important; }
 .lib-row-selected td { background: #2a2a4a !important; }
 #lib-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
 #lib-table tbody tr.lib-playing td { background: rgba(66,165,245,0.1) !important; }

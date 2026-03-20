@@ -74,7 +74,8 @@ def init_db():
             duration_sec INTEGER DEFAULT 0,
             size_bytes INTEGER DEFAULT 0,
             mtime REAL DEFAULT 0,
-            scanned_at TEXT DEFAULT (datetime('now'))
+            scanned_at TEXT DEFAULT (datetime('now')),
+            trashed INTEGER DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_library_bpm ON library_tracks(bpm);
         CREATE INDEX IF NOT EXISTS idx_library_key ON library_tracks(key);
@@ -130,6 +131,11 @@ def init_db():
         conn.execute("ALTER TABLE streams ADD COLUMN skip_words TEXT DEFAULT ''")
     if "dl_fallback" not in columns:
         conn.execute("ALTER TABLE streams ADD COLUMN dl_fallback INTEGER DEFAULT 0")
+    # Migrate library_tracks: add trashed column
+    cursor = conn.execute("PRAGMA table_info(library_tracks)")
+    lib_columns = [row[1] for row in cursor.fetchall()]
+    if "trashed" not in lib_columns:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN trashed INTEGER DEFAULT 0")
     conn.commit()
 
     # Migrate library_tracks: add rating column
@@ -377,7 +383,7 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
                        key_filter=None):
     """Paginated query with sorting/filtering. Returns (tracks_list, total_count)."""
     conn = get_db()
-    where_clauses = []
+    where_clauses = ["trashed = 0"]
     params = []
 
     if stream:
@@ -595,6 +601,24 @@ def delete_library_track_by_path(filepath):
     """Delete a library track by filepath (for cleanup of removed files)."""
     conn = get_db()
     conn.execute("DELETE FROM library_tracks WHERE filepath = ?", (filepath,))
+    conn.commit()
+    conn.close()
+
+
+def trash_library_track(track_id):
+    """Mark track as trashed (file deleted, kept in DB to prevent re-download)."""
+    conn = get_db()
+    conn.execute("UPDATE library_tracks SET trashed = 1 WHERE id = ?", (track_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_library_track(track_id):
+    """Fully delete track from DB (allows re-download)."""
+    conn = get_db()
+    conn.execute("DELETE FROM playlist_tracks WHERE track_id = ?", (track_id,))
+    conn.execute("DELETE FROM cue_points WHERE track_id = ?", (track_id,))
+    conn.execute("DELETE FROM library_tracks WHERE id = ?", (track_id,))
     conn.commit()
     conn.close()
 
