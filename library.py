@@ -528,7 +528,7 @@ def _daemon_loop():
         conn = db.get_db()
         subdirs_with_missing = conn.execute(
             """SELECT DISTINCT stream_subdir FROM library_tracks
-               WHERE (bpm = 0 OR bpm IS NULL OR bpm = -1 OR key = '' OR key IS NULL)"""
+               WHERE (bpm = 0 OR bpm IS NULL) OR (key = '' OR key IS NULL)"""
         ).fetchall()
         conn.close()
         subdirs = [r["stream_subdir"] for r in subdirs_with_missing]
