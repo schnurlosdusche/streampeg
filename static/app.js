@@ -1280,7 +1280,7 @@ updateStatus = function() {
 
 // Poll ICY metadata for browser listen (even when not recording)
 function _pollBrowserIcy() {
-    if (!_playerStreamId) { _browserIcyTrack = ''; _browserIcyCover = null; return; }
+    if (!_playerStreamId) { if (!_isLibraryTrack) { _browserIcyTrack = ''; _browserIcyCover = null; } return; }
     fetch('/api/stream/' + _playerStreamId + '/icy', {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {
