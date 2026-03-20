@@ -67,6 +67,9 @@
             var msgEl = document.getElementById('restart-modal-msg');
             if (msgEl) msgEl.textContent = t('nav.restart_waiting') + '.'.repeat(dots);
         }, 500);
+        // Activate "connecting" step
+        var step4 = document.querySelectorAll('.rm-step')[3];
+        if (step4) step4.classList.add('active');
         function tryReload() {
             attempts++;
             fetch('/api/status', {credentials: 'include'})
@@ -90,8 +93,27 @@
         if (existing) existing.remove();
         var overlay = document.createElement('div');
         overlay.id = 'restart-modal';
-        overlay.innerHTML = '<div id="restart-modal-box"><div id="restart-modal-spinner"></div><div id="restart-modal-msg">' + msg + '</div></div>';
+        overlay.innerHTML = '<div id="restart-modal-box">'
+            + '<div id="restart-modal-anim">'
+            + '<span class="rm-bar" style="animation-delay:0s"></span>'
+            + '<span class="rm-bar" style="animation-delay:0.15s"></span>'
+            + '<span class="rm-bar" style="animation-delay:0.3s"></span>'
+            + '<span class="rm-bar" style="animation-delay:0.45s"></span>'
+            + '<span class="rm-bar" style="animation-delay:0.6s"></span>'
+            + '</div>'
+            + '<div id="restart-modal-msg">' + msg + '</div>'
+            + '<div id="restart-modal-steps">'
+            + '<div class="rm-step active">' + t('nav.restart_step_stop') + '</div>'
+            + '<div class="rm-step">' + t('nav.restart_step_cleanup') + '</div>'
+            + '<div class="rm-step">' + t('nav.restart_step_start') + '</div>'
+            + '<div class="rm-step">' + t('nav.restart_step_connect') + '</div>'
+            + '</div>'
+            + '</div>';
         document.body.appendChild(overlay);
+        // Animate steps
+        var steps = overlay.querySelectorAll('.rm-step');
+        setTimeout(function() { if (steps[1]) steps[1].classList.add('active'); }, 2000);
+        setTimeout(function() { if (steps[2]) steps[2].classList.add('active'); }, 4000);
     }
     function hideRestartModal() {
         var el = document.getElementById('restart-modal');

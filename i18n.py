@@ -64,6 +64,10 @@ TRANSLATIONS = {
         "nav.restart_modal": "Service is restarting...",
         "nav.restart_waiting": "Waiting for server",
         "nav.restart_connected": "Connected!",
+        "nav.restart_step_stop": "Stopping background services",
+        "nav.restart_step_cleanup": "Cleaning up streams",
+        "nav.restart_step_start": "Starting application",
+        "nav.restart_step_connect": "Reconnecting",
 
         # Disk info
         "disk.worker": "Worker:",
