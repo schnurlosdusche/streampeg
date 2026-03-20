@@ -1700,6 +1700,12 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"BPM analyzer start failed: {e}")
 
+    # Start library background daemon (auto scan + auto rescan tags)
+    try:
+        lib_module.start_daemon()
+    except Exception as e:
+        print(f"Library daemon start failed: {e}")
+
     # Start background ICY metadata poller for cast players
     cast.start_icy_poller()
 

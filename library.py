@@ -471,6 +471,182 @@ def generate_m3u(playlist_id):
         return None
 
 
+# --- Continuous background worker ---
+_daemon_running = False
+_daemon_status = {
+    "running": False,
+    "phase": "",       # "scan", "tags", "idle"
+    "current_subdir": "",
+    "scanned": 0,
+    "total": 0,
+}
+_daemon_lock = threading.Lock()
+
+
+def _daemon_loop():
+    """Continuous background loop: scan for new files, then rescan tags per folder."""
+    global _daemon_running, _daemon_status
+    import time
+
+    try:
+        import bpm_analyzer
+        _has_analyzer = True
+    except ImportError:
+        _has_analyzer = False
+
+    while _daemon_running:
+        # Phase 1: Library scan (find new files)
+        with _daemon_lock:
+            _daemon_status["phase"] = "scan"
+            _daemon_status["current_subdir"] = ""
+
+        try:
+            # Set scan status so the UI can show progress
+            with _scan_lock:
+                _scan_status["running"] = True
+                _scan_status["files_scanned"] = 0
+                _scan_status["files_total"] = 0
+                _scan_status["files_updated"] = 0
+                _scan_status["progress"] = 0
+
+            scan_library()
+
+            with _scan_lock:
+                _scan_status["running"] = False
+                _scan_status["progress"] = 100
+        except Exception as e:
+            log.error("Daemon scan error: %s", e)
+            with _scan_lock:
+                _scan_status["running"] = False
+
+        if not _daemon_running:
+            break
+
+        # Phase 2: Rescan tags/BPM/Key for all folders with incomplete tracks
+        backend = db.get_setting("bpm_backend") or "aubio"
+
+        conn = db.get_db()
+        subdirs_with_missing = conn.execute(
+            """SELECT DISTINCT stream_subdir FROM library_tracks
+               WHERE (bpm = 0 OR bpm IS NULL OR bpm = -1 OR key = '' OR key IS NULL)"""
+        ).fetchall()
+        conn.close()
+        subdirs = [r["stream_subdir"] for r in subdirs_with_missing]
+
+        for subdir in subdirs:
+            if not _daemon_running:
+                break
+
+            with _daemon_lock:
+                _daemon_status["phase"] = "tags"
+                _daemon_status["current_subdir"] = subdir
+
+            conn = db.get_db()
+            rows = conn.execute(
+                """SELECT id, filepath FROM library_tracks
+                   WHERE stream_subdir = ? AND (bpm = 0 OR bpm IS NULL OR bpm = -1 OR key = '' OR key IS NULL)""",
+                (subdir,),
+            ).fetchall()
+            conn.close()
+
+            tracks = [(r["id"], r["filepath"]) for r in rows]
+
+            with _rescan_lock:
+                _rescan_status["running"] = True
+                _rescan_status["total"] = len(tracks)
+                _rescan_status["scanned"] = 0
+
+            for track_id, filepath in tracks:
+                if not _daemon_running:
+                    break
+                if not os.path.isfile(filepath):
+                    with _rescan_lock:
+                        _rescan_status["scanned"] += 1
+                    continue
+
+                tags = _read_id3(filepath)
+                bpm = tags["bpm"]
+                key = tags["key"]
+
+                if _has_analyzer and ((not bpm or bpm <= 0) or not key):
+                    a_bpm, a_key = bpm_analyzer._analyze_track(filepath, backend)
+                    if not bpm or bpm <= 0:
+                        bpm = a_bpm
+                    if not key:
+                        key = a_key
+
+                if _has_analyzer and (bpm and bpm > 0 or key):
+                    bpm_analyzer._write_tags(filepath, bpm if bpm and bpm > 0 else 0, key or "")
+
+                conn = db.get_db()
+                conn.execute(
+                    """UPDATE library_tracks SET
+                        title = CASE WHEN ? != '' THEN ? ELSE title END,
+                        artist = CASE WHEN ? != '' THEN ? ELSE artist END,
+                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?
+                    WHERE id = ?""",
+                    (
+                        tags["title"], tags["title"],
+                        tags["artist"], tags["artist"],
+                        tags["album"], tags["genre"],
+                        bpm if bpm and bpm > 0 else (tags["bpm"] if tags["bpm"] else -1),
+                        key if key else tags["key"],
+                        tags["duration_sec"],
+                        track_id,
+                    ),
+                )
+                conn.commit()
+                conn.close()
+
+                with _rescan_lock:
+                    _rescan_status["scanned"] += 1
+
+            with _rescan_lock:
+                _rescan_status["running"] = False
+
+        # Phase 3: Idle — wait before next cycle
+        with _daemon_lock:
+            _daemon_status["phase"] = "idle"
+            _daemon_status["current_subdir"] = ""
+
+        # Sleep 5 minutes, check every second if we should stop
+        for _ in range(300):
+            if not _daemon_running:
+                return
+            time.sleep(1)
+
+    with _daemon_lock:
+        _daemon_status["running"] = False
+        _daemon_status["phase"] = ""
+
+
+def start_daemon():
+    """Start the continuous background library worker."""
+    global _daemon_running, _daemon_status
+    with _daemon_lock:
+        if _daemon_status["running"]:
+            return
+        _daemon_running = True
+        _daemon_status["running"] = True
+        _daemon_status["phase"] = "starting"
+    t = threading.Thread(target=_daemon_loop, daemon=True)
+    t.start()
+
+
+def stop_daemon():
+    """Stop the background library worker."""
+    global _daemon_running
+    _daemon_running = False
+    with _daemon_lock:
+        _daemon_status["running"] = False
+
+
+def get_daemon_status():
+    """Return daemon status."""
+    with _daemon_lock:
+        return dict(_daemon_status)
+
+
 def delete_m3u(playlist_name):
     """Remove an M3U file from the sync target."""
     nas_target = sync.get_sync_target()
