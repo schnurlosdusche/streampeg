@@ -22,6 +22,7 @@ import cover_art
 import autotag
 import dlna_server
 import library as lib_module
+import bpm_analyzer
 import i18n
 from scheduler import SyncScheduler
 
@@ -488,6 +489,9 @@ def settings():
     fpcalc_ok = autotag._fpcalc_available()
     dlna_enabled = dlna_server.is_enabled()
     dlna_status = dlna_server.get_status()
+    bpm_analyzer_enabled = db.get_setting("bpm_analyzer_enabled") == "1"
+    bpm_backend = db.get_setting("bpm_backend") or "aubio"
+    essentia_available = "essentia" in bpm_analyzer.get_available_backends()
     return render_template("settings.html", modules=all_modules, enabled=enabled,
                            builtin_modes=sorted(module_manager.BUILTIN_MODES),
                            sync_enabled=sync_enabled, sync_target=sync_target,
@@ -498,6 +502,9 @@ def settings():
                            fpcalc_ok=fpcalc_ok,
                            dlna_enabled=dlna_enabled,
                            dlna_status=dlna_status,
+                           bpm_analyzer_enabled=bpm_analyzer_enabled,
+                           bpm_backend=bpm_backend,
+                           essentia_available=essentia_available,
                            languages=i18n.LANGUAGES)
 
 
@@ -575,6 +582,32 @@ def settings_dlna_save():
         dlna_server.stop()
         dlna_server.start()
     return jsonify({"ok": True, "status": dlna_server.get_status()})
+
+
+@app.route("/settings/bpm-analyzer/toggle", methods=["POST"])
+def settings_bpm_toggle():
+    currently = db.get_setting("bpm_analyzer_enabled") == "1"
+    db.set_setting("bpm_analyzer_enabled", "0" if currently else "1")
+    if currently:
+        bpm_analyzer.stop()
+    else:
+        bpm_analyzer.start()
+    return jsonify({"ok": True, "enabled": not currently})
+
+
+@app.route("/settings/bpm-analyzer/backend", methods=["POST"])
+def settings_bpm_backend():
+    data = request.get_json() or {}
+    backend = data.get("backend", "aubio")
+    if backend not in ("aubio", "essentia"):
+        return jsonify({"error": "Invalid backend"}), 400
+    db.set_setting("bpm_backend", backend)
+    return jsonify({"ok": True, "backend": backend})
+
+
+@app.route("/api/bpm-analyzer/status")
+def api_bpm_status():
+    return jsonify(bpm_analyzer.get_status())
 
 
 @app.route("/settings/autotag/toggle", methods=["POST"])
@@ -1618,6 +1651,13 @@ if __name__ == "__main__":
             dlna_server.start()
         except Exception as e:
             print(f"DLNA server start failed: {e}")
+
+    # Start BPM/Key analyzer if enabled
+    if db.get_setting("bpm_analyzer_enabled") == "1":
+        try:
+            bpm_analyzer.start()
+        except Exception as e:
+            print(f"BPM analyzer start failed: {e}")
 
     # Start background ICY metadata poller for cast players
     cast.start_icy_poller()

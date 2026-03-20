@@ -218,6 +218,48 @@
 
 <hr>
 
+<h4>{{ t('settings.bpm_analyzer') }}</h4>
+<p><small style="color:var(--pico-muted-color,#888);">{{ t('settings.bpm_analyzer_desc') }}</small></p>
+
+<table>
+    <tbody>
+        <tr>
+            <td>
+                <strong>{{ t('settings.bpm_analyzer_label') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.bpm_analyzer_detail') }}</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="bpm-toggle"
+                        onclick="toggleBpmAnalyzer()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if bpm_analyzer_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ t('settings.enabled') if bpm_analyzer_enabled else t('settings.disabled') }}
+                </button>
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <strong>{{ t('settings.bpm_backend') }}</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">{{ t('settings.bpm_backend_desc') }}</small>
+            </td>
+            <td>
+                <select id="bpm-backend" onchange="changeBpmBackend(this.value)" style="margin:0;padding:4px 8px;font-size:12px;max-width:200px;">
+                    <option value="aubio" {{ 'selected' if bpm_backend == 'aubio' }}>aubio ({{ t('settings.bpm_fast') }})</option>
+                    {% if essentia_available %}
+                    <option value="essentia" {{ 'selected' if bpm_backend == 'essentia' }}>essentia ({{ t('settings.bpm_accurate') }})</option>
+                    {% endif %}
+                </select>
+            </td>
+        </tr>
+        <tr>
+            <td colspan="2" id="bpm-status-cell">
+                <small style="color:var(--pico-muted-color,#888);" id="bpm-status-text"></small>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<hr>
+
 <h4>{{ t('settings.sync') }}</h4>
 
 <form method="post" action="{{ url_for('settings_sync') }}">
@@ -389,5 +431,59 @@ function saveAcoustidKey() {
         if (data.ok) alert(t('settings.acoustid_saved'));
     });
 }
+
+// --- BPM Analyzer ---
+function toggleBpmAnalyzer() {
+    var btn = document.getElementById('bpm-toggle');
+    btn.disabled = true;
+    btn.textContent = '...';
+    fetch('/settings/bpm-analyzer/toggle', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            if (data.enabled) {
+                btn.textContent = t('settings.enabled');
+                btn.style.color = 'var(--pico-color-green-500,green)';
+                btn.style.borderColor = 'var(--pico-color-green-500,green)';
+                pollBpmStatus();
+            } else {
+                btn.textContent = t('settings.disabled');
+                btn.style.color = 'var(--pico-color-red-500,red)';
+                btn.style.borderColor = 'var(--pico-color-red-500,red)';
+                document.getElementById('bpm-status-text').textContent = '';
+            }
+        });
+}
+
+function changeBpmBackend(backend) {
+    fetch('/settings/bpm-analyzer/backend', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({backend: backend}),
+    });
+}
+
+var _bpmPollTimer = null;
+function pollBpmStatus() {
+    fetch('/api/bpm-analyzer/status', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var text = document.getElementById('bpm-status-text');
+            if (data.running) {
+                var info = data.backend + ' · ' + t('settings.bpm_analyzing') + ' ' + data.current_file;
+                if (data.remaining > 0) info += ' (' + data.remaining + ' ' + t('settings.bpm_remaining') + ')';
+                info += ' · ' + data.analyzed + ' ' + t('settings.bpm_done');
+                text.textContent = info;
+                _bpmPollTimer = setTimeout(pollBpmStatus, 3000);
+            } else {
+                text.textContent = data.analyzed > 0 ? data.analyzed + ' ' + t('settings.bpm_done') : '';
+            }
+        });
+}
+
+// Auto-poll if analyzer is enabled
+{% if bpm_analyzer_enabled %}
+pollBpmStatus();
+{% endif %}
 </script>
 {% endblock %}

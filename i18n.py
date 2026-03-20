@@ -243,6 +243,19 @@ TRANSLATIONS = {
         "settings.dlna_saved": "DLNA settings saved",
         "settings.dlna_restarted": "(server restarted)",
 
+        # Settings: BPM Analyzer
+        "settings.bpm_analyzer": "BPM / Key Analyzer",
+        "settings.bpm_analyzer_desc": "Background service that detects BPM and musical key for all library tracks.",
+        "settings.bpm_analyzer_label": "BPM/Key Analyzer",
+        "settings.bpm_analyzer_detail": "Continuously analyzes tracks missing BPM or key data",
+        "settings.bpm_backend": "Analysis Backend",
+        "settings.bpm_backend_desc": "aubio is fast, essentia is more accurate (especially for key detection)",
+        "settings.bpm_fast": "fast",
+        "settings.bpm_accurate": "accurate",
+        "settings.bpm_analyzing": "Analyzing:",
+        "settings.bpm_remaining": "remaining",
+        "settings.bpm_done": "analyzed",
+
         # Settings: Sync
         "settings.sync": "Sync",
         "settings.sync_enabled": "Automatic sync enabled",
