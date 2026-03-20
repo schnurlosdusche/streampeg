@@ -598,9 +598,9 @@ function _renderBrowserPlayerHTML() {
     var html = '<div class="player-bar player-bar-browser' + (_isLibraryTrack ? ' player-bar-library' : '') + '">'
         + '<div class="player-bar-inner">'
         + '<div class="player-cover-wrap">' + coverHtml + '</div>'
-        + '<div class="player-info">'
+        + '<div class="player-info-seek">'
         + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : (_isLibraryTrack ? '' : t('player.waiting_track'))) + '</div>'
-        + '<div class="player-stream">' + (_isLibraryTrack ? '' : _escHtmlPlayer(streamName)) + '</div>'
+        + (_isLibraryTrack ? '' : '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>')
         + seekHtml
         + '</div>'
         + '<div class="player-volume">';

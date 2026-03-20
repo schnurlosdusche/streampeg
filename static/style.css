@@ -329,10 +329,26 @@ body {
     text-align: center;
     font-family: monospace;
 }
-/* Wider info area for library tracks */
-.player-bar-library .player-info {
+/* Info+seek area for browser player */
+.player-info-seek {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: calc(50% - 280px);
+    overflow: hidden;
+}
+/* Library mode: seek bar gets most of the space */
+.player-bar-library .player-info-seek {
     flex: 1;
-    max-width: calc(60% - 200px);
+    max-width: none;
+    overflow: visible;
+}
+/* Push volume slider to far right in library mode */
+.player-bar-library .player-volume {
+    flex-shrink: 0;
+    margin-left: auto;
+}
+.player-bar-library .player-right {
+    display: none;
 }
 .player-bar-inner {
     position: relative;
