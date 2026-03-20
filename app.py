@@ -26,7 +26,7 @@ import bpm_analyzer
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.42a"
+VERSION = "0.0.43a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -589,9 +589,11 @@ def settings_bpm_toggle():
     currently = db.get_setting("bpm_analyzer_enabled") == "1"
     db.set_setting("bpm_analyzer_enabled", "0" if currently else "1")
     if currently:
-        bpm_analyzer.stop()
+        # Daemon keeps running but skips BPM analysis when disabled
+        pass
     else:
-        bpm_analyzer.start()
+        # Ensure daemon is running to pick up BPM analysis
+        lib_module.start_daemon()
     return jsonify({"ok": True, "enabled": not currently})
 
 
@@ -607,7 +609,18 @@ def settings_bpm_backend():
 
 @app.route("/api/bpm-analyzer/status")
 def api_bpm_status():
-    return jsonify(bpm_analyzer.get_status())
+    daemon = lib_module.get_daemon_status()
+    rescan = lib_module.get_rescan_status()
+    enabled = db.get_setting("bpm_analyzer_enabled") == "1"
+    return jsonify({
+        "enabled": enabled,
+        "running": daemon.get("running", False),
+        "phase": daemon.get("phase", ""),
+        "current_subdir": daemon.get("current_subdir", ""),
+        "rescan_running": rescan.get("running", False),
+        "rescan_total": rescan.get("total", 0),
+        "rescan_scanned": rescan.get("scanned", 0),
+    })
 
 
 @app.route("/settings/autotag/toggle", methods=["POST"])
@@ -1180,6 +1193,94 @@ def api_library_playlist_m3u(playlist_id):
                      as_attachment=True, download_name=pl["name"] + ".m3u")
 
 
+@app.route("/api/library/track/<int:track_id>")
+def api_library_track_detail(track_id):
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(dict(track))
+
+
+@app.route("/api/library/track/<int:track_id>/cues")
+def api_library_track_cues_get(track_id):
+    cues = db.get_cue_points(track_id)
+    return jsonify({"cues": cues})
+
+
+@app.route("/api/library/track/<int:track_id>/cues", methods=["POST"])
+def api_library_track_cues_set(track_id):
+    data = request.get_json() or {}
+    cues = data.get("cues", {})
+    db.set_cue_points(track_id, cues)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/track/<int:track_id>/playlists")
+def api_library_track_playlists(track_id):
+    conn = db.get_db()
+    rows = conn.execute(
+        """SELECT p.id, p.name FROM playlists p
+           JOIN playlist_tracks pt ON pt.playlist_id = p.id
+           WHERE pt.track_id = ?
+           ORDER BY p.name""",
+        (track_id,),
+    ).fetchall()
+    conn.close()
+    return jsonify({"playlists": [{"id": r["id"], "name": r["name"]} for r in rows]})
+
+
+@app.route("/api/library/track/<int:track_id>/rating", methods=["POST"])
+def api_library_track_rating(track_id):
+    data = request.get_json() or {}
+    rating = data.get("rating", 0)
+    db.set_track_rating(track_id, rating)
+    return jsonify({"success": True, "rating": max(0, min(5, rating))})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/mixxx")
+def api_library_playlist_mixxx(playlist_id):
+    """Export playlist as Mixxx-compatible XML with BPM, Key, and cue points."""
+    pl = db.get_playlist(playlist_id)
+    if not pl:
+        return jsonify({"error": "not found"}), 404
+    tracks = db.get_playlist_tracks(playlist_id)
+
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml += '<Playlist name="{}" tracks="{}">\n'.format(
+        pl["name"].replace("&", "&amp;").replace("<", "&lt;"), len(tracks))
+
+    for t in tracks:
+        cues = db.get_cue_points(t["id"])
+        xml += '  <Track>\n'
+        xml += '    <Location>{}</Location>\n'.format(
+            t["filepath"].replace("&", "&amp;").replace("<", "&lt;"))
+        if t.get("title"):
+            xml += '    <Title>{}</Title>\n'.format(
+                t["title"].replace("&", "&amp;").replace("<", "&lt;"))
+        if t.get("artist"):
+            xml += '    <Artist>{}</Artist>\n'.format(
+                t["artist"].replace("&", "&amp;").replace("<", "&lt;"))
+        if t.get("bpm") and t["bpm"] > 0:
+            xml += '    <BPM>{}</BPM>\n'.format(t["bpm"])
+        if t.get("key"):
+            xml += '    <Key>{}</Key>\n'.format(t["key"])
+        if t.get("duration_sec"):
+            xml += '    <Duration>{}</Duration>\n'.format(t["duration_sec"])
+        if t.get("rating") and t["rating"] > 0:
+            xml += '    <Rating>{}</Rating>\n'.format(t["rating"])
+        if cues:
+            xml += '    <CuePoints>\n'
+            for num, pos in sorted(cues.items(), key=lambda x: int(x[0])):
+                xml += '      <Cue number="{}" position="{}"/>\n'.format(num, pos)
+            xml += '    </CuePoints>\n'
+        xml += '  </Track>\n'
+
+    xml += '</Playlist>\n'
+
+    return Response(xml, mimetype="application/xml",
+                    headers={"Content-Disposition": 'attachment; filename="{}.xml"'.format(pl["name"])})
+
+
 @app.route("/api/library/track/<int:track_id>/play")
 def api_library_track_play(track_id):
     track = db.get_library_track(track_id)
@@ -1189,6 +1290,85 @@ def api_library_track_play(track_id):
     if not os.path.isfile(filepath):
         return jsonify({"error": "file not found"}), 404
     return send_file(filepath, mimetype="audio/mpeg")
+
+
+@app.route("/api/cover-search")
+def api_cover_search():
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"url": None})
+    import cover_art
+    url = cover_art._itunes_search(q)
+    return jsonify({"url": url})
+
+
+@app.route("/api/library/track/<int:track_id>/waveform")
+def api_library_track_waveform(track_id):
+    """Generate waveform peaks server-side (400 bars, normalized 0-1)."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"peaks": []}), 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return jsonify({"peaks": []}), 404
+    try:
+        import subprocess, struct
+        # Use ffmpeg to extract raw PCM samples (mono, 8kHz, 16-bit) — fast and low memory
+        result = subprocess.run(
+            ["ffmpeg", "-i", filepath, "-ac", "1", "-ar", "8000", "-f", "s16le",
+             "-acodec", "pcm_s16le", "-v", "quiet", "-"],
+            capture_output=True, timeout=30
+        )
+        if result.returncode != 0:
+            return jsonify({"peaks": []})
+        raw = result.stdout
+        num_samples = len(raw) // 2
+        if num_samples == 0:
+            return jsonify({"peaks": []})
+        bars = 400
+        block_size = max(1, num_samples // bars)
+        peaks = []
+        for i in range(bars):
+            start = i * block_size * 2
+            end = min(start + block_size * 2, len(raw))
+            chunk = raw[start:end]
+            if not chunk:
+                peaks.append(0)
+                continue
+            # Compute average absolute amplitude
+            total = 0
+            count = len(chunk) // 2
+            for j in range(count):
+                sample = struct.unpack_from('<h', chunk, j * 2)[0]
+                total += abs(sample)
+            peaks.append(total / count / 32768.0 if count > 0 else 0)
+        # Normalize
+        max_val = max(peaks) if peaks else 1
+        if max_val > 0:
+            peaks = [p / max_val for p in peaks]
+        return jsonify({"peaks": [round(p, 3) for p in peaks]})
+    except Exception as e:
+        return jsonify({"peaks": [], "error": str(e)})
+
+
+@app.route("/api/library/track/<int:track_id>/cover")
+def api_library_track_cover(track_id):
+    track = db.get_library_track(track_id)
+    if not track:
+        return "", 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return "", 404
+    try:
+        from mutagen.id3 import ID3
+        tags = ID3(filepath)
+        for key in tags:
+            if key.startswith("APIC"):
+                apic = tags[key]
+                return Response(apic.data, mimetype=apic.mime or "image/jpeg")
+    except Exception:
+        pass
+    return "", 404
 
 
 @app.route("/api/library/track/<int:track_id>/autotag", methods=["POST"])
@@ -1658,7 +1838,6 @@ def _shutdown():
     """Graceful shutdown: stop all streams, background workers, cleanup."""
     print("Shutting down: stopping background workers...")
     lib_module.stop_daemon()
-    bpm_analyzer.stop()
     print("Shutting down: stopping all streams...")
     process_manager.stop_all_streams()
     streams = db.get_all_streams()
@@ -1679,7 +1858,6 @@ if __name__ == "__main__":
     def _sigterm_handler(sig, frame):
         # Set stop flags for background workers (non-blocking)
         lib_module.stop_daemon()
-        bpm_analyzer.stop()
         # Force exit immediately — systemd will handle cleanup
         # Daemon threads are killed automatically on process exit
         print("SIGTERM received, exiting immediately.")
@@ -1705,14 +1883,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"DLNA server start failed: {e}")
 
-    # Start BPM/Key analyzer if enabled
-    if db.get_setting("bpm_analyzer_enabled") == "1":
-        try:
-            bpm_analyzer.start()
-        except Exception as e:
-            print(f"BPM analyzer start failed: {e}")
-
-    # Start library background daemon (auto scan + auto rescan tags)
+    # Start library background daemon (auto scan + auto rescan tags + BPM/Key analysis)
     try:
         lib_module.start_daemon()
     except Exception as e:

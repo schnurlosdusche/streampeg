@@ -94,6 +94,14 @@ def init_db():
             position INTEGER DEFAULT 0,
             added_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS cue_points (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id INTEGER REFERENCES library_tracks(id) ON DELETE CASCADE,
+            cue_number INTEGER NOT NULL,
+            position_sec REAL NOT NULL,
+            UNIQUE(track_id, cue_number)
+        );
     """)
     # Migrate: add columns if missing
     cursor = conn.execute("PRAGMA table_info(streams)")
@@ -123,6 +131,13 @@ def init_db():
     if "dl_fallback" not in columns:
         conn.execute("ALTER TABLE streams ADD COLUMN dl_fallback INTEGER DEFAULT 0")
     conn.commit()
+
+    # Migrate library_tracks: add rating column
+    cursor = conn.execute("PRAGMA table_info(library_tracks)")
+    lib_columns = [row[1] for row in cursor.fetchall()]
+    if "rating" not in lib_columns:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN rating INTEGER DEFAULT 0")
+        conn.commit()
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
         conn.execute("UPDATE streams SET offset_end = split_delay WHERE split_delay > 0")
@@ -398,7 +413,7 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
         camelot_case = _build_camelot_case()
         order_sql = f"ORDER BY {camelot_case} {order}, bpm {order}"
     elif sort in ("title", "artist", "album", "genre", "bpm", "key",
-                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir"):
+                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir", "rating"):
         order_sql = f"ORDER BY {sort} {order}"
     else:
         order_sql = f"ORDER BY title {order}"
@@ -580,5 +595,37 @@ def delete_library_track_by_path(filepath):
     """Delete a library track by filepath (for cleanup of removed files)."""
     conn = get_db()
     conn.execute("DELETE FROM library_tracks WHERE filepath = ?", (filepath,))
+    conn.commit()
+    conn.close()
+
+
+def set_track_rating(track_id, rating):
+    """Set rating (0-5) for a library track."""
+    conn = get_db()
+    conn.execute("UPDATE library_tracks SET rating = ? WHERE id = ?", (max(0, min(5, rating)), track_id))
+    conn.commit()
+    conn.close()
+
+
+def get_cue_points(track_id):
+    """Get cue points for a track as {cue_number: position_sec}."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT cue_number, position_sec FROM cue_points WHERE track_id = ?",
+        (track_id,),
+    ).fetchall()
+    conn.close()
+    return {str(r["cue_number"]): r["position_sec"] for r in rows}
+
+
+def set_cue_points(track_id, cues):
+    """Set cue points for a track. cues = {cue_number: position_sec}."""
+    conn = get_db()
+    conn.execute("DELETE FROM cue_points WHERE track_id = ?", (track_id,))
+    for num, pos in cues.items():
+        conn.execute(
+            "INSERT INTO cue_points (track_id, cue_number, position_sec) VALUES (?, ?, ?)",
+            (track_id, int(num), float(pos)),
+        )
     conn.commit()
     conn.close()

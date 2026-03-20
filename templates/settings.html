@@ -469,21 +469,29 @@ function pollBpmStatus() {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             var text = document.getElementById('bpm-status-text');
+            if (!data.enabled) {
+                text.textContent = '';
+                return;
+            }
+            var info = '';
+            if (data.phase === 'scan') {
+                info = 'Scanning library...';
+            } else if (data.phase === 'tags' && data.rescan_running) {
+                info = 'Analyzing: ' + data.current_subdir;
+                if (data.rescan_total > 0) {
+                    info += ' (' + data.rescan_scanned + '/' + data.rescan_total + ')';
+                }
+            } else if (data.phase === 'idle') {
+                info = 'Idle - waiting for next cycle';
+            } else if (data.running) {
+                info = 'Starting...';
+            }
+            text.textContent = info;
             if (data.running) {
-                var info = data.backend + ' · ' + t('settings.bpm_analyzing') + ' ' + data.current_file;
-                if (data.remaining > 0) info += ' (' + data.remaining + ' ' + t('settings.bpm_remaining') + ')';
-                info += ' · ' + data.analyzed + ' ' + t('settings.bpm_done');
-                text.textContent = info;
                 _bpmPollTimer = setTimeout(pollBpmStatus, 3000);
-            } else {
-                text.textContent = data.analyzed > 0 ? data.analyzed + ' ' + t('settings.bpm_done') : '';
             }
         });
 }
-
-// Auto-poll if analyzer is enabled
-{% if bpm_analyzer_enabled %}
 pollBpmStatus();
-{% endif %}
 </script>
 {% endblock %}

@@ -1,41 +1,26 @@
 """
 Background BPM/Key analyzer for library tracks.
-Runs as a daemon thread, continuously analyzes tracks missing BPM or Key.
+Runs analysis in a separate subprocess to avoid blocking Flask.
 Supports aubio (fast, lightweight) and essentia (more accurate) backends.
 """
 
 import os
+import sys
+import json
 import time
 import threading
 import logging
 import subprocess
-import tempfile
+import signal
 
 import db
 
 log = logging.getLogger(__name__)
 
-# Backend availability
-_aubio_available = False
-_essentia_available = False
-
-try:
-    import aubio
-    _aubio_available = True
-except ImportError:
-    pass
-
-try:
-    import essentia
-    import essentia.standard as es
-    _essentia_available = True
-except ImportError:
-    pass
-
-
 # Worker state
 _worker_thread = None
 _worker_running = False
+_worker_process = None  # subprocess.Popen
 _worker_lock = threading.Lock()
 _worker_status = {
     "running": False,
@@ -49,10 +34,16 @@ _worker_status = {
 def get_available_backends():
     """Return list of available analysis backends."""
     backends = []
-    if _aubio_available:
+    try:
+        import aubio
         backends.append("aubio")
-    if _essentia_available:
+    except ImportError:
+        pass
+    try:
+        import essentia
         backends.append("essentia")
+    except ImportError:
+        pass
     return backends
 
 
@@ -60,83 +51,6 @@ def get_status():
     """Return current analyzer status."""
     with _worker_lock:
         return dict(_worker_status)
-
-
-# --- Aubio backend ---
-
-def _analyze_bpm_aubio(filepath):
-    """Detect BPM using aubio."""
-    try:
-        src = aubio.source(filepath, samplerate=0, hop_size=512)
-        tempo = aubio.tempo("default", 1024, 512, src.samplerate)
-        beats = []
-        total_frames = 0
-        while True:
-            samples, read = src()
-            is_beat = tempo(samples)
-            if is_beat[0]:
-                beats.append(total_frames / float(src.samplerate))
-            total_frames += read
-            if read < 512:
-                break
-        bpm = tempo.get_bpm()
-        return int(round(bpm)) if bpm > 0 else 0
-    except Exception as e:
-        log.debug("aubio BPM error for %s: %s", filepath, e)
-        return 0
-
-
-def _analyze_key_aubio(filepath):
-    """Aubio doesn't have built-in key detection. Return empty."""
-    return ""
-
-
-# --- Essentia backend ---
-
-def _analyze_bpm_essentia(filepath):
-    """Detect BPM using essentia."""
-    try:
-        audio = es.MonoLoader(filename=filepath, sampleRate=44100)()
-        rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
-        bpm, beats, confidence, estimates, bpm_intervals = rhythm_extractor(audio)
-        return int(round(bpm)) if bpm > 0 else 0
-    except Exception as e:
-        log.debug("essentia BPM error for %s: %s", filepath, e)
-        return 0
-
-
-def _analyze_key_essentia(filepath):
-    """Detect musical key using essentia."""
-    try:
-        audio = es.MonoLoader(filename=filepath, sampleRate=44100)()
-        key_extractor = es.KeyExtractor()
-        key, scale, strength = key_extractor(audio)
-        if key and scale:
-            # Format: "C" + "minor" -> "Cm", "C" + "major" -> "C"
-            if scale == "minor":
-                return key + "m"
-            return key
-        return ""
-    except Exception as e:
-        log.debug("essentia Key error for %s: %s", filepath, e)
-        return ""
-
-
-# --- Analysis dispatch ---
-
-def _analyze_track(filepath, backend):
-    """Analyze a single track and return (bpm, key)."""
-    bpm = 0
-    key = ""
-
-    if backend == "essentia" and _essentia_available:
-        bpm = _analyze_bpm_essentia(filepath)
-        key = _analyze_key_essentia(filepath)
-    elif backend == "aubio" and _aubio_available:
-        bpm = _analyze_bpm_aubio(filepath)
-        key = _analyze_key_aubio(filepath)
-
-    return bpm, key
 
 
 def _write_tags(filepath, bpm, key):
@@ -158,19 +72,38 @@ def _write_tags(filepath, bpm, key):
         log.debug("Failed to write tags to %s: %s", filepath, e)
 
 
+def _analyze_track(filepath, backend):
+    """Analyze a single track in a subprocess. Returns (bpm, key)."""
+    script = os.path.join(os.path.dirname(__file__), "_bpm_worker.py")
+    try:
+        result = subprocess.run(
+            [sys.executable, script, filepath, backend],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout.strip())
+            return data.get("bpm", 0), data.get("key", "")
+    except subprocess.TimeoutExpired:
+        log.debug("BPM analysis timed out for %s", filepath)
+    except Exception as e:
+        log.debug("BPM analysis error for %s: %s", filepath, e)
+    return 0, ""
+
+
 # --- Background worker ---
 
 def _worker_loop():
     """Main worker loop: find tracks without BPM/Key and analyze them."""
-    global _worker_running, _worker_status
+    global _worker_running
 
     backend = db.get_setting("bpm_backend") or "aubio"
 
     while _worker_running:
-        # Get tracks missing BPM or Key
         conn = db.get_db()
         rows = conn.execute(
-            "SELECT id, filepath FROM library_tracks WHERE (bpm = 0 OR bpm IS NULL OR key = '' OR key IS NULL) LIMIT 50"
+            "SELECT id, filepath FROM library_tracks "
+            "WHERE (bpm = 0 OR bpm IS NULL OR key = '' OR key IS NULL) LIMIT 50"
         ).fetchall()
         conn.close()
 
@@ -178,17 +111,16 @@ def _worker_loop():
             with _worker_lock:
                 _worker_status["remaining"] = 0
                 _worker_status["current_file"] = ""
-            # Nothing to do, sleep and check again
-            for _ in range(30):  # Sleep 30s in 1s increments
+            for _ in range(30):
                 if not _worker_running:
                     return
                 time.sleep(1)
             continue
 
-        # Get total remaining count
         conn = db.get_db()
         remaining = conn.execute(
-            "SELECT COUNT(*) as cnt FROM library_tracks WHERE (bpm = 0 OR bpm IS NULL OR key = '' OR key IS NULL)"
+            "SELECT COUNT(*) as cnt FROM library_tracks "
+            "WHERE (bpm = 0 OR bpm IS NULL OR key = '' OR key IS NULL)"
         ).fetchone()["cnt"]
         conn.close()
 
@@ -204,7 +136,6 @@ def _worker_loop():
             filepath = row["filepath"]
 
             if not os.path.isfile(filepath):
-                # Mark as analyzed with 0/empty to avoid retrying
                 conn = db.get_db()
                 conn.execute(
                     "UPDATE library_tracks SET bpm = -1 WHERE id = ? AND (bpm = 0 OR bpm IS NULL)",
@@ -217,16 +148,15 @@ def _worker_loop():
             with _worker_lock:
                 _worker_status["current_file"] = os.path.basename(filepath)
 
-            # Re-read backend setting (may change in settings)
             new_backend = db.get_setting("bpm_backend") or "aubio"
             if new_backend != backend:
                 backend = new_backend
                 with _worker_lock:
                     _worker_status["backend"] = backend
 
+            # Run analysis in subprocess (non-blocking for Flask)
             bpm, key = _analyze_track(filepath, backend)
 
-            # Update DB
             conn = db.get_db()
             conn.execute(
                 "UPDATE library_tracks SET bpm = ?, key = CASE WHEN ? != '' THEN ? ELSE key END WHERE id = ?",
@@ -235,13 +165,15 @@ def _worker_loop():
             conn.commit()
             conn.close()
 
-            # Also write to MP3 file tags
             if bpm > 0 or key:
                 _write_tags(filepath, bpm, key)
 
             with _worker_lock:
                 _worker_status["analyzed"] += 1
                 _worker_status["remaining"] = max(0, _worker_status["remaining"] - 1)
+
+            # Small pause between tracks to be gentle on I/O
+            time.sleep(0.5)
 
     with _worker_lock:
         _worker_status["running"] = False
@@ -250,7 +182,7 @@ def _worker_loop():
 
 def start():
     """Start the background BPM/Key analyzer."""
-    global _worker_thread, _worker_running, _worker_status
+    global _worker_thread, _worker_running
 
     enabled = db.get_setting("bpm_analyzer_enabled")
     if enabled != "1":
@@ -258,15 +190,15 @@ def start():
 
     with _worker_lock:
         if _worker_status["running"]:
-            return True  # Already running
+            return True
         _worker_running = True
-        _worker_status = {
+        _worker_status.update({
             "running": True,
             "current_file": "",
             "analyzed": 0,
             "remaining": 0,
             "backend": db.get_setting("bpm_backend") or "aubio",
-        }
+        })
 
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
     _worker_thread.start()
@@ -274,7 +206,7 @@ def start():
 
 
 def stop():
-    """Stop the background analyzer."""
+    """Stop the background analyzer immediately."""
     global _worker_running
     _worker_running = False
     with _worker_lock:

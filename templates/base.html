@@ -19,6 +19,15 @@
             <li><a href="{{ url_for('yt_download') }}">{{ t('nav.yt_download') }}</a></li>
             <li><a href="{{ url_for('stream_new') }}">{{ t('nav.add_stream') }}</a></li>
             <li><a href="{{ url_for('settings') }}">{{ t('nav.settings') }}</a></li>
+            <li id="scan-indicator" style="display:none;">
+                <a href="#" onclick="toggleScanDaemon(event)" id="scan-indicator-btn" title="BPM/Key Analyzer">
+                    <svg id="scan-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;display:inline-block;">
+                        <path d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <span id="scan-indicator-text" style="font-size:11px;margin-left:3px;"></span>
+                </a>
+            </li>
             <li><a href="#" id="restart-service-btn" onclick="restartService(event)" title="{{ t('nav.restart_title') }}">{{ t('nav.restart') }}</a></li>
         </ul>
     </nav>
@@ -28,7 +37,7 @@
     </main>
 
     <!-- Global Player Bar -->
-    <div id="version-info">Version {{ version }}</div>
+    <div id="version-info">v{{ version }}</div>
     <div id="player-container"></div>
 
     <script>
@@ -119,6 +128,68 @@
         var el = document.getElementById('restart-modal');
         if (el) el.remove();
     }
+    // --- Scan indicator in navbar ---
+    var _scanPollTimer = null;
+    function pollScanIndicator() {
+        fetch('/api/bpm-analyzer/status', {credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var li = document.getElementById('scan-indicator');
+                var btn = document.getElementById('scan-indicator-btn');
+                var icon = document.getElementById('scan-icon');
+                var text = document.getElementById('scan-indicator-text');
+                if (!li) return;
+
+                li.style.display = '';
+
+                if (!data.enabled) {
+                    icon.style.color = '#666';
+                    icon.style.animation = 'none';
+                    text.textContent = 'Off';
+                    text.style.color = '#666';
+                    btn.title = 'BPM/Key Analyzer (disabled) - click to enable';
+                } else if (data.phase === 'scan') {
+                    icon.style.color = '#ff9800';
+                    icon.style.animation = 'spin 2s linear infinite';
+                    text.textContent = 'Scanning...';
+                    text.style.color = '#ff9800';
+                    btn.title = 'Scanning library - click to disable';
+                } else if (data.phase === 'tags' && data.rescan_running) {
+                    var pct = data.rescan_total > 0 ? Math.round(data.rescan_scanned / data.rescan_total * 100) : 0;
+                    icon.style.color = '#4caf50';
+                    icon.style.animation = 'spin 2s linear infinite';
+                    text.textContent = pct + '%';
+                    text.style.color = '#4caf50';
+                    btn.title = 'Analyzing: ' + data.current_subdir + ' (' + data.rescan_scanned + '/' + data.rescan_total + ') - click to disable';
+                } else if (data.running) {
+                    icon.style.color = '#4caf50';
+                    icon.style.animation = 'none';
+                    text.textContent = 'Idle';
+                    text.style.color = '#888';
+                    btn.title = 'BPM/Key Analyzer (idle) - click to disable';
+                } else {
+                    icon.style.color = '#666';
+                    icon.style.animation = 'none';
+                    text.textContent = 'Off';
+                    text.style.color = '#666';
+                    btn.title = 'BPM/Key Analyzer (stopped) - click to enable';
+                }
+
+                _scanPollTimer = setTimeout(pollScanIndicator, 15000);
+            })
+            .catch(function() {
+                _scanPollTimer = setTimeout(pollScanIndicator, 10000);
+            });
+    }
+    function toggleScanDaemon(e) {
+        e.preventDefault();
+        fetch('/settings/bpm-analyzer/toggle', {method: 'POST', credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                pollScanIndicator();
+            });
+    }
+    pollScanIndicator();
     </script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
     <script>

@@ -488,11 +488,7 @@ def _daemon_loop():
     global _daemon_running, _daemon_status
     import time
 
-    try:
-        import bpm_analyzer
-        _has_analyzer = True
-    except ImportError:
-        _has_analyzer = False
+    import bpm_analyzer
 
     while _daemon_running:
         # Phase 1: Library scan (find new files)
@@ -522,7 +518,8 @@ def _daemon_loop():
         if not _daemon_running:
             break
 
-        # Phase 2: Rescan tags/BPM/Key for all folders with incomplete tracks
+        # Phase 2: Rescan tags/BPM/Key for folders with incomplete tracks
+        bpm_enabled = db.get_setting("bpm_analyzer_enabled") == "1"
         backend = db.get_setting("bpm_backend") or "aubio"
 
         conn = db.get_db()
@@ -568,15 +565,17 @@ def _daemon_loop():
                 bpm = tags["bpm"]
                 key = tags["key"]
 
-                if _has_analyzer and ((not bpm or bpm <= 0) or not key):
+                # BPM/Key analysis via subprocess (only if enabled)
+                if bpm_enabled and ((not bpm or bpm <= 0) or not key):
                     a_bpm, a_key = bpm_analyzer._analyze_track(filepath, backend)
                     if not bpm or bpm <= 0:
                         bpm = a_bpm
                     if not key:
                         key = a_key
 
-                if _has_analyzer and (bpm and bpm > 0 or key):
-                    bpm_analyzer._write_tags(filepath, bpm if bpm and bpm > 0 else 0, key or "")
+                    # Write back to MP3 tags
+                    if bpm > 0 or key:
+                        bpm_analyzer._write_tags(filepath, bpm if bpm > 0 else 0, key or "")
 
                 conn = db.get_db()
                 conn.execute(
@@ -600,6 +599,9 @@ def _daemon_loop():
 
                 with _rescan_lock:
                     _rescan_status["scanned"] += 1
+
+                # Small pause to not overload the system
+                time.sleep(0.5)
 
             with _rescan_lock:
                 _rescan_status["running"] = False

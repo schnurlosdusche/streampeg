@@ -59,15 +59,15 @@
     min-height: 0;
 }
 .lib-table-wrap {
-    flex: 3;
+    flex: 1 1 0;
     min-width: 0;
     overflow: auto;
     max-height: calc(100vh - 240px);
 }
 .lib-sidebar {
-    flex: 1;
-    min-width: 220px;
-    max-width: 300px;
+    flex: 0 0 200px;
+    min-width: 180px;
+    max-width: 220px;
     background: #1a1a2a;
     border-radius: 8px;
     padding: 0.6rem;
@@ -123,23 +123,25 @@
 #lib-table tbody tr.selected {
     background: rgba(100,181,246,0.1);
 }
-/* Column widths */
+/* Column widths: checkbox, title, artist, rating, bpm, key, duration, add */
 #lib-table th:nth-child(1),
-#lib-table td:nth-child(1) { width: 30px; text-align: center; }  /* checkbox */
+#lib-table td:nth-child(1) { width: 28px; text-align: center; }   /* checkbox */
 #lib-table th:nth-child(2),
-#lib-table td:nth-child(2) { width: 30px; text-align: center; }  /* play */
+#lib-table td:nth-child(2) { width: auto; }                        /* title */
 #lib-table th:nth-child(3),
-#lib-table td:nth-child(3) { width: auto; }                       /* title */
+#lib-table td:nth-child(3) { width: 20%; }                         /* artist */
 #lib-table th:nth-child(4),
-#lib-table td:nth-child(4) { width: 22%; }                        /* artist */
+#lib-table td:nth-child(4) { width: 90px; text-align: center; overflow: visible; }    /* rating */
 #lib-table th:nth-child(5),
-#lib-table td:nth-child(5) { width: 55px; text-align: right; font-family: monospace; }  /* bpm */
+#lib-table td:nth-child(5) { width: 65px; text-align: right; font-family: monospace; }  /* bpm */
 #lib-table th:nth-child(6),
-#lib-table td:nth-child(6) { width: 55px; text-align: center; font-family: monospace; } /* key */
+#lib-table td:nth-child(6) { width: 60px; text-align: center; font-family: monospace; } /* key */
 #lib-table th:nth-child(7),
-#lib-table td:nth-child(7) { width: 55px; text-align: right; }    /* duration */
+#lib-table td:nth-child(7) { width: 85px; text-align: right; font-family: monospace; }  /* duration */
 #lib-table th:nth-child(8),
-#lib-table td:nth-child(8) { width: 30px; text-align: center; }   /* add */
+#lib-table td:nth-child(8) { width: 28px; text-align: center; }    /* add */
+/* Prevent header text truncation but keep fixed widths */
+#lib-table th { white-space: nowrap; font-size: 0.68rem; }
 
 /* Play button */
 .lib-play-btn {
@@ -522,9 +524,9 @@
             <thead>
                 <tr>
                     <th><input type="checkbox" id="lib-select-all" onchange="toggleSelectAll(this.checked)"></th>
-                    <th></th>
                     <th data-sort="title" onclick="sortBy('title')">{{ t('library.title_col') }} <span class="sort-arrow"></span></th>
                     <th data-sort="artist" onclick="sortBy('artist')">{{ t('library.artist_col') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="rating" onclick="sortBy('rating')">&#9733; <span class="sort-arrow"></span></th>
                     <th data-sort="bpm" onclick="sortBy('bpm')">{{ t('library.bpm') }} <span class="sort-arrow"></span></th>
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
                     <th data-sort="duration" onclick="sortBy('duration')">{{ t('library.duration') }} <span class="sort-arrow"></span></th>
@@ -549,7 +551,8 @@
             <div class="lib-pl-detail-header">
                 <h5 id="lib-pl-detail-name"></h5>
                 <div class="lib-pl-detail-actions">
-                    <button class="outline" onclick="downloadM3U(_selectedPlaylistId)">{{ t('library.download_m3u') }}</button>
+                    <button class="outline" onclick="downloadM3U(_selectedPlaylistId)">M3U</button>
+                    <button class="outline" onclick="downloadMixxx(_selectedPlaylistId)">Mixxx XML</button>
                     <button class="outline lib-pl-delete-btn" onclick="deletePlaylist(_selectedPlaylistId)">{{ t('library.delete_playlist') }}</button>
                 </div>
             </div>
@@ -573,7 +576,8 @@ var _selectedTrackIds = {};
 var _libPlMenu = null;
 var _playlists = [];
 var _selectedPlaylistId = null;
-var _libPlayingTrackId = null;
+if (typeof _libPlayingTrackId === 'undefined') _libPlayingTrackId = null;
+if (typeof _libTrackCache === 'undefined') _libTrackCache = {};
 var _scanPollTimer = null;
 var _searchTimer = null;
 
@@ -626,9 +630,10 @@ function renderTracks(data) {
         var dur = tr.duration_sec ? formatDuration(tr.duration_sec) : '-';
         html += '<tr data-track-id="' + tr.id + '"' + (isSelected ? ' class="selected"' : '') + '>';
         html += '<td><input type="checkbox" onchange="toggleTrackSelect(' + tr.id + ', this.checked)"' + (isSelected ? ' checked' : '') + '></td>';
-        html += '<td><button class="lib-play-btn' + (isPlaying ? ' playing' : '') + '" onclick="playLibraryTrack(' + tr.id + ', \'' + escHtml(tr.title || '') + '\', \'' + escHtml(tr.artist || '') + '\')">' + (isPlaying ? '&#9646;&#9646;' : '&#9654;') + '</button></td>';
-        html += '<td title="' + escAttr(tr.title || '') + '">' + escHtml(tr.title || '') + '</td>';
-        html += '<td title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
+        _libTrackCache[tr.id] = tr;
+        html += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.title || '') + '">' + (isPlaying ? '<span class="lib-now-playing">&#9654;</span> ' : '') + escHtml(tr.title || '') + '</td>';
+        html += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
+        html += '<td class="col-rating">' + _renderListStars(tr.id, tr.rating || 0) + '</td>';
         html += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
         html += '<td>' + (tr.key ? escHtml(tr.key) : '-') + '</td>';
         html += '<td>' + dur + '</td>';
@@ -638,6 +643,7 @@ function renderTracks(data) {
     tbody.innerHTML = html;
     renderPagination();
     updateSelectAllCheckbox();
+    updatePlayButtons();
 }
 
 function formatDuration(seconds) {
@@ -764,7 +770,80 @@ function updateBulkBar() {
 }
 
 /* --- Play track --- */
-function playLibraryTrack(trackId, title, artist) {
+function _renderListStars(trackId, rating) {
+    var html = '<span class="list-stars" onmouseleave="_listStarClear(this)">';
+    for (var i = 1; i <= 5; i++) {
+        html += '<span class="list-star' + (i <= rating ? ' star-filled' : '') + '" data-star="' + i + '" onclick="setListRating(' + trackId + ',' + i + ',event)" onmouseenter="_listStarHover(this,' + i + ')">&#9733;</span>';
+    }
+    html += '</span>';
+    return html;
+}
+
+function setListRating(trackId, rating, e) {
+    e.stopPropagation();
+    var tr = _libTrackCache[trackId];
+    if (tr && tr.rating === rating) rating = 0;
+    if (tr) tr.rating = rating;
+    _trackRatings[trackId] = rating;
+    fetch('/api/library/track/' + trackId + '/rating', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({rating: rating}),
+    }).catch(function() {});
+    // Update stars in the row
+    var row = document.querySelector('#lib-table tr[data-track-id="' + trackId + '"]');
+    if (row) {
+        var cell = row.querySelector('.col-rating');
+        if (cell) cell.innerHTML = _renderListStars(trackId, rating);
+    }
+    if (_libPlayingTrackId === trackId) _refreshPlayerBar();
+}
+
+function _listStarHover(el, n) {
+    var stars = el.parentNode.querySelectorAll('.list-star');
+    for (var i = 0; i < stars.length; i++) {
+        if (i < n) stars[i].classList.add('star-hover');
+        else stars[i].classList.remove('star-hover');
+    }
+}
+
+function _listStarClear(container) {
+    var stars = container.querySelectorAll('.list-star');
+    for (var i = 0; i < stars.length; i++) stars[i].classList.remove('star-hover');
+}
+
+function _loadLibraryCover(trackId, artist, title) {
+    // Try embedded cover first
+    var img = new Image();
+    img.onload = function() {
+        if (_libPlayingTrackId === trackId) {
+            _browserIcyCover = '/api/library/track/' + trackId + '/cover';
+            _refreshPlayerBar();
+        }
+    };
+    img.onerror = function() {
+        // No embedded cover — try iTunes search
+        var q = (artist ? artist + ' ' : '') + (title || '');
+        if (!q.trim()) return;
+        fetch('/api/cover-search?q=' + encodeURIComponent(q.trim()), {credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.url && _libPlayingTrackId === trackId) {
+                    _browserIcyCover = data.url;
+                    _refreshPlayerBar();
+                }
+            })
+            .catch(function() {});
+    };
+    img.src = '/api/library/track/' + trackId + '/cover';
+}
+
+function playLibraryTrackById(trackId) {
+    var tr = _libTrackCache[trackId] || {};
+    playLibraryTrack(trackId, tr.title || '', tr.artist || '', tr.stream_subdir || '');
+}
+
+function playLibraryTrack(trackId, title, artist, streamSubdir) {
     // If same track: toggle stop
     if (_libPlayingTrackId === trackId) {
         stopListen();
@@ -800,8 +879,15 @@ function playLibraryTrack(trackId, title, artist) {
     // Update player bar info
     _browserIcyTrack = (artist ? artist + ' - ' : '') + title;
     _browserIcyCover = null;
+    _loadLibraryCover(trackId, artist, title);
+    _browserLibStream = streamSubdir || '';
     _refreshPlayerBar();
     updatePlayButtons();
+
+    // Load cue points and rating for this track
+    if (!_cuePoints[trackId]) _loadCuePoints(trackId);
+    if (_trackRatings[trackId] == null) _loadTrackRating(trackId);
+    _loadTrackPlaylists(trackId);
 
     // Auto-tag if track has no proper metadata (title looks like filename)
     if (!artist || artist === title || title.indexOf('_') !== -1 || title.indexOf(' - ') !== -1 && !artist) {
@@ -838,16 +924,14 @@ function _autoTagTrack(trackId) {
 }
 
 function updatePlayButtons() {
-    var btns = document.querySelectorAll('.lib-play-btn');
-    for (var i = 0; i < btns.length; i++) {
-        var row = btns[i].closest('tr');
-        var tid = row ? parseInt(row.getAttribute('data-track-id')) : null;
+    var rows = document.querySelectorAll('#lib-table tr[data-track-id]');
+    for (var i = 0; i < rows.length; i++) {
+        var tid = parseInt(rows[i].getAttribute('data-track-id'));
         if (tid === _libPlayingTrackId) {
-            btns[i].classList.add('playing');
-            btns[i].innerHTML = '&#9646;&#9646;';
+            rows[i].classList.add('lib-playing');
+            rows[i].scrollIntoView({behavior: 'smooth', block: 'center'});
         } else {
-            btns[i].classList.remove('playing');
-            btns[i].innerHTML = '&#9654;';
+            rows[i].classList.remove('lib-playing');
         }
     }
 }
@@ -1048,6 +1132,11 @@ function removeFromPlaylist(playlistId, trackId) {
 function downloadM3U(playlistId) {
     if (!playlistId) return;
     window.open('/api/library/playlists/' + playlistId + '/m3u', '_blank');
+}
+
+function downloadMixxx(playlistId) {
+    if (!playlistId) return;
+    window.open('/api/library/playlists/' + playlistId + '/mixxx', '_blank');
 }
 
 function deletePlaylist(id) {
@@ -1298,7 +1387,7 @@ function pollRescanStatus() {
 
 /* --- Folder view --- */
 var _folderStats = {};
-var _currentFolder = null;
+if (typeof _currentFolder === 'undefined') _currentFolder = null;
 
 function loadFolders() {
     fetch('/api/library/stats', {credentials: 'include'})
@@ -1371,18 +1460,25 @@ function initLibrary() {
     _libFilters = {};
     _selectedTrackIds = {};
     _selectedPlaylistId = null;
-    _libPlayingTrackId = null;
     _currentFolder = null;
-
-    // Show folder view initially
-    document.getElementById('lib-folder-view').style.display = '';
-    document.getElementById('lib-track-view').style.display = 'none';
 
     updateSortIndicators();
     bindFilters();
     loadStreamFilters();
-    loadFolders();
     loadPlaylists();
+
+    // If a library track is playing, open its folder and scroll to it
+    if (_isLibraryTrack && _libPlayingTrackId && _browserLibStream) {
+        openFolder(_browserLibStream);
+        // After tracks load, scroll to playing track
+        return;
+    }
+
+    // Otherwise show folder view
+    _libPlayingTrackId = _libPlayingTrackId || null;
+    document.getElementById('lib-folder-view').style.display = '';
+    document.getElementById('lib-track-view').style.display = 'none';
+    loadFolders();
 }
 
 // Run on load
