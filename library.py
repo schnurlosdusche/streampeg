@@ -130,12 +130,24 @@ def _scan_files(files):
 
     scanned_paths = set()
 
+    # Phase 1: Quick scan — register files by name/path (no ID3 reading)
+    # This is fast even over NAS because we only stat() files.
+    new_files = []
     for filepath, stream_subdir in files:
         if not _scan_status["running"]:
-            break  # cancelled
+            break
 
         scanned_paths.add(filepath)
 
+        if filepath in existing_mtimes:
+            # Already known, skip
+            with _scan_lock:
+                _scan_status["files_scanned"] += 1
+                total = _scan_status["files_total"]
+                _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
+            continue
+
+        # New file — quick insert with filename-derived title/artist
         try:
             stat = os.stat(filepath)
         except OSError:
@@ -145,36 +157,31 @@ def _scan_files(files):
                 _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
             continue
 
-        mtime = stat.st_mtime
-        size_bytes = stat.st_size
-
-        # Check if already scanned with same mtime (skip unchanged files)
-        if filepath in existing_mtimes and abs(existing_mtimes[filepath] - mtime) < 0.01:
-            with _scan_lock:
-                _scan_status["files_scanned"] += 1
-                total = _scan_status["files_total"]
-                _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
-            continue
-
-        # Read tags
-        tags = _read_id3(filepath)
+        filename = os.path.basename(filepath)
+        name_base = os.path.splitext(filename)[0]
+        # Try to parse "Artist - Title" from filename
+        title, artist = name_base, ""
+        if " - " in name_base:
+            parts = name_base.split(" - ", 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
 
         data = {
             "filepath": filepath,
-            "filename": os.path.basename(filepath),
+            "filename": filename,
             "stream_subdir": stream_subdir,
-            "title": tags.get("title", ""),
-            "artist": tags.get("artist", ""),
-            "album": tags.get("album", ""),
-            "genre": tags.get("genre", ""),
-            "bpm": tags.get("bpm", 0),
-            "key": tags.get("key", ""),
-            "duration_sec": tags.get("duration_sec", 0),
-            "size_bytes": size_bytes,
-            "mtime": mtime,
+            "title": title,
+            "artist": artist,
+            "album": "",
+            "genre": "",
+            "bpm": 0,
+            "key": "",
+            "duration_sec": 0,
+            "size_bytes": stat.st_size,
+            "mtime": stat.st_mtime,
         }
-
         db.upsert_library_track(data)
+        new_files.append(filepath)
 
         with _scan_lock:
             _scan_status["files_updated"] += 1
@@ -186,6 +193,43 @@ def _scan_files(files):
     removed = existing_paths - scanned_paths
     for path in removed:
         db.delete_library_track_by_path(path)
+
+    # Phase 2: Read ID3 tags for new files (slower, but library is already browsable)
+    if new_files:
+        with _scan_lock:
+            _scan_status["files_scanned"] = 0
+            _scan_status["files_total"] = len(new_files)
+            _scan_status["files_updated"] = 0
+            _scan_status["progress"] = 0
+
+        for filepath in new_files:
+            if not _scan_status["running"]:
+                break
+            tags = _read_id3(filepath)
+            # Only update if we got meaningful tag data
+            if tags.get("title") or tags.get("artist") or tags.get("bpm") or tags.get("duration_sec"):
+                conn = db.get_db()
+                conn.execute(
+                    """UPDATE library_tracks SET
+                        title = CASE WHEN ? != '' THEN ? ELSE title END,
+                        artist = CASE WHEN ? != '' THEN ? ELSE artist END,
+                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?
+                    WHERE filepath = ?""",
+                    (
+                        tags["title"], tags["title"],
+                        tags["artist"], tags["artist"],
+                        tags["album"], tags["genre"],
+                        tags["bpm"], tags["key"], tags["duration_sec"],
+                        filepath,
+                    ),
+                )
+                conn.commit()
+                conn.close()
+
+            with _scan_lock:
+                _scan_status["files_scanned"] += 1
+                total = _scan_status["files_total"]
+                _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
 
 
 def scan_library():
