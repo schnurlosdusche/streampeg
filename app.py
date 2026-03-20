@@ -1191,6 +1191,47 @@ def api_library_track_play(track_id):
     return send_file(filepath, mimetype="audio/mpeg")
 
 
+@app.route("/api/library/track/<int:track_id>/autotag", methods=["POST"])
+def api_library_track_autotag(track_id):
+    """Auto-tag a single library track via AcoustID/MusicBrainz, then update DB."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return jsonify({"error": "file not found"}), 404
+    try:
+        autotag.tag_file(filepath)
+        # Re-read tags and update DB
+        tags = lib_module._read_id3(filepath)
+        conn = db.get_db()
+        conn.execute(
+            """UPDATE library_tracks SET
+                title = CASE WHEN ? != '' THEN ? ELSE title END,
+                artist = CASE WHEN ? != '' THEN ? ELSE artist END,
+                album = ?, genre = ?, bpm = CASE WHEN ? > 0 THEN ? ELSE bpm END,
+                key = CASE WHEN ? != '' THEN ? ELSE key END,
+                duration_sec = CASE WHEN ? > 0 THEN ? ELSE duration_sec END
+            WHERE id = ?""",
+            (
+                tags["title"], tags["title"],
+                tags["artist"], tags["artist"],
+                tags["album"], tags["genre"],
+                tags["bpm"], tags["bpm"],
+                tags["key"], tags["key"],
+                tags["duration_sec"], tags["duration_sec"],
+                track_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        # Return updated track info
+        updated = db.get_library_track(track_id)
+        return jsonify({"success": True, "track": updated})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/restart-service", methods=["POST"])
 def api_restart_service():
     """Restart the application. Docker: exit and let restart policy handle it.

@@ -327,24 +327,29 @@ body {
     text-align: center;
     font-family: monospace;
 }
-/* Library mode: two-row layout */
+/* Library mode: two-row layout, seek starts next to cover */
 .player-bar-library {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 68px 1fr;
+    grid-template-rows: auto auto;
     height: auto;
-    padding: 0;
+    padding: 6px 1rem;
+    gap: 0 0.8rem;
+}
+.player-bar-library .player-cover-wrap {
+    grid-row: 1 / 3;
+    align-self: center;
 }
 .player-lib-top {
     display: flex;
     align-items: center;
-    height: 50px;
-    padding: 0 1rem;
     gap: 0.8rem;
+    height: 32px;
 }
 .player-lib-top .player-info {
     flex: 0 1 auto;
     min-width: 0;
-    max-width: 250px;
+    max-width: 200px;
     overflow: hidden;
 }
 .player-lib-top .player-volume {
@@ -353,9 +358,9 @@ body {
 .player-lib-top .player-right {
     display: none;
 }
-/* Seek row spans full width below */
+/* Seek row in second grid row, next to cover */
 .player-bar-library .player-seek-row {
-    padding: 0 1rem 6px;
+    grid-column: 2;
 }
 .player-bar-inner {
     position: relative;

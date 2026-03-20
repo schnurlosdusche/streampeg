@@ -802,7 +802,39 @@ function playLibraryTrack(trackId, title, artist) {
     _browserIcyCover = null;
     _refreshPlayerBar();
     updatePlayButtons();
+
+    // Auto-tag if track has no proper metadata (title looks like filename)
+    if (!artist || artist === title || title.indexOf('_') !== -1 || title.indexOf(' - ') !== -1 && !artist) {
+        _autoTagTrack(trackId);
+    }
 }
+
+function _autoTagTrack(trackId) {
+    fetch('/api/library/track/' + trackId + '/autotag', {
+        method: 'POST', credentials: 'include'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success && data.track) {
+            var tr = data.track;
+            var newTitle = tr.title || '';
+            var newArtist = tr.artist || '';
+            if (newTitle || newArtist) {
+                _browserIcyTrack = (newArtist ? newArtist + ' - ' : '') + newTitle;
+                _refreshPlayerBar();
+                // Update table row if visible
+                var row = document.querySelector('#lib-table tr[data-track-id="' + trackId + '"]');
+                if (row) {
+                    var cells = row.querySelectorAll('td');
+                    if (cells[2]) cells[2].textContent = newTitle;
+                    if (cells[3]) cells[3].textContent = newArtist;
+                    if (cells[4] && tr.bpm > 0) cells[4].textContent = tr.bpm;
+                    if (cells[5] && tr.key) cells[5].textContent = tr.key;
+                }
+            }
+        }
+    })
+    .catch(function() {});
 
 function updatePlayButtons() {
     var btns = document.querySelectorAll('.lib-play-btn');

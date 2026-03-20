@@ -598,9 +598,9 @@ function _renderBrowserPlayerHTML() {
     var html = '<div class="player-bar player-bar-browser' + (_isLibraryTrack ? ' player-bar-library' : '') + '">';
 
     if (_isLibraryTrack) {
-        // Two-row layout: top = cover + track + controls + volume, bottom = seek/waveform
-        html += '<div class="player-lib-top">'
-            + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+        // Grid layout: cover left spanning 2 rows, top = track + controls + volume, bottom = seek/waveform
+        html += '<div class="player-cover-wrap">' + coverHtml + '</div>'
+            + '<div class="player-lib-top">'
             + '<div class="player-info">'
             + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : '') + '</div>'
             + '</div>'
@@ -642,7 +642,7 @@ function _renderBrowserPlayerHTML() {
         + '</div>';
 
     if (_isLibraryTrack) {
-        // Close top row, add seek bar as bottom row
+        // Close top row, add seek bar as second grid row
         html += '</div>' + seekHtml + '</div>';
     } else {
         html += '</div></div>';
