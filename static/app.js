@@ -136,10 +136,8 @@ var _browserIcyTrack = '';
 var _browserIcyCover = null;
 var _isLibraryTrack = false;
 var _seekDragging = false;
-var _audioCtx = null;
-var _analyser = null;
-var _audioSource = null;
-var _vizAnimFrame = null;
+var _waveformData = null; // Float32Array of peak values for current track
+var _waveformTrackUrl = null;
 
 function _initBrowserAudio() {
     if (!_playerAudio) {
@@ -161,7 +159,7 @@ function toggleListen(streamId, url) {
         stopListen();
         return;
     }
-    _stopVisualizer();
+    _waveformData = null;
     _playerAudio.pause();
     _playerAudio.removeAttribute('src');
     _playerAudio.load();
@@ -179,7 +177,7 @@ function toggleListen(streamId, url) {
 }
 
 function stopListen() {
-    _stopVisualizer();
+    _waveformData = null;
     if (_playerAudio) {
         _playerAudio.pause();
         _playerAudio.removeAttribute('src');
@@ -580,20 +578,20 @@ function _renderBrowserPlayerHTML() {
         ? '<img src="' + coverUrl + '" alt="">'
         : '<div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>';
 
-    // Seek bar for library tracks (finite duration)
+    // Seek bar with waveform for library tracks (finite duration)
     var seekHtml = '';
     if (_isLibraryTrack && _playerAudio) {
         var dur = _playerAudio.duration || 0;
         var cur = _playerAudio.currentTime || 0;
         var seekPct = (dur && isFinite(dur)) ? (cur / dur * 100) : 0;
         seekHtml = '<div class="player-seek-row">'
-            + '<canvas id="viz-canvas" class="player-viz" width="120" height="28"></canvas>'
+            + '<span class="player-seek-time" id="seek-time">' + _fmtTime(cur) + '</span>'
             + '<div class="player-seek-bar" id="seek-bar">'
-            + '<div class="player-seek-track"></div>'
-            + '<div class="player-seek-fill" id="seek-fill" style="width:' + seekPct + '%"></div>'
+            + '<canvas id="waveform-canvas" class="player-waveform" width="600" height="32"></canvas>'
+            + '<div class="player-seek-overlay" id="seek-fill" style="width:' + seekPct + '%"></div>'
             + '<div class="player-seek-handle" id="seek-handle" style="left:' + seekPct + '%"></div>'
             + '</div>'
-            + '<span class="player-seek-time" id="seek-time">' + _fmtTime(cur) + ' / ' + _fmtTime(dur) + '</span>'
+            + '<span class="player-seek-time">' + _fmtTime(dur) + '</span>'
             + '</div>';
     }
 
@@ -601,8 +599,8 @@ function _renderBrowserPlayerHTML() {
         + '<div class="player-bar-inner">'
         + '<div class="player-cover-wrap">' + coverHtml + '</div>'
         + '<div class="player-info">'
-        + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
-        + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
+        + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : (_isLibraryTrack ? '' : t('player.waiting_track'))) + '</div>'
+        + '<div class="player-stream">' + (_isLibraryTrack ? '' : _escHtmlPlayer(streamName)) + '</div>'
         + seekHtml
         + '</div>'
         + '<div class="player-volume">';
@@ -659,7 +657,8 @@ function _onSeekUpdate() {
     var timeEl = document.getElementById('seek-time');
     if (fill) fill.style.width = pct + '%';
     if (handle) handle.style.left = pct + '%';
-    if (timeEl) timeEl.textContent = _fmtTime(cur) + ' / ' + _fmtTime(dur);
+    if (timeEl) timeEl.textContent = _fmtTime(cur);
+    _scheduleWaveformRedraw();
 }
 
 function _fmtTime(s) {
@@ -706,67 +705,91 @@ document.addEventListener('touchmove', function(e) {
 document.addEventListener('mouseup', function() { _seekDragging = false; });
 document.addEventListener('touchend', function() { _seekDragging = false; });
 
-// --- Audio visualizer (frequency bars) ---
-function _initVisualizer() {
-    if (_audioCtx || !_playerAudio) return;
-    try {
-        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        _analyser = _audioCtx.createAnalyser();
-        _analyser.fftSize = 64;
-        _audioSource = _audioCtx.createMediaElementSource(_playerAudio);
-        _audioSource.connect(_analyser);
-        _analyser.connect(_audioCtx.destination);
-    } catch(e) { _audioCtx = null; return; }
-}
-
-function _drawVisualizer() {
-    var canvas = document.getElementById('viz-canvas');
-    if (!canvas || !_analyser) {
-        _vizAnimFrame = requestAnimationFrame(_drawVisualizer);
+// --- Waveform visualization ---
+function _loadWaveform(url) {
+    if (_waveformTrackUrl === url && _waveformData) {
+        _drawWaveform();
         return;
     }
+    _waveformData = null;
+    _waveformTrackUrl = url;
+    // Fetch audio data and compute waveform peaks
+    fetch(url, {credentials: 'include'})
+        .then(function(r) { return r.arrayBuffer(); })
+        .then(function(buf) {
+            var actx = new (window.AudioContext || window.webkitAudioContext)();
+            return actx.decodeAudioData(buf).then(function(decoded) {
+                actx.close();
+                return decoded;
+            });
+        })
+        .then(function(audioBuffer) {
+            var raw = audioBuffer.getChannelData(0);
+            var bars = 200;
+            var blockSize = Math.floor(raw.length / bars);
+            var peaks = new Float32Array(bars);
+            for (var i = 0; i < bars; i++) {
+                var sum = 0;
+                var start = i * blockSize;
+                for (var j = 0; j < blockSize; j++) {
+                    sum += Math.abs(raw[start + j]);
+                }
+                peaks[i] = sum / blockSize;
+            }
+            // Normalize
+            var max = 0;
+            for (var k = 0; k < peaks.length; k++) {
+                if (peaks[k] > max) max = peaks[k];
+            }
+            if (max > 0) {
+                for (var m = 0; m < peaks.length; m++) peaks[m] /= max;
+            }
+            _waveformData = peaks;
+            _drawWaveform();
+        })
+        .catch(function() { _waveformData = null; });
+}
+
+function _drawWaveform() {
+    var canvas = document.getElementById('waveform-canvas');
+    if (!canvas || !_waveformData) return;
     var ctx = canvas.getContext('2d');
     var w = canvas.width;
     var h = canvas.height;
-    var bufLen = _analyser.frequencyBinCount;
-    var data = new Uint8Array(bufLen);
-    _analyser.getByteFrequencyData(data);
+    var data = _waveformData;
+    var bars = data.length;
+    var barW = w / bars;
 
     ctx.clearRect(0, 0, w, h);
 
-    // Draw 16 bars
-    var bars = 16;
-    var barW = Math.floor(w / bars) - 1;
-    var step = Math.floor(bufLen / bars);
+    // Draw waveform bars
+    var progress = 0;
+    if (_playerAudio && _playerAudio.duration && isFinite(_playerAudio.duration)) {
+        progress = _playerAudio.currentTime / _playerAudio.duration;
+    }
+
     for (var i = 0; i < bars; i++) {
-        var val = data[i * step] / 255;
-        var barH = Math.max(1, val * h);
-        // Gradient color: green -> yellow -> orange
-        var hue = 120 - (val * 80);
-        ctx.fillStyle = 'hsl(' + hue + ', 80%, 50%)';
-        ctx.fillRect(i * (barW + 1), h - barH, barW, barH);
+        var val = data[i];
+        var barH = Math.max(1, val * (h - 2));
+        var x = i * barW;
+        var pct = i / bars;
+        if (pct < progress) {
+            ctx.fillStyle = '#4caf50';
+        } else {
+            ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        }
+        ctx.fillRect(x, (h - barH) / 2, Math.max(1, barW - 0.5), barH);
     }
-    _vizAnimFrame = requestAnimationFrame(_drawVisualizer);
 }
 
-function _startVisualizer() {
-    _initVisualizer();
-    if (_audioCtx && _audioCtx.state === 'suspended') {
-        _audioCtx.resume();
-    }
-    if (!_vizAnimFrame) _drawVisualizer();
-}
-
-function _stopVisualizer() {
-    if (_vizAnimFrame) {
-        cancelAnimationFrame(_vizAnimFrame);
-        _vizAnimFrame = null;
-    }
-    var canvas = document.getElementById('viz-canvas');
-    if (canvas) {
-        var ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
+// Redraw waveform on time update to show progress coloring
+var _waveformRedrawTimer = null;
+function _scheduleWaveformRedraw() {
+    if (_waveformRedrawTimer) return;
+    _waveformRedrawTimer = setTimeout(function() {
+        _waveformRedrawTimer = null;
+        _drawWaveform();
+    }, 250);
 }
 
 function _refreshPlayerBar() {
@@ -830,9 +853,9 @@ function _refreshPlayerBar() {
     // Init seek drag + visualizer for library tracks
     if (hasBrowser && _isLibraryTrack) {
         _initSeekDrag();
-        _startVisualizer();
+        if (_playerAudio && _playerAudio.src) _loadWaveform(_playerAudio.src);
     } else {
-        _stopVisualizer();
+        _waveformData = null;
     }
 
     if (_multiroomOpen && hasCast) _renderMultiroomPanel(_playerData);
