@@ -61,7 +61,8 @@
 .lib-table-wrap {
     flex: 3;
     min-width: 0;
-    overflow-x: auto;
+    overflow: auto;
+    max-height: calc(100vh - 240px);
 }
 .lib-sidebar {
     flex: 1;
@@ -91,7 +92,10 @@
 #lib-table thead th {
     cursor: pointer;
     user-select: none;
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--pico-background-color, #13111a);
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -127,17 +131,15 @@
 #lib-table th:nth-child(3),
 #lib-table td:nth-child(3) { width: auto; }                       /* title */
 #lib-table th:nth-child(4),
-#lib-table td:nth-child(4) { width: 18%; }                        /* artist */
+#lib-table td:nth-child(4) { width: 22%; }                        /* artist */
 #lib-table th:nth-child(5),
-#lib-table td:nth-child(5) { width: 12%; }                        /* stream */
+#lib-table td:nth-child(5) { width: 55px; text-align: right; font-family: monospace; }  /* bpm */
 #lib-table th:nth-child(6),
-#lib-table td:nth-child(6) { width: 55px; text-align: right; font-family: monospace; }  /* bpm */
+#lib-table td:nth-child(6) { width: 55px; text-align: center; font-family: monospace; } /* key */
 #lib-table th:nth-child(7),
-#lib-table td:nth-child(7) { width: 55px; text-align: center; font-family: monospace; } /* key */
+#lib-table td:nth-child(7) { width: 55px; text-align: right; }    /* duration */
 #lib-table th:nth-child(8),
-#lib-table td:nth-child(8) { width: 55px; text-align: right; }    /* duration */
-#lib-table th:nth-child(9),
-#lib-table td:nth-child(9) { width: 30px; text-align: center; }   /* add */
+#lib-table td:nth-child(8) { width: 30px; text-align: center; }   /* add */
 
 /* Play button */
 .lib-play-btn {
@@ -523,7 +525,6 @@
                     <th></th>
                     <th data-sort="title" onclick="sortBy('title')">{{ t('library.title_col') }} <span class="sort-arrow"></span></th>
                     <th data-sort="artist" onclick="sortBy('artist')">{{ t('library.artist_col') }} <span class="sort-arrow"></span></th>
-                    <th data-sort="stream" onclick="sortBy('stream')">{{ t('library.stream_col') }} <span class="sort-arrow"></span></th>
                     <th data-sort="bpm" onclick="sortBy('bpm')">{{ t('library.bpm') }} <span class="sort-arrow"></span></th>
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
                     <th data-sort="duration" onclick="sortBy('duration')">{{ t('library.duration') }} <span class="sort-arrow"></span></th>
@@ -628,7 +629,6 @@ function renderTracks(data) {
         html += '<td><button class="lib-play-btn' + (isPlaying ? ' playing' : '') + '" onclick="playLibraryTrack(' + tr.id + ', \'' + escHtml(tr.title || '') + '\', \'' + escHtml(tr.artist || '') + '\')">' + (isPlaying ? '&#9646;&#9646;' : '&#9654;') + '</button></td>';
         html += '<td title="' + escAttr(tr.title || '') + '">' + escHtml(tr.title || '') + '</td>';
         html += '<td title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
-        html += '<td title="' + escAttr(tr.stream_subdir || '') + '">' + escHtml(tr.stream_subdir || '') + '</td>';
         html += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
         html += '<td>' + (tr.key ? escHtml(tr.key) : '-') + '</td>';
         html += '<td>' + dur + '</td>';
