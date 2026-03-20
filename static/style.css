@@ -326,7 +326,7 @@ body {
     align-items: center;
     gap: 6px;
     margin-top: 3px;
-    width: 100%;
+    min-width: 0;
 }
 .player-seek-bar {
     position: relative;
@@ -427,20 +427,25 @@ body {
     position: relative;
 }
 .player-lib-top {
-    display: flex;
+    display: grid;
+    grid-template-columns: 250px 1fr;
     align-items: center;
-    gap: 0.8rem;
     height: 32px;
+    width: 100%;
+    gap: 20px;
 }
 .player-lib-top .player-info {
-    flex: 0 1 auto;
     min-width: 0;
     max-width: 250px;
-    margin-right: 24px;
+    width: 250px;
     overflow: hidden;
 }
 .player-lib-top .player-volume {
-    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    overflow: hidden;
 }
 .player-lib-top .player-right {
     display: none;
@@ -466,12 +471,19 @@ body {
 }
 /* Cue button row */
 .player-cue-row {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    gap: 20px;
     margin-top: 2px;
     grid-column: 2;
+}
+.player-cue-row::before {
+    content: '';
+}
+.player-cue-buttons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 .cue-btn {
     width: 84px;

@@ -637,11 +637,11 @@ function _renderBrowserPlayerHTML() {
             + '<div class="player-seek-handle" id="seek-handle" style="left:' + seekPct + '%"></div>'
             + cueMarkers
             + '</div>'
-            + '<span class="player-seek-time">' + _fmtTime(dur) + '</span>'
+            + '<span class="player-seek-time" id="seek-dur">' + _fmtTime(dur) + '</span>'
             + '</div>';
 
-        // Cue buttons row
-        cueHtml = '<div class="player-cue-row">';
+        // Cue buttons row — uses same grid as controls (250px spacer + buttons)
+        cueHtml = '<div class="player-cue-row"><div class="player-cue-buttons">';
         for (var ci = 1; ci <= 8; ci++) {
             var isSet = trackCues[ci] != null;
             var cueColor = _CUE_COLORS[ci-1];
@@ -652,7 +652,7 @@ function _renderBrowserPlayerHTML() {
                 + 'title="' + (isSet ? 'Cue ' + ci + ': ' + _fmtTime(trackCues[ci]) + ' (right-click to clear)' : 'Set cue ' + ci + ' at current position') + '">'
                 + ci + '</button>';
         }
-        cueHtml += '</div>';
+        cueHtml += '</div></div>';
     }
 
     var html = '<div class="player-bar player-bar-browser' + (_isLibraryTrack ? ' player-bar-library' : '') + '">';
@@ -1132,7 +1132,41 @@ function _onSeekUpdate() {
     if (fill) fill.style.width = pct + '%';
     if (handle) handle.style.left = pct + '%';
     if (timeEl) timeEl.textContent = _fmtTime(cur);
+    var durEl = document.getElementById('seek-dur');
+    if (durEl) durEl.textContent = _fmtTime(dur);
+    _updateCueMarkers(dur);
     _scheduleWaveformRedraw();
+}
+
+function _updateCueMarkers(dur) {
+    var bar = document.getElementById('seek-bar');
+    if (!bar || !dur || !isFinite(dur)) return;
+    var tid = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    var trackCues = tid ? (_cuePoints[tid] || {}) : {};
+    // Check if markers need updating
+    var existing = bar.querySelectorAll('.cue-marker');
+    var needsUpdate = existing.length === 0 && Object.keys(trackCues).length > 0;
+    if (!needsUpdate) {
+        // Check if cue count changed
+        var cueCount = 0;
+        for (var k in trackCues) { if (trackCues[k] != null) cueCount++; }
+        if (existing.length !== cueCount) needsUpdate = true;
+    }
+    if (!needsUpdate) return;
+    // Remove old markers
+    existing.forEach(function(m) { m.remove(); });
+    // Add new markers
+    for (var cn = 1; cn <= 8; cn++) {
+        if (trackCues[cn] != null) {
+            var pct = (trackCues[cn] / dur * 100);
+            var marker = document.createElement('div');
+            marker.className = 'cue-marker';
+            marker.setAttribute('data-cue', cn);
+            marker.style.left = pct + '%';
+            marker.style.background = _CUE_COLORS[cn - 1];
+            bar.appendChild(marker);
+        }
+    }
 }
 
 function _fmtTime(s) {
