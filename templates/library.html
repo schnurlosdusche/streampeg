@@ -765,39 +765,41 @@ function updateBulkBar() {
 
 /* --- Play track --- */
 function playLibraryTrack(trackId, title, artist) {
-    _initBrowserAudio();
+    // If same track: toggle stop
     if (_libPlayingTrackId === trackId) {
-        // Stop playback
-        _stopVisualizer();
-        _playerAudio.pause();
-        _playerAudio.removeAttribute('src');
-        _playerAudio.load();
+        stopListen();
         _libPlayingTrackId = null;
-        _playerStreamId = null;
-        _isLibraryTrack = false;
-        localStorage.removeItem('_listenStreamId');
-        localStorage.removeItem('_listenStreamUrl');
         _refreshPlayerBar();
         updatePlayButtons();
         return;
     }
-    _playerAudio.pause();
-    _playerAudio.removeAttribute('src');
-    _playerAudio.load();
-    var url = '/api/library/track/' + trackId + '/play';
-    _libPlayingTrackId = trackId;
+
+    // Full stop first (destroy old audio state cleanly)
+    if (_playerAudio) {
+        _playerAudio.pause();
+        _playerAudio.removeAttribute('src');
+        _playerAudio.load();
+    }
+    _waveformData = null;
+    _playerAudio = null;
     _playerStreamId = null;
     _playerStreamUrl = null;
-    _isLibraryTrack = true;
+    _isLibraryTrack = false;
+    _browserPaused = false;
     localStorage.removeItem('_listenStreamId');
     localStorage.removeItem('_listenStreamUrl');
+
+    // Create fresh audio and play
+    _initBrowserAudio();
+    var url = '/api/library/track/' + trackId + '/play';
+    _libPlayingTrackId = trackId;
+    _isLibraryTrack = true;
     _playerAudio.src = url;
     _playerAudio.play().catch(function() {});
 
     // Update player bar info
     _browserIcyTrack = (artist ? artist + ' - ' : '') + title;
     _browserIcyCover = null;
-    _browserPaused = false;
     _refreshPlayerBar();
     updatePlayButtons();
 }
