@@ -1655,7 +1655,10 @@ def api_yt_download_start():
 
 
 def _shutdown():
-    """Graceful shutdown: stop all streams, cleanup incomplete files."""
+    """Graceful shutdown: stop all streams, background workers, cleanup."""
+    print("Shutting down: stopping background workers...")
+    lib_module.stop_daemon()
+    bpm_analyzer.stop()
     print("Shutting down: stopping all streams...")
     process_manager.stop_all_streams()
     streams = db.get_all_streams()
