@@ -768,11 +768,13 @@ function playLibraryTrack(trackId, title, artist) {
     _initBrowserAudio();
     if (_libPlayingTrackId === trackId) {
         // Stop playback
+        _stopVisualizer();
         _playerAudio.pause();
         _playerAudio.removeAttribute('src');
         _playerAudio.load();
         _libPlayingTrackId = null;
         _playerStreamId = null;
+        _isLibraryTrack = false;
         localStorage.removeItem('_listenStreamId');
         localStorage.removeItem('_listenStreamUrl');
         _refreshPlayerBar();
@@ -786,6 +788,7 @@ function playLibraryTrack(trackId, title, artist) {
     _libPlayingTrackId = trackId;
     _playerStreamId = null;
     _playerStreamUrl = null;
+    _isLibraryTrack = true;
     localStorage.removeItem('_listenStreamId');
     localStorage.removeItem('_listenStreamUrl');
     _playerAudio.src = url;
@@ -794,6 +797,7 @@ function playLibraryTrack(trackId, title, artist) {
     // Update player bar info
     _browserIcyTrack = (artist ? artist + ' - ' : '') + title;
     _browserIcyCover = null;
+    _browserPaused = false;
     _refreshPlayerBar();
     updatePlayButtons();
 }

@@ -277,6 +277,68 @@ body {
 .player-bar-browser .player-device-name {
     color: #4caf50;
 }
+.player-bar-library {
+    height: 80px;
+}
+/* Seek row: visualizer + seek bar + time */
+.player-seek-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 3px;
+    width: 100%;
+}
+.player-viz {
+    width: 120px;
+    height: 28px;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.2);
+    flex-shrink: 0;
+}
+.player-seek-bar {
+    position: relative;
+    flex: 1;
+    height: 6px;
+    cursor: pointer;
+    border-radius: 3px;
+    min-width: 100px;
+}
+.player-seek-track {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #2a2a3a;
+    border-radius: 3px;
+}
+.player-seek-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    background: linear-gradient(90deg, #4caf50, #66bb6a);
+    border-radius: 3px;
+    transition: width 0.15s linear;
+}
+.player-seek-handle {
+    position: absolute;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+.player-seek-time {
+    font-size: 0.6rem;
+    color: #888;
+    white-space: nowrap;
+    min-width: 65px;
+    text-align: right;
+    font-family: monospace;
+}
+/* Wider info area for library tracks */
+.player-bar-library .player-info {
+    flex: 1;
+    max-width: calc(60% - 200px);
+}
 .player-bar-inner {
     position: relative;
     display: flex;
