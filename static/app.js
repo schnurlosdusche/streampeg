@@ -595,15 +595,25 @@ function _renderBrowserPlayerHTML() {
             + '</div>';
     }
 
-    var html = '<div class="player-bar player-bar-browser' + (_isLibraryTrack ? ' player-bar-library' : '') + '">'
-        + '<div class="player-bar-inner">'
-        + '<div class="player-cover-wrap">' + coverHtml + '</div>'
-        + '<div class="player-info-seek">'
-        + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : (_isLibraryTrack ? '' : t('player.waiting_track'))) + '</div>'
-        + (_isLibraryTrack ? '' : '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>')
-        + seekHtml
-        + '</div>'
-        + '<div class="player-volume">';
+    var html = '<div class="player-bar player-bar-browser' + (_isLibraryTrack ? ' player-bar-library' : '') + '">';
+
+    if (_isLibraryTrack) {
+        // Two-row layout: top = cover + track + controls + volume, bottom = seek/waveform
+        html += '<div class="player-lib-top">'
+            + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+            + '<div class="player-info">'
+            + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : '') + '</div>'
+            + '</div>'
+            + '<div class="player-volume">';
+    } else {
+        html += '<div class="player-bar-inner">'
+            + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+            + '<div class="player-info">'
+            + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
+            + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
+            + '</div>'
+            + '<div class="player-volume">';
+    }
 
     if (_browserPaused) {
         html += '<button class="player-btn" onclick="toggleBrowserPause()" title="Play">'
@@ -629,8 +639,14 @@ function _renderBrowserPlayerHTML() {
         + '</div>'
         + '<div class="player-right">'
         + '<div class="player-device-name">' + t('player.browser') + '</div>'
-        + '</div>'
-        + '</div></div>';
+        + '</div>';
+
+    if (_isLibraryTrack) {
+        // Close top row, add seek bar as bottom row
+        html += '</div>' + seekHtml + '</div>';
+    } else {
+        html += '</div></div>';
+    }
     return html;
 }
 

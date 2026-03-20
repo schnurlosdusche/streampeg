@@ -277,9 +277,7 @@ body {
 .player-bar-browser .player-device-name {
     color: #4caf50;
 }
-.player-bar-library {
-    height: 80px;
-}
+/* .player-bar-library height handled via flex column layout below */
 /* Seek row: visualizer + seek bar + time */
 .player-seek-row {
     display: flex;
@@ -329,26 +327,35 @@ body {
     text-align: center;
     font-family: monospace;
 }
-/* Info+seek area for browser player */
-.player-info-seek {
+/* Library mode: two-row layout */
+.player-bar-library {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    padding: 0;
+}
+.player-lib-top {
+    display: flex;
+    align-items: center;
+    height: 50px;
+    padding: 0 1rem;
+    gap: 0.8rem;
+}
+.player-lib-top .player-info {
     flex: 0 1 auto;
     min-width: 0;
-    max-width: calc(50% - 280px);
+    max-width: 250px;
     overflow: hidden;
 }
-/* Library mode: seek bar gets most of the space */
-.player-bar-library .player-info-seek {
+.player-lib-top .player-volume {
     flex: 1;
-    max-width: none;
-    overflow: visible;
 }
-/* Push volume slider to far right in library mode */
-.player-bar-library .player-volume {
-    flex-shrink: 0;
-    margin-left: auto;
-}
-.player-bar-library .player-right {
+.player-lib-top .player-right {
     display: none;
+}
+/* Seek row spans full width below */
+.player-bar-library .player-seek-row {
+    padding: 0 1rem 6px;
 }
 .player-bar-inner {
     position: relative;
