@@ -1663,6 +1663,7 @@ def _shutdown():
     process_manager.stop_all_streams()
     streams = db.get_all_streams()
     process_manager.cleanup_incomplete(streams)
+    print("Shutdown complete.")
     if scheduler:
         scheduler.stop()
     dlna_server.stop()
@@ -1675,7 +1676,10 @@ if __name__ == "__main__":
 
     # Register shutdown handler
     atexit.register(_shutdown)
-    signal.signal(signal.SIGTERM, lambda sig, frame: (atexit._run_exitfuncs(), exit(0)))
+    def _sigterm_handler(sig, frame):
+        _shutdown()
+        os._exit(0)  # Force exit, don't wait for daemon threads
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # Cleanup incomplete files from previous run
     streams = db.get_all_streams()
