@@ -774,7 +774,7 @@ function _refreshPlayerBar() {
     if (!container) return;
 
     var hasCast = _playerData && _playerData.active && _playerData.players && _playerData.players.length > 0;
-    var hasBrowser = !!_playerStreamId;
+    var hasBrowser = !!_playerStreamId || _isLibraryTrack;
     var totalPlayers = 0;
 
     var html = '';
