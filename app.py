@@ -1677,8 +1677,13 @@ if __name__ == "__main__":
     # Register shutdown handler
     atexit.register(_shutdown)
     def _sigterm_handler(sig, frame):
-        _shutdown()
-        os._exit(0)  # Force exit, don't wait for daemon threads
+        # Set stop flags for background workers (non-blocking)
+        lib_module.stop_daemon()
+        bpm_analyzer.stop()
+        # Force exit immediately — systemd will handle cleanup
+        # Daemon threads are killed automatically on process exit
+        print("SIGTERM received, exiting immediately.")
+        os._exit(0)
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # Cleanup incomplete files from previous run
