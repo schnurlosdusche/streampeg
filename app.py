@@ -1042,6 +1042,21 @@ def api_library_scan_status():
     return jsonify(lib_module.get_scan_status())
 
 
+@app.route("/api/library/rescan-tags", methods=["POST"])
+def api_library_rescan_tags():
+    data = request.get_json()
+    subdir = (data.get("subdir") or "").strip()
+    if not subdir:
+        return jsonify({"error": "subdir required"}), 400
+    lib_module.start_rescan_tags(subdir)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/rescan-tags/status")
+def api_library_rescan_tags_status():
+    return jsonify(lib_module.get_rescan_status())
+
+
 @app.route("/api/library/playlists")
 def api_library_playlists():
     return jsonify({"playlists": db.get_all_playlists()})

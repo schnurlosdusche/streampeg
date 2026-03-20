@@ -316,6 +316,86 @@ def get_scan_status():
         return dict(_scan_status)
 
 
+# --- Rescan tags (BPM, Key, etc.) for existing tracks ---
+_rescan_status = {
+    "running": False,
+    "scanned": 0,
+    "total": 0,
+}
+_rescan_lock = threading.Lock()
+
+
+def _run_rescan_tags(subdir):
+    """Re-read ID3 tags for all tracks in a given stream_subdir."""
+    global _rescan_status
+    try:
+        conn = db.get_db()
+        rows = conn.execute(
+            "SELECT id, filepath FROM library_tracks WHERE stream_subdir = ?",
+            (subdir,),
+        ).fetchall()
+        conn.close()
+
+        tracks = [(r["id"], r["filepath"]) for r in rows]
+
+        with _rescan_lock:
+            _rescan_status["total"] = len(tracks)
+            _rescan_status["scanned"] = 0
+
+        for track_id, filepath in tracks:
+            if not _rescan_status["running"]:
+                break
+            if not os.path.isfile(filepath):
+                with _rescan_lock:
+                    _rescan_status["scanned"] += 1
+                continue
+
+            tags = _read_id3(filepath)
+            conn = db.get_db()
+            conn.execute(
+                """UPDATE library_tracks SET
+                    title = CASE WHEN ? != '' THEN ? ELSE title END,
+                    artist = CASE WHEN ? != '' THEN ? ELSE artist END,
+                    album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?
+                WHERE id = ?""",
+                (
+                    tags["title"], tags["title"],
+                    tags["artist"], tags["artist"],
+                    tags["album"], tags["genre"],
+                    tags["bpm"], tags["key"], tags["duration_sec"],
+                    track_id,
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            with _rescan_lock:
+                _rescan_status["scanned"] += 1
+    except Exception as e:
+        log.error("Rescan tags error: %s", e)
+    finally:
+        with _rescan_lock:
+            _rescan_status["running"] = False
+
+
+def start_rescan_tags(subdir):
+    """Start background re-scan of ID3 tags for a stream_subdir."""
+    global _rescan_status
+    with _rescan_lock:
+        if _rescan_status["running"]:
+            return False
+        _rescan_status = {"running": True, "scanned": 0, "total": 0}
+    t = threading.Thread(target=_run_rescan_tags, args=(subdir,), daemon=True)
+    t.start()
+    return True
+
+
+def get_rescan_status():
+    """Returns current rescan-tags status."""
+    with _rescan_lock:
+        return dict(_rescan_status)
+
+
 def generate_m3u(playlist_id):
     """Generate an M3U playlist file on the sync target.
     Returns the written file path or None on error."""

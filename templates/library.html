@@ -452,6 +452,11 @@
     <a onclick="showFolderView()">{{ t('library.title') }}</a>
     <span class="lib-bc-sep">/</span>
     <span class="lib-bc-current" id="lib-bc-folder"></span>
+    <button class="lib-scan-btn outline" style="margin-left:auto;" onclick="rescanFolderTags()" id="lib-rescan-tags-btn">Re-scan Tags</button>
+    <span class="lib-scan-progress" id="lib-rescan-progress" style="display:none;">
+        <div class="lib-scan-progress-bar"><div class="lib-scan-progress-fill" id="lib-rescan-fill"></div></div>
+        <span id="lib-rescan-text"></span>
+    </span>
 </div>
 
 <!-- Top Bar -->
@@ -574,8 +579,8 @@ var _searchTimer = null;
 /* --- Track loading --- */
 function loadTracks() {
     var params = new URLSearchParams({
-        page: _libPage,
-        per_page: 200,
+        page: 1,
+        per_page: 99999,
         sort: _libSort,
         order: _libOrder
     });
@@ -610,6 +615,7 @@ function renderTracks(data) {
         return;
     }
     noTracks.style.display = 'none';
+    document.getElementById('lib-pagination').innerHTML = '';
 
     var html = '';
     for (var i = 0; i < _libTracks.length; i++) {
@@ -1195,6 +1201,60 @@ function bindFilters() {
             if (e.key === 'Enter') { e.preventDefault(); createPlaylist(); }
         });
     }
+}
+
+/* --- Re-scan tags for current folder --- */
+var _rescanPollTimer = null;
+
+function rescanFolderTags() {
+    var subdir = _currentFolder || '';
+    if (!subdir) return;
+
+    var progress = document.getElementById('lib-rescan-progress');
+    progress.style.display = 'flex';
+    document.getElementById('lib-rescan-fill').style.width = '0%';
+    document.getElementById('lib-rescan-text').textContent = t('library.scanning');
+    document.getElementById('lib-rescan-tags-btn').disabled = true;
+
+    fetch('/api/library/rescan-tags', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({subdir: subdir})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function() { pollRescanStatus(); })
+    .catch(function() {
+        progress.style.display = 'none';
+        document.getElementById('lib-rescan-tags-btn').disabled = false;
+    });
+}
+
+function pollRescanStatus() {
+    if (_rescanPollTimer) clearTimeout(_rescanPollTimer);
+    fetch('/api/library/rescan-tags/status', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var fill = document.getElementById('lib-rescan-fill');
+            var text = document.getElementById('lib-rescan-text');
+            var progress = document.getElementById('lib-rescan-progress');
+            if (data.running) {
+                var pct = data.total > 0 ? Math.round((data.scanned / data.total) * 100) : 0;
+                fill.style.width = pct + '%';
+                text.textContent = data.scanned + '/' + data.total;
+                _rescanPollTimer = setTimeout(pollRescanStatus, 1500);
+            } else {
+                fill.style.width = '100%';
+                text.textContent = t('library.scan_complete');
+                document.getElementById('lib-rescan-tags-btn').disabled = false;
+                setTimeout(function() { progress.style.display = 'none'; }, 3000);
+                loadTracks();
+            }
+        })
+        .catch(function() {
+            document.getElementById('lib-rescan-progress').style.display = 'none';
+            document.getElementById('lib-rescan-tags-btn').disabled = false;
+        });
 }
 
 /* --- Folder view --- */
