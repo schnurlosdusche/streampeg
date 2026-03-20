@@ -326,8 +326,16 @@ _rescan_lock = threading.Lock()
 
 
 def _run_rescan_tags(subdir):
-    """Re-read ID3 tags for all tracks in a given stream_subdir."""
+    """Re-read ID3 tags AND analyze BPM/Key for all tracks in a stream_subdir."""
     global _rescan_status
+
+    # Import bpm_analyzer for audio analysis
+    try:
+        import bpm_analyzer
+        _has_analyzer = True
+    except ImportError:
+        _has_analyzer = False
+
     try:
         conn = db.get_db()
         rows = conn.execute(
@@ -342,6 +350,8 @@ def _run_rescan_tags(subdir):
             _rescan_status["total"] = len(tracks)
             _rescan_status["scanned"] = 0
 
+        backend = db.get_setting("bpm_backend") or "aubio"
+
         for track_id, filepath in tracks:
             if not _rescan_status["running"]:
                 break
@@ -350,7 +360,23 @@ def _run_rescan_tags(subdir):
                     _rescan_status["scanned"] += 1
                 continue
 
+            # Phase 1: Read existing ID3 tags
             tags = _read_id3(filepath)
+            bpm = tags["bpm"]
+            key = tags["key"]
+
+            # Phase 2: If BPM or Key missing, run audio analysis
+            if _has_analyzer and ((not bpm or bpm <= 0) or not key):
+                a_bpm, a_key = bpm_analyzer._analyze_track(filepath, backend)
+                if not bpm or bpm <= 0:
+                    bpm = a_bpm
+                if not key:
+                    key = a_key
+
+            # Phase 3: Write BPM/Key to MP3 tags if we computed them
+            if _has_analyzer and (bpm > 0 or key):
+                bpm_analyzer._write_tags(filepath, bpm if bpm > 0 else 0, key or "")
+
             conn = db.get_db()
             conn.execute(
                 """UPDATE library_tracks SET
@@ -362,7 +388,9 @@ def _run_rescan_tags(subdir):
                     tags["title"], tags["title"],
                     tags["artist"], tags["artist"],
                     tags["album"], tags["genre"],
-                    tags["bpm"], tags["key"], tags["duration_sec"],
+                    bpm if bpm and bpm > 0 else tags["bpm"],
+                    key if key else tags["key"],
+                    tags["duration_sec"],
                     track_id,
                 ),
             )
