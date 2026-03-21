@@ -26,7 +26,7 @@ import bpm_analyzer
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.44a"
+VERSION = "0.0.47a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
