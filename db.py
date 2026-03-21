@@ -143,6 +143,8 @@ def init_db():
     lib_columns = [row[1] for row in cursor.fetchall()]
     if "rating" not in lib_columns:
         conn.execute("ALTER TABLE library_tracks ADD COLUMN rating INTEGER DEFAULT 0")
+    if "favorited" not in lib_columns:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN favorited INTEGER DEFAULT 0")
         conn.commit()
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
@@ -419,7 +421,7 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
         camelot_case = _build_camelot_case()
         order_sql = f"ORDER BY {camelot_case} {order}, bpm {order}"
     elif sort in ("title", "artist", "album", "genre", "bpm", "key",
-                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir", "rating"):
+                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir", "rating", "favorited"):
         order_sql = f"ORDER BY {sort} {order}"
     else:
         order_sql = f"ORDER BY title {order}"
@@ -629,6 +631,20 @@ def set_track_rating(track_id, rating):
     conn.execute("UPDATE library_tracks SET rating = ? WHERE id = ?", (max(0, min(5, rating)), track_id))
     conn.commit()
     conn.close()
+
+
+def toggle_favorite(track_id):
+    """Toggle favorite status. Returns new state (0 or 1)."""
+    conn = get_db()
+    row = conn.execute("SELECT favorited FROM library_tracks WHERE id = ?", (track_id,)).fetchone()
+    if not row:
+        conn.close()
+        return 0
+    new_val = 0 if row["favorited"] else 1
+    conn.execute("UPDATE library_tracks SET favorited = ? WHERE id = ?", (new_val, track_id))
+    conn.commit()
+    conn.close()
+    return new_val
 
 
 def get_cue_points(track_id):

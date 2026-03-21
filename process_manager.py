@@ -212,9 +212,20 @@ def get_status_fast(stream):
             rec_state = watcher.get_state()
             current_track = watcher.get_current_track()
 
-    # Use cached file count if available, otherwise show "-"
+    # Use cached file count/size, populate cache on first access
     cached = _file_count_cache.get(stream_id)
+    if not cached:
+        import config, sync
+        subdir = stream.get("dest_subdir", stream.get("name", "").replace(" ", "_"))
+        dest = os.path.join(config.RECORDING_BASE, subdir)
+        nas_dest = os.path.join(sync.get_sync_target(), subdir)
+        try:
+            _get_cached_file_counts(stream_id, dest, nas_dest)
+            cached = _file_count_cache.get(stream_id)
+        except Exception:
+            pass
     file_count = cached["count"] if cached else "-"
+    disk_usage_mb = round(cached["size"] / (1024 * 1024), 1) if cached and cached.get("size") else 0
 
     # Cover art
     cover_url_val = None
@@ -232,7 +243,7 @@ def get_status_fast(stream):
         "bitrate": None,
         "cover_url": cover_url_val,
         "file_count": file_count,
-        "disk_usage_mb": 0,
+        "disk_usage_mb": disk_usage_mb,
         "rec_state": rec_state,
         "rec_pct": 0,
         "track_stats": None,

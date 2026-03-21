@@ -126,6 +126,9 @@ document.querySelectorAll('.sync-form').forEach(form => {
     });
 });
 
+// --- Camelot wheel mapping for player ---
+var _CAMELOT_PLAYER = {"Abm":"1A","G#m":"1A","Ebm":"2A","D#m":"2A","Bbm":"3A","A#m":"3A","Fm":"4A","Cm":"5A","Gm":"6A","Dm":"7A","Am":"8A","Em":"9A","Bm":"10A","F#m":"11A","Gbm":"11A","C#m":"12A","Dbm":"12A","B":"1B","Cb":"1B","F#":"2B","Gb":"2B","C#":"3B","Db":"3B","Ab":"4B","G#":"4B","Eb":"5B","D#":"5B","Bb":"6B","A#":"6B","F":"7B","C":"8B","G":"9B","D":"10B","A":"11B","E":"12B"};
+
 // --- Browser listen (persistent across page navigation via localStorage) ---
 var _playerAudio = null;
 var _playerStreamId = null;
@@ -701,7 +704,10 @@ function _renderBrowserPlayerHTML() {
         if (_tdata) {
             var parts = [];
             if (_tdata.bpm && _tdata.bpm > 0) parts.push(_tdata.bpm + ' BPM');
-            if (_tdata.key) parts.push(_tdata.key);
+            if (_tdata.key) {
+                var _cam = _CAMELOT_PLAYER[_tdata.key] || '';
+                parts.push(_tdata.key + (_cam ? ' / ' + _cam : ''));
+            }
             if (parts.length) _bpmKeyOverlay = '<div class="cover-bpm-key">' + parts.join(' &middot; ') + '</div>';
         }
         // Radar animation overlay when playing
@@ -761,7 +767,7 @@ function _renderBrowserPlayerHTML() {
         + '<button class="player-vol-btn" onclick="_browserVolumeStep(5)">+</button>'
         + '<span class="player-volume-value">' + (_isLibraryTrack ? _seekStep + 's' : volPct) + '</span>'
         + _renderRepeatButton()
-        + (_isLibraryTrack ? _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn() : '')
+        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn() : '')
         + '</div>'
         + '<div class="player-right">'
         + '<div class="player-device-name">' + t('player.browser') + '</div>'
@@ -862,12 +868,51 @@ function cueAction(num) {
     _refreshPlayerBar();
 }
 
+function cueInsert() {
+    // Insert a new cue at current position, renumber all chronologically
+    if (!_playerAudio || !_isLibraryTrack || typeof _libPlayingTrackId === 'undefined' || !_libPlayingTrackId) return;
+    var trackId = _libPlayingTrackId;
+    if (!_cuePoints[trackId]) _cuePoints[trackId] = {};
+
+    // Collect existing cue positions + new one
+    var positions = [];
+    for (var n in _cuePoints[trackId]) {
+        if (_cuePoints[trackId][n] != null) positions.push(_cuePoints[trackId][n]);
+    }
+    var newPos = _playerAudio.currentTime;
+    // Don't add duplicate (within 0.5s tolerance)
+    var isDup = positions.some(function(p) { return Math.abs(p - newPos) < 0.5; });
+    if (isDup) return;
+    if (positions.length >= 8) return; // max 8 cues
+
+    positions.push(newPos);
+    positions.sort(function(a, b) { return a - b; });
+
+    // Reassign numbers 1-N chronologically
+    _cuePoints[trackId] = {};
+    for (var i = 0; i < positions.length; i++) {
+        _cuePoints[trackId][i + 1] = positions[i];
+    }
+    _saveCuePoints(trackId);
+    _refreshPlayerBar();
+}
+
 function cueClear(num, e) {
     e.preventDefault(); // prevent context menu
     if (typeof _libPlayingTrackId === 'undefined' || !_libPlayingTrackId) return;
     var trackId = _libPlayingTrackId;
     if (_cuePoints[trackId]) {
         delete _cuePoints[trackId][num];
+        // Renumber remaining cues chronologically
+        var positions = [];
+        for (var n in _cuePoints[trackId]) {
+            if (_cuePoints[trackId][n] != null) positions.push(_cuePoints[trackId][n]);
+        }
+        positions.sort(function(a, b) { return a - b; });
+        _cuePoints[trackId] = {};
+        for (var i = 0; i < positions.length; i++) {
+            _cuePoints[trackId][i + 1] = positions[i];
+        }
         _saveCuePoints(trackId);
     }
     _refreshPlayerBar();
@@ -898,6 +943,48 @@ function _loadCuePoints(trackId) {
 }
 
 // --- Star Rating ---
+var _trackFavorites = {}; // {trackId: 0|1}
+
+function _renderHeartBtn() {
+    var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    if (!trackId) return '';
+    var fav = _trackFavorites[trackId] || 0;
+    return '<span class="player-heart' + (fav ? ' heart-active' : '') + '" onclick="toggleFavorite()" title="Favorite" style="margin-left:12px;cursor:pointer;font-size:18px;user-select:none;">' + (fav ? '&#10084;' : '&#9825;') + '</span>';
+}
+
+function toggleFavorite() {
+    var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    if (!trackId) return;
+    fetch('/api/library/track/' + trackId + '/favorite', {
+        method: 'POST', credentials: 'include'
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            _trackFavorites[trackId] = data.favorited;
+            if (typeof _libTrackCache !== 'undefined' && _libTrackCache[trackId]) {
+                _libTrackCache[trackId].favorited = data.favorited;
+            }
+            _refreshPlayerBar();
+            // Update list heart if visible
+            var row = document.querySelector('#lib-table tr[data-track-id="' + trackId + '"]');
+            if (row) {
+                var heart = row.querySelector('.lib-heart');
+                if (heart) {
+                    heart.innerHTML = data.favorited ? '&#10084;' : '&#9825;';
+                    heart.classList.toggle('heart-active', !!data.favorited);
+                }
+            }
+        }
+    }).catch(function() {});
+}
+
+function _loadTrackFavorite(trackId) {
+    // Loaded as part of track data, just check cache
+    if (typeof _libTrackCache !== 'undefined' && _libTrackCache[trackId]) {
+        _trackFavorites[trackId] = _libTrackCache[trackId].favorited || 0;
+    }
+}
+
 function _renderStarRating() {
     var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
     var rating = trackId ? (_trackRatings[trackId] || 0) : 0;
@@ -1109,8 +1196,9 @@ function _loadTrackRating(trackId) {
     fetch('/api/library/track/' + trackId, {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            if (data && data.rating != null) {
-                _trackRatings[trackId] = data.rating;
+            if (data) {
+                if (data.rating != null) _trackRatings[trackId] = data.rating;
+                if (data.favorited != null) _trackFavorites[trackId] = data.favorited;
                 _refreshPlayerBar();
             }
         })
@@ -1178,7 +1266,13 @@ document.addEventListener('keydown', function(e) {
         if (valEl) valEl.textContent = _seekStep + 's';
     }
 
-    // Number keys 1-8: set cue point or jump to existing cue; Shift+1-8: delete cue
+    // 0: insert cue at current position (auto-numbered chronologically)
+    if (_isLibraryTrack && _playerAudio && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === '0') {
+        e.preventDefault();
+        cueInsert();
+    }
+
+    // Number keys 1-8: jump to existing cue; Shift+1-8: delete cue
     if (_isLibraryTrack && _playerAudio && !e.ctrlKey && !e.altKey && !e.metaKey && e.key >= '1' && e.key <= '8') {
         e.preventDefault();
         var cueNum = parseInt(e.key);

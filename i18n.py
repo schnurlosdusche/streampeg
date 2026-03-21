@@ -132,6 +132,7 @@ TRANSLATIONS = {
         "dash.track_info": "Track Info",
         "dash.tracks": "Tracks",
         "dash.size": "Size",
+        "dash.total": "Total",
         "dash.start_all": "Start All",
         "dash.stop_all": "Stop All",
         "dash.start_all_title": "Start all",

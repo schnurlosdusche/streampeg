@@ -26,7 +26,7 @@ import bpm_analyzer
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.43a"
+VERSION = "0.0.44a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -612,6 +612,15 @@ def api_bpm_status():
     daemon = lib_module.get_daemon_status()
     rescan = lib_module.get_rescan_status()
     enabled = db.get_setting("bpm_analyzer_enabled") == "1"
+    # Count tracks still needing BPM/Key analysis
+    try:
+        conn = db.get_db()
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM library_tracks WHERE trashed=0 AND (bpm IS NULL OR bpm=0 OR key IS NULL OR key='')"
+        ).fetchone()[0]
+        conn.close()
+    except Exception:
+        pending = 0
     return jsonify({
         "enabled": enabled,
         "running": daemon.get("running", False),
@@ -620,6 +629,7 @@ def api_bpm_status():
         "rescan_running": rescan.get("running", False),
         "rescan_total": rescan.get("total", 0),
         "rescan_scanned": rescan.get("scanned", 0),
+        "pending": pending,
     })
 
 
@@ -1043,6 +1053,20 @@ def library():
     return render_template("library.html")
 
 
+@app.route("/api/library/folders")
+def api_library_folders():
+    subdirs = db.get_stream_subdirs()
+    folders = []
+    for sd in subdirs:
+        conn = db.get_db()
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM library_tracks WHERE stream_subdir = ? AND trashed = 0", (sd,)
+        ).fetchone()
+        conn.close()
+        folders.append({"name": sd, "track_count": row["cnt"] if row else 0})
+    return jsonify({"folders": folders})
+
+
 @app.route("/api/library/tracks")
 def api_library_tracks():
     page = request.args.get("page", 1, type=int)
@@ -1229,12 +1253,44 @@ def api_library_track_playlists(track_id):
     return jsonify({"playlists": [{"id": r["id"], "name": r["name"]} for r in rows]})
 
 
+@app.route("/api/library/tracks/playlists", methods=["POST"])
+def api_library_tracks_playlists_batch():
+    """Get playlist memberships for a batch of track IDs."""
+    data = request.get_json() or {}
+    track_ids = data.get("track_ids", [])
+    if not track_ids:
+        return jsonify({})
+    conn = db.get_db()
+    placeholders = ",".join("?" * len(track_ids))
+    rows = conn.execute(
+        f"""SELECT pt.track_id, p.id, p.name FROM playlists p
+            JOIN playlist_tracks pt ON pt.playlist_id = p.id
+            WHERE pt.track_id IN ({placeholders})
+            ORDER BY p.name""",
+        track_ids,
+    ).fetchall()
+    conn.close()
+    result = {}
+    for r in rows:
+        tid = str(r["track_id"])
+        if tid not in result:
+            result[tid] = []
+        result[tid].append({"id": r["id"], "name": r["name"]})
+    return jsonify(result)
+
+
 @app.route("/api/library/track/<int:track_id>/rating", methods=["POST"])
 def api_library_track_rating(track_id):
     data = request.get_json() or {}
     rating = data.get("rating", 0)
     db.set_track_rating(track_id, rating)
     return jsonify({"success": True, "rating": max(0, min(5, rating))})
+
+
+@app.route("/api/library/track/<int:track_id>/favorite", methods=["POST"])
+def api_library_track_favorite(track_id):
+    new_val = db.toggle_favorite(track_id)
+    return jsonify({"success": True, "favorited": new_val})
 
 
 @app.route("/api/library/playlists/<int:playlist_id>/mixxx")
@@ -1867,7 +1923,14 @@ def api_yt_download_start():
 
 
 def _shutdown():
-    """Graceful shutdown: stop all streams, background workers, cleanup."""
+    """Graceful shutdown: save running streams, stop all, cleanup."""
+    print("Shutting down: saving running stream IDs...")
+    running_ids = [sid for sid in process_manager._processes
+                   if process_manager._processes[sid].get("proc") and
+                   (hasattr(process_manager._processes[sid]["proc"], 'poll') and process_manager._processes[sid]["proc"].poll() is None
+                    or hasattr(process_manager._processes[sid]["proc"], 'is_running') and process_manager._processes[sid]["proc"].is_running())]
+    db.set_setting("running_streams_on_shutdown", json.dumps(running_ids))
+    print(f"  Saved {len(running_ids)} running stream IDs: {running_ids}")
     print("Shutting down: stopping background workers...")
     lib_module.stop_daemon()
     print("Shutting down: stopping all streams...")
@@ -1903,6 +1966,24 @@ if __name__ == "__main__":
     # Adopt existing streamripper processes
     if streams:
         process_manager.adopt_existing_processes(streams)
+
+    # Restore streams that were running before shutdown
+    saved_ids = db.get_setting("running_streams_on_shutdown")
+    if saved_ids:
+        try:
+            running_ids = json.loads(saved_ids)
+            streams_by_id = {s["id"]: s for s in streams}
+            for sid in running_ids:
+                if sid in streams_by_id and sid not in process_manager._processes:
+                    try:
+                        process_manager.start_stream(streams_by_id[sid])
+                        print(f"  Restored stream: {streams_by_id[sid]['name']} (ID {sid})")
+                    except Exception as e:
+                        print(f"  Failed to restore stream {sid}: {e}")
+            db.set_setting("running_streams_on_shutdown", "[]")
+            print(f"Restored {len(running_ids)} streams from previous session.")
+        except Exception as e:
+            print(f"Failed to restore streams: {e}")
 
     # Start background scheduler
     scheduler = SyncScheduler(app)

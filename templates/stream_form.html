@@ -345,8 +345,9 @@ function updateViz() {
         if (handle) handle.style.cursor = 'grab';
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    (function() {
         slider = document.getElementById('split-slider');
+        if (!slider) return;
         toggleMetadataUrl();
         updateViz();
 
@@ -364,7 +365,7 @@ function updateViz() {
             document.addEventListener('touchmove', onMove, {passive: false});
             document.addEventListener('touchend', onUp);
         }, {passive: true});
-    });
+    })();
 })();
 
 // --- Combined trim slider (0–20s each side) ---
@@ -509,7 +510,7 @@ function updateTrimSlider() {
         document.removeEventListener('touchend', onUp);
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    (function() {
         var slider = document.getElementById('trim-slider');
         if (!slider) return;
 
@@ -529,7 +530,7 @@ function updateTrimSlider() {
         }, {passive: true});
 
         updateTrimSlider();
-    });
+    })();
 })();
 
 function testStream() {

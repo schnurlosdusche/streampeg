@@ -142,37 +142,43 @@
 
                 li.style.display = '';
 
+                // Build tooltip parts
+                var subdir = data.current_subdir || '';
+                var scanned = data.rescan_scanned || 0;
+                var total = data.rescan_total || 0;
+                var pending = data.pending || 0;
+
                 if (!data.enabled) {
                     icon.style.color = '#666';
                     icon.style.animation = 'none';
                     text.textContent = 'Off';
                     text.style.color = '#666';
-                    btn.title = 'BPM/Key Analyzer (disabled) - click to enable';
+                    btn.title = 'BPM/Key Analyzer (disabled)\nClick to enable';
                 } else if (data.phase === 'scan') {
                     icon.style.color = '#ff9800';
                     icon.style.animation = 'spin 2s linear infinite';
-                    text.textContent = 'Scanning...';
+                    text.textContent = 'Scan';
                     text.style.color = '#ff9800';
-                    btn.title = 'Scanning library - click to disable';
+                    btn.title = 'Scanning library for new files...\n' + (subdir ? 'Folder: ' + subdir + '\n' : '') + 'Click to disable';
                 } else if (data.phase === 'tags' && data.rescan_running) {
-                    var pct = data.rescan_total > 0 ? Math.round(data.rescan_scanned / data.rescan_total * 100) : 0;
+                    var pct = total > 0 ? Math.round(scanned / total * 100) : 0;
                     icon.style.color = '#4caf50';
                     icon.style.animation = 'spin 2s linear infinite';
                     text.textContent = pct + '%';
                     text.style.color = '#4caf50';
-                    btn.title = 'Analyzing: ' + data.current_subdir + ' (' + data.rescan_scanned + '/' + data.rescan_total + ') - click to disable';
+                    btn.title = 'BPM/Key Analysis\nFolder: ' + subdir + '\nProgress: ' + scanned + ' / ' + total + ' (' + pct + '%)\nClick to disable';
                 } else if (data.running) {
                     icon.style.color = '#4caf50';
                     icon.style.animation = 'none';
                     text.textContent = 'Idle';
                     text.style.color = '#888';
-                    btn.title = 'BPM/Key Analyzer (idle) - click to disable';
+                    btn.title = 'BPM/Key Analyzer (idle)' + (pending > 0 ? '\nPending: ' + pending + ' tracks' : '\nAll tracks analyzed') + '\nClick to disable';
                 } else {
                     icon.style.color = '#666';
                     icon.style.animation = 'none';
                     text.textContent = 'Off';
                     text.style.color = '#666';
-                    btn.title = 'BPM/Key Analyzer (stopped) - click to enable';
+                    btn.title = 'BPM/Key Analyzer (stopped)\nClick to enable';
                 }
 
                 _scanPollTimer = setTimeout(pollScanIndicator, 15000);
@@ -214,6 +220,8 @@
         }
 
         function pjaxNavigate(url, pushState) {
+            // Close any open dialogs
+            document.querySelectorAll('dialog[open]').forEach(function(d) { d.removeAttribute('open'); });
             // Show subtle loading indicator
             mainEl.style.opacity = '0.5';
 

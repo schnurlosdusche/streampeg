@@ -1023,6 +1023,25 @@ body {
 .col-trash { width: 30px; text-align: center; }
 .player-trash-btn { color: #888; font-size: 16px; }
 .player-trash-btn:hover { color: #f44336 !important; }
+.col-heart { width: 30px; text-align: center; }
+.lib-heart, .player-heart { cursor: pointer; font-size: 16px; color: #555; transition: color 0.15s; user-select: none; }
+.lib-heart:hover, .player-heart:hover { color: #e91e63; }
+.lib-heart.heart-active, .player-heart.heart-active { color: #e91e63; }
+.col-playlists { overflow: hidden !important; }
+.lib-pl-tag {
+    display: inline-block;
+    background: #2a2a4a;
+    color: #8ab4f8;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    margin: 1px 2px;
+    white-space: nowrap;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
 .lib-row-selected td { background: #2a2a4a !important; }
 #lib-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
 #lib-table tbody tr.lib-playing td { background: rgba(66,165,245,0.1) !important; }
