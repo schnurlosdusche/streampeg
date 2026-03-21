@@ -214,7 +214,10 @@ def get_status_fast(stream):
 
     # File count/size with TTL-based cache
     import config, sync
-    subdir = stream.get("dest_subdir", stream.get("name", "").replace(" ", "_"))
+    try:
+        subdir = stream["dest_subdir"]
+    except (KeyError, IndexError):
+        subdir = stream["name"].replace(" ", "_")
     dest = os.path.join(config.RECORDING_BASE, subdir)
     nas_dest = os.path.join(sync.get_sync_target(), subdir)
     try:
