@@ -1951,11 +1951,18 @@ if __name__ == "__main__":
     # Register shutdown handler
     atexit.register(_shutdown)
     def _sigterm_handler(sig, frame):
-        # Set stop flags for background workers (non-blocking)
+        # Save running stream IDs before exit
+        print("SIGTERM received, saving running streams...")
+        running_ids = [sid for sid in process_manager._processes
+                       if process_manager._processes[sid].get("proc") and
+                       hasattr(process_manager._processes[sid]["proc"], 'poll') and
+                       process_manager._processes[sid]["proc"].poll() is None]
+        db.set_setting("running_streams_on_shutdown", json.dumps(running_ids))
+        print(f"  Saved {len(running_ids)} stream IDs: {running_ids}")
+        # Stop background workers
         lib_module.stop_daemon()
-        # Force exit immediately — systemd will handle cleanup
-        # Daemon threads are killed automatically on process exit
-        print("SIGTERM received, exiting immediately.")
+        # Exit — daemon threads are killed automatically
+        print("Exiting.")
         os._exit(0)
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
