@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.52a
+- Library: Spaltenbreiten fixiert (table-layout: fixed) — Title bekommt verbleibende Breite, Papierkorb/+ minimal (28px), Playlist 120px, Datum 100px (dd.mm.YY HH:mm)
+- Library: Datum-Format auf dd.mm.YY HH:mm erweitert
+
+## 0.0.51a
+- Heart/Favorite-Button funktioniert jetzt auch ohne aktive Aufnahme beim Live-Hören (Browser-Player und Cast-Player)
+- Neue `stream_favorites` Tabelle: Favoriten werden mit Zeitstempel, Stream-Name und Cover-URL gespeichert
+- API: `/api/stream-favorites/toggle` (POST), `/api/stream-favorites` (GET), `/api/stream-favorites/<id>` (DELETE)
+- Library: Neue "Datum"-Spalte zeigt Aufnahmedatum (basierend auf Datei-mtime), sortierbar per Klick
+- `/api/library/track/find` prüft jetzt auch `stream_favorites` als Fallback
+
+## 0.0.50a
+- Library: Playlist-Zuweisung/Entfernung über den Player aktualisiert jetzt sofort die Playlist-Tags in der Track-Tabelle
+
+## 0.0.49a
+- Library: Page refresh auf /library zeigt jetzt korrekt die Ordner-Liste an (t()-Funktion war beim harten Refresh noch nicht verfügbar, initLibrary wartet jetzt auf DOMContentLoaded)
+
+## 0.0.48a
+- Dashboard: Initialer Seitenaufruf drastisch beschleunigt — keine NAS-Zugriffe mehr beim Rendern, Dateizählung nur noch aus Cache (wird per SSE-Poll nachgeladen)
+
 ## 0.0.41a
 - Dashboard: Size-Spalte von 75px auf 85px verbreitert
 

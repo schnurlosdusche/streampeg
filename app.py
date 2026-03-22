@@ -26,7 +26,7 @@ import bpm_analyzer
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.47a"
+VERSION = "0.0.52a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -492,6 +492,7 @@ def settings():
     bpm_analyzer_enabled = db.get_setting("bpm_analyzer_enabled") == "1"
     bpm_backend = db.get_setting("bpm_backend") or "aubio"
     essentia_available = "essentia" in bpm_analyzer.get_available_backends()
+    mb_enrichment_enabled = db.get_setting("musicbrainz_enrichment") != "0"
     return render_template("settings.html", modules=all_modules, enabled=enabled,
                            builtin_modes=sorted(module_manager.BUILTIN_MODES),
                            sync_enabled=sync_enabled, sync_target=sync_target,
@@ -505,6 +506,7 @@ def settings():
                            bpm_analyzer_enabled=bpm_analyzer_enabled,
                            bpm_backend=bpm_backend,
                            essentia_available=essentia_available,
+                           mb_enrichment_enabled=mb_enrichment_enabled,
                            languages=i18n.LANGUAGES)
 
 
@@ -582,6 +584,13 @@ def settings_dlna_save():
         dlna_server.stop()
         dlna_server.start()
     return jsonify({"ok": True, "status": dlna_server.get_status()})
+
+
+@app.route("/settings/musicbrainz/toggle", methods=["POST"])
+def settings_musicbrainz_toggle():
+    currently = db.get_setting("musicbrainz_enrichment") != "0"
+    db.set_setting("musicbrainz_enrichment", "0" if currently else "1")
+    return jsonify({"ok": True, "enabled": not currently})
 
 
 @app.route("/settings/bpm-analyzer/toggle", methods=["POST"])
@@ -1291,6 +1300,63 @@ def api_library_track_rating(track_id):
 def api_library_track_favorite(track_id):
     new_val = db.toggle_favorite(track_id)
     return jsonify({"success": True, "favorited": new_val})
+
+
+@app.route("/api/stream-favorites", methods=["GET"])
+def api_stream_favorites():
+    sort = request.args.get("sort", "newest")
+    return jsonify({"favorites": db.get_stream_favorites(sort=sort)})
+
+
+@app.route("/api/stream-favorites/toggle", methods=["POST"])
+def api_stream_favorite_toggle():
+    data = request.get_json() or {}
+    track_name = data.get("track_name", "").strip()
+    stream_name = data.get("stream_name", "").strip()
+    cover_url = data.get("cover_url", "")
+    stream_id = data.get("stream_id")
+    if not track_name or not stream_name:
+        return jsonify({"error": "missing fields"}), 400
+    existing = db.is_stream_favorite(track_name, stream_name)
+    if existing:
+        db.remove_stream_favorite(existing)
+        return jsonify({"favorited": False, "id": None})
+    new_id = db.add_stream_favorite(track_name, stream_name, stream_id, cover_url)
+    return jsonify({"favorited": True, "id": new_id})
+
+
+@app.route("/api/stream-favorites/<int:fav_id>", methods=["DELETE"])
+def api_stream_favorite_delete(fav_id):
+    db.remove_stream_favorite(fav_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/track/find", methods=["POST"])
+def api_library_track_find():
+    """Find a library track by current_track string and stream name."""
+    data = request.get_json() or {}
+    track_str = data.get("track", "").strip()
+    stream_subdir = data.get("stream_subdir", "").strip()
+    if not track_str:
+        return jsonify({"found": False})
+    conn = db.get_db()
+    # Try matching by filename (most reliable)
+    fname = track_str.replace(" - ", " - ").replace("/", "_")
+    row = conn.execute(
+        """SELECT id, favorited FROM library_tracks
+           WHERE trashed=0 AND (filename LIKE ? OR title LIKE ?)
+           ORDER BY CASE WHEN stream_subdir=? THEN 0 ELSE 1 END
+           LIMIT 1""",
+        (f"%{fname}%", f"%{track_str}%", stream_subdir),
+    ).fetchone()
+    conn.close()
+    if row:
+        return jsonify({"found": True, "id": row["id"], "favorited": row["favorited"], "mode": "library"})
+    # Check stream_favorites
+    sf_id = db.is_stream_favorite(track_str, stream_subdir)
+    if sf_id:
+        return jsonify({"found": True, "mode": "stream", "favorited": 1, "sf_id": sf_id})
+    return jsonify({"found": False, "mode": "stream"})
 
 
 @app.route("/api/library/playlists/<int:playlist_id>/mixxx")

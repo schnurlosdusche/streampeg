@@ -527,6 +527,20 @@
     <!-- Track table -->
     <div class="lib-table-wrap">
         <table id="lib-table">
+            <colgroup>
+                <col style="width:30px">   <!-- checkbox -->
+                <col style="width:20%">    <!-- title -->
+                <col style="width:150px">  <!-- artist -->
+                <col style="width:30px">   <!-- heart -->
+                <col style="width:80px">   <!-- rating -->
+                <col style="width:45px">   <!-- bpm -->
+                <col style="width:65px">   <!-- key -->
+                <col style="width:50px">   <!-- duration -->
+                <col style="width:110px">  <!-- date -->
+                <col style="width:28px">   <!-- + -->
+                <col style="width:220px">  <!-- playlists -->
+                <col style="width:60px">   <!-- trash -->
+            </colgroup>
             <thead>
                 <tr>
                     <th><input type="checkbox" id="lib-select-all" onchange="toggleSelectAll(this.checked)"></th>
@@ -537,6 +551,7 @@
                     <th data-sort="bpm" onclick="sortBy('bpm')">{{ t('library.bpm') }} <span class="sort-arrow"></span></th>
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
                     <th data-sort="duration" onclick="sortBy('duration')">{{ t('library.duration') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="mtime" onclick="sortBy('mtime')">{{ t('library.date') }} <span class="sort-arrow"></span></th>
                     <th></th>
                     <th>{{ t('library.playlists') }}</th>
                     <th></th>
@@ -656,6 +671,7 @@ function renderTracks(data) {
         html += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
         html += '<td>' + fmtKey(tr.key) + '</td>';
         html += '<td>' + dur + '</td>';
+        html += '<td class="col-date">' + fmtDate(tr.mtime) + '</td>';
         html += '<td><button class="lib-add-btn" onclick="showAddToPlaylistMenu(this, ' + tr.id + ')" title="' + t('library.add_to_playlist') + '">+</button></td>';
         html += '<td class="col-playlists" id="lib-pl-' + tr.id + '"></td>';
         html += '<td class="col-trash"><button class="lib-trash-btn" onclick="showTrashMenu(event, ' + tr.id + ')" title="Delete">&#128465;</button></td>';
@@ -666,6 +682,30 @@ function renderTracks(data) {
     updateSelectAllCheckbox();
     updatePlayButtons();
     _loadListPlaylists();
+}
+
+function _updateListPlaylistTags(trackIds) {
+    if (!trackIds || !trackIds.length) return;
+    fetch('/api/library/tracks/playlists', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({track_ids: trackIds})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        for (var i = 0; i < trackIds.length; i++) {
+            var tid = trackIds[i];
+            var cell = document.getElementById('lib-pl-' + tid);
+            if (!cell) continue;
+            var playlists = data[String(tid)] || [];
+            var html = '';
+            for (var j = 0; j < playlists.length; j++) {
+                html += '<span class="lib-pl-tag" title="' + escAttr(playlists[j].name) + '">' + escHtml(playlists[j].name) + '</span>';
+            }
+            cell.innerHTML = html;
+        }
+    })
+    .catch(function() {});
 }
 
 function _loadListPlaylists() {
@@ -696,6 +736,15 @@ function formatDuration(seconds) {
     var m = Math.floor(seconds / 60);
     var s = Math.floor(seconds % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function fmtDate(mtime) {
+    if (!mtime) return '-';
+    var d = new Date(mtime * 1000);
+    var dd = d.getDate(), mm = d.getMonth() + 1, yy = String(d.getFullYear()).slice(2);
+    var hh = d.getHours(), mi = d.getMinutes();
+    return (dd < 10 ? '0' : '') + dd + '.' + (mm < 10 ? '0' : '') + mm + '.' + yy
+        + ' ' + (hh < 10 ? '0' : '') + hh + ':' + (mi < 10 ? '0' : '') + mi;
 }
 
 function escHtml(str) {
@@ -1130,6 +1179,12 @@ function addToPlaylist(playlistId, trackIds) {
     .then(function() {
         loadPlaylists();
         if (_selectedPlaylistId === playlistId) loadPlaylistTracks(playlistId);
+        // Update playlist tags in list for affected tracks
+        _updateListPlaylistTags(trackIds);
+        // Update player playlist info if current track was added
+        if (typeof _libPlayingTrackId !== 'undefined' && trackIds.indexOf(_libPlayingTrackId) !== -1) {
+            _loadTrackPlaylists(_libPlayingTrackId);
+        }
     })
     .catch(function() {});
 }
@@ -1596,8 +1651,12 @@ function initLibrary() {
     loadFolders();
 }
 
-// Run on load
-initLibrary();
+// Run on load — use DOMContentLoaded so t() from base.html is available on hard refresh
+if (typeof t === 'function') {
+    initLibrary();
+} else {
+    document.addEventListener('DOMContentLoaded', initLibrary);
+}
 </script>
 
 {% endblock %}

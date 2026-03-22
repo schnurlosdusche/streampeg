@@ -212,19 +212,12 @@ def get_status_fast(stream):
             rec_state = watcher.get_state()
             current_track = watcher.get_current_track()
 
-    # File count/size with TTL-based cache
-    import config, sync
-    try:
-        subdir = stream["dest_subdir"]
-    except (KeyError, IndexError):
-        subdir = stream["name"].replace(" ", "_")
-    dest = os.path.join(config.RECORDING_BASE, subdir)
-    nas_dest = os.path.join(sync.get_sync_target(), subdir)
-    try:
-        fc, sz = _get_cached_file_counts(stream_id, dest, nas_dest)
-        file_count = fc
-        disk_usage_mb = round(sz / (1024 * 1024), 1)
-    except Exception:
+    # File count/size: use cache only, don't block initial render with NAS glob
+    cached = _file_count_cache.get(stream_id)
+    if cached:
+        file_count = cached["count"]
+        disk_usage_mb = round(cached["size"] / (1024 * 1024), 1)
+    else:
         file_count = "-"
         disk_usage_mb = 0
 

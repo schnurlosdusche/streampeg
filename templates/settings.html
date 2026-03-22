@@ -251,6 +251,19 @@
             </td>
         </tr>
         <tr>
+            <td>
+                <strong>MusicBrainz Enrichment</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">Auto-lookup album, genre &amp; cover for tracks with artist+title</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="mb-toggle"
+                        onclick="toggleMusicBrainz()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if mb_enrichment_enabled else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ t('settings.enabled') if mb_enrichment_enabled else t('settings.disabled') }}
+                </button>
+            </td>
+        </tr>
+        <tr>
             <td colspan="2" id="bpm-status-cell">
                 <small style="color:var(--pico-muted-color,#888);" id="bpm-status-text"></small>
             </td>
@@ -433,6 +446,26 @@ function saveAcoustidKey() {
 }
 
 // --- BPM Analyzer ---
+function toggleMusicBrainz() {
+    var btn = document.getElementById('mb-toggle');
+    btn.disabled = true;
+    btn.textContent = '...';
+    fetch('/settings/musicbrainz/toggle', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            if (data.enabled) {
+                btn.textContent = t('settings.enabled');
+                btn.style.color = 'var(--pico-color-green-500,green)';
+                btn.style.borderColor = 'var(--pico-color-green-500,green)';
+            } else {
+                btn.textContent = t('settings.disabled');
+                btn.style.color = 'var(--pico-color-red-500,red)';
+                btn.style.borderColor = 'var(--pico-color-red-500,red)';
+            }
+        });
+}
+
 function toggleBpmAnalyzer() {
     var btn = document.getElementById('bpm-toggle');
     btn.disabled = true;

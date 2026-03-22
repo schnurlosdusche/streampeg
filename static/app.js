@@ -614,6 +614,7 @@ function _renderPlayerHTML(p, idx) {
         + '</div>'
         + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + p.device_id + '\', 2)">+</button>'
         + '<span class="player-volume-value">' + curVol + '</span>'
+        + _renderCastHeartBtn(p.stream_id, castTrack)
         + '</div>'
         + '<div class="player-right">';
 
@@ -767,7 +768,8 @@ function _renderBrowserPlayerHTML() {
         + '<button class="player-vol-btn" onclick="_browserVolumeStep(5)">+</button>'
         + '<span class="player-volume-value">' + (_isLibraryTrack ? _seekStep + 's' : volPct) + '</span>'
         + _renderRepeatButton()
-        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn() : '')
+        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn()
+            : _renderStreamHeartBtn())
         + '</div>'
         + '<div class="player-right">'
         + '<div class="player-device-name">' + t('player.browser') + '</div>'
@@ -985,6 +987,115 @@ function _loadTrackFavorite(trackId) {
     }
 }
 
+// --- Stream heart (for non-library tracks that are being recorded) ---
+// Heart/favorite state: supports both library tracks and stream favorites
+var _streamHeartState = {trackId: null, fav: false, lastQuery: '', mode: null}; // mode: 'library' or 'stream'
+
+var _castHeartCache = {}; // cacheKey -> {trackId, fav, mode, loading}
+
+function _heartLookup(track, streamName, streamId, coverUrl, callback) {
+    fetch('/api/library/track/find', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({track: track, stream_subdir: streamName})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        var mode = data.mode || 'stream';
+        callback({trackId: data.id || null, fav: !!data.favorited, mode: mode});
+    }).catch(function() { callback({trackId: null, fav: false, mode: 'stream'}); });
+}
+
+function _renderStreamHeartBtn() {
+    var st = _lastStreamStatus[_playerStreamId] || {};
+    var track = _browserIcyTrack || st.current_track || '';
+    if (!track || track === 'recording' || track === '-' || track.replace(/[\s\-]/g, '') === '') return '';
+
+    var streamName = st.stream_name || '';
+    var queryKey = _playerStreamId + ':' + track;
+    if (queryKey !== _streamHeartState.lastQuery) {
+        _streamHeartState.lastQuery = queryKey;
+        _streamHeartState.trackId = null;
+        _streamHeartState.fav = false;
+        _streamHeartState.mode = null;
+        _heartLookup(track, streamName, _playerStreamId, st.cover_url || '', function(result) {
+            _streamHeartState.trackId = result.trackId;
+            _streamHeartState.fav = result.fav;
+            _streamHeartState.mode = result.mode;
+            _lastPlayerKey = '';
+            _refreshPlayerBar();
+        });
+    }
+
+    if (!_streamHeartState.mode) return '';
+    var isFav = _streamHeartState.fav;
+    return '<span class="player-heart' + (isFav ? ' heart-active' : '') + '" onclick="toggleStreamHeart()" title="Favorite" style="margin-left:12px;cursor:pointer;font-size:18px;user-select:none;">' + (isFav ? '&#10084;' : '&#9825;') + '</span>';
+}
+
+function _renderCastHeartBtn(streamId, track) {
+    if (!track || track === '-' || track.replace(/[\s\-]/g, '') === '') return '';
+    var st = _lastStreamStatus[streamId] || {};
+    var streamName = st.stream_name || '';
+    var cacheKey = streamId + ':' + track;
+    var cached = _castHeartCache[cacheKey];
+
+    if (!cached) {
+        _castHeartCache[cacheKey] = {trackId: null, fav: false, mode: null, loading: true};
+        _heartLookup(track, streamName, streamId, st.cover_url || '', function(result) {
+            _castHeartCache[cacheKey] = {trackId: result.trackId, fav: result.fav, mode: result.mode};
+            _lastPlayerKey = '';
+            _refreshPlayerBar();
+        });
+        return '';
+    }
+
+    if (!cached.mode) return '';
+    return '<span class="player-heart' + (cached.fav ? ' heart-active' : '') + '" onclick="toggleCastHeart(\'' + cacheKey.replace(/'/g, "\\'") + '\')" title="Favorite" style="margin-left:12px;cursor:pointer;font-size:18px;user-select:none;">' + (cached.fav ? '&#10084;' : '&#9825;') + '</span>';
+}
+
+function _toggleHeartCommon(mode, trackId, track, streamName, streamId, coverUrl, callback) {
+    if (mode === 'library' && trackId) {
+        fetch('/api/library/track/' + trackId + '/favorite', {
+            method: 'POST', credentials: 'include'
+        }).then(function(r) { return r.json(); })
+        .then(function(data) { callback(!!data.favorited); })
+        .catch(function() {});
+    } else {
+        fetch('/api/stream-favorites/toggle', {
+            method: 'POST', credentials: 'include',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({track_name: track, stream_name: streamName, stream_id: streamId, cover_url: coverUrl})
+        }).then(function(r) { return r.json(); })
+        .then(function(data) { callback(data.favorited); })
+        .catch(function() {});
+    }
+}
+
+function toggleStreamHeart() {
+    var st = _lastStreamStatus[_playerStreamId] || {};
+    var track = _browserIcyTrack || st.current_track || '';
+    var streamName = st.stream_name || '';
+    var s = _streamHeartState;
+    _toggleHeartCommon(s.mode, s.trackId, track, streamName, _playerStreamId, st.cover_url || '', function(fav) {
+        _streamHeartState.fav = fav;
+        _lastPlayerKey = '';
+        _refreshPlayerBar();
+    });
+}
+
+function toggleCastHeart(cacheKey) {
+    var cached = _castHeartCache[cacheKey];
+    if (!cached) return;
+    var parts = cacheKey.split(':');
+    var streamId = parts[0];
+    var track = parts.slice(1).join(':');
+    var st = _lastStreamStatus[streamId] || {};
+    _toggleHeartCommon(cached.mode, cached.trackId, track, st.stream_name || '', streamId, st.cover_url || '', function(fav) {
+        cached.fav = fav;
+        _lastPlayerKey = '';
+        _refreshPlayerBar();
+    });
+}
+
 function _renderStarRating() {
     var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
     var rating = trackId ? (_trackRatings[trackId] || 0) : 0;
@@ -1151,6 +1262,7 @@ function _removeFromPlaylistTag(playlistId, e) {
     .then(function() {
         _loadTrackPlaylists(trackId);
         if (typeof loadPlaylists === 'function') loadPlaylists();
+        if (typeof _updateListPlaylistTags === 'function') _updateListPlaylistTags([trackId]);
     })
     .catch(function() {});
 }
@@ -1164,6 +1276,7 @@ function _addTrackToPlaylistFromPlayer(trackId, playlistId) {
     .then(function() {
         _loadTrackPlaylists(trackId);
         if (typeof loadPlaylists === 'function') loadPlaylists();
+        if (typeof _updateListPlaylistTags === 'function') _updateListPlaylistTags([trackId]);
     })
     .catch(function() {});
 }

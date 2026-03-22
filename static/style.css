@@ -984,6 +984,7 @@ body {
     width: 100%;
     font-size: 13px;
     border-collapse: collapse;
+    table-layout: fixed;
 }
 #lib-table th {
     cursor: pointer;
@@ -1002,11 +1003,10 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 300px;
     border-bottom: 1px solid #2a2a3a;
 }
 #lib-table tr:hover td { background: #252535; }
-/* Column widths are controlled via nth-child in library.html inline CSS */
+/* Column widths via colgroup in HTML */
 
 .lib-play-btn, .lib-add-btn, .lib-trash-btn {
     background: none;
@@ -1020,14 +1020,15 @@ body {
 .lib-play-btn:hover { color: #4caf50; }
 .lib-add-btn:hover { color: #64b5f6; }
 .lib-trash-btn:hover { color: #f44336; }
-.col-trash { width: 30px; text-align: center; }
+.col-trash { width: 28px; text-align: center; padding-left: 0 !important; padding-right: 0 !important; }
 .player-trash-btn { color: #888; font-size: 16px; }
 .player-trash-btn:hover { color: #f44336 !important; }
 .col-heart { width: 30px; text-align: center; }
+.col-date { font-size: 11px; color: var(--pico-muted-color, #888); white-space: nowrap; }
 .lib-heart, .player-heart { cursor: pointer; font-size: 16px; color: #555; transition: color 0.15s; user-select: none; }
 .lib-heart:hover, .player-heart:hover { color: #e91e63; }
 .lib-heart.heart-active, .player-heart.heart-active { color: #e91e63; }
-.col-playlists { overflow: hidden !important; }
+.col-playlists { width: 120px; overflow: hidden !important; }
 .lib-pl-tag {
     display: inline-block;
     background: #2a2a4a;

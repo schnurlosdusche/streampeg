@@ -76,6 +76,219 @@ def _read_id3(filepath):
     return result
 
 
+def fix_missing_tags(stream_subdir=None):
+    """Find tracks with no ID3 title/artist tags, parse from filename, write to file + DB."""
+    if not _mutagen_available:
+        log.warning("mutagen not available, cannot fix tags")
+        return 0
+
+    from mutagen.id3 import TIT2, TPE1
+
+    conn = db.get_db()
+    if stream_subdir:
+        rows = conn.execute(
+            """SELECT id, filepath, filename, title, artist FROM library_tracks
+               WHERE trashed=0 AND stream_subdir=?""",
+            (stream_subdir,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, filepath, filename, title, artist FROM library_tracks WHERE trashed=0"
+        ).fetchall()
+    conn.close()
+
+    fixed = 0
+    for row in rows:
+        filepath = row["filepath"]
+        filename = row["filename"]
+        if not os.path.isfile(filepath):
+            continue
+
+        # Parse artist/title from filename
+        name_base = os.path.splitext(filename)[0]
+        if " - " not in name_base:
+            continue
+        parts = name_base.split(" - ", 1)
+        fn_artist = parts[0].strip().replace("_", " ")
+        fn_title = parts[1].strip().replace("_", " ")
+
+        if not fn_artist or not fn_title:
+            continue
+
+        # Check if file already has ID3 tags
+        try:
+            tags = ID3(filepath)
+            has_title = bool(tags.get("TIT2"))
+            has_artist = bool(tags.get("TPE1"))
+        except Exception:
+            has_title = False
+            has_artist = False
+            tags = None
+
+        if has_title and has_artist:
+            continue
+
+        # Write tags to file
+        try:
+            from mutagen.id3 import ID3 as _ID3
+            try:
+                tags = _ID3(filepath)
+            except Exception:
+                from mutagen.id3 import ID3NoHeaderError as _Err
+                tags = _ID3()
+
+            if not has_title:
+                tags.add(TIT2(encoding=3, text=fn_title))
+            if not has_artist:
+                tags.add(TPE1(encoding=3, text=fn_artist))
+            tags.save(filepath)
+
+            # Update DB
+            conn = db.get_db()
+            conn.execute(
+                "UPDATE library_tracks SET title=?, artist=? WHERE id=?",
+                (fn_title, fn_artist, row["id"]),
+            )
+            conn.commit()
+            conn.close()
+            fixed += 1
+        except Exception as e:
+            log.warning("Failed to write tags for %s: %s", filepath, e)
+
+    log.info("Fixed tags for %d files%s", fixed, f" in {stream_subdir}" if stream_subdir else "")
+    return fixed
+
+
+def _musicbrainz_enrich_batch(max_per_run=50):
+    """Find tracks with artist+title but missing album/genre, look up on MusicBrainz."""
+    import autotag
+    import urllib.request
+    import urllib.parse
+    import json
+    import time
+
+    conn = db.get_db()
+    rows = conn.execute(
+        """SELECT id, filepath, title, artist, album, genre FROM library_tracks
+           WHERE trashed=0 AND artist != '' AND title != ''
+           AND (album = '' OR album IS NULL)
+           AND (genre = '' OR genre IS NULL)
+           LIMIT ?""",
+        (max_per_run,),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return 0
+
+    enriched = 0
+    UA = "streampeg/0.1 (https://github.com/martin/streampeg)"
+
+    for row in rows:
+        if not _daemon_running:
+            break
+
+        artist = row["artist"]
+        title = row["title"]
+        track_id = row["id"]
+        filepath = row["filepath"]
+
+        # Search MusicBrainz by artist + title
+        autotag._mb_rate_limit()
+        try:
+            query = urllib.parse.quote(f'artist:"{artist}" AND recording:"{title}"')
+            url = f"https://musicbrainz.org/ws/2/recording/?query={query}&limit=1&fmt=json"
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            resp = urllib.request.urlopen(req, timeout=10)
+            data = json.loads(resp.read())
+
+            recordings = data.get("recordings", [])
+            if not recordings:
+                # Mark as checked so we don't retry (set album to "-")
+                conn = db.get_db()
+                conn.execute("UPDATE library_tracks SET album='-' WHERE id=?", (track_id,))
+                conn.commit()
+                conn.close()
+                continue
+
+            rec = recordings[0]
+            mb_title = rec.get("title", "")
+            mb_artist = ""
+            if rec.get("artist-credit"):
+                parts = []
+                for ac in rec["artist-credit"]:
+                    parts.append(ac.get("name", ""))
+                    if ac.get("joinphrase"):
+                        parts.append(ac["joinphrase"])
+                mb_artist = "".join(parts)
+
+            mb_album = ""
+            release_id = None
+            if rec.get("releases"):
+                rel = rec["releases"][0]
+                mb_album = rel.get("title", "")
+                release_id = rel.get("id")
+
+            genres = []
+            for g in rec.get("tags", []):
+                genres.append(g.get("name", ""))
+
+            mb_genre = "; ".join(genres[:3]) if genres else ""
+
+            # Update DB
+            conn = db.get_db()
+            conn.execute(
+                """UPDATE library_tracks SET
+                    album = CASE WHEN ? != '' THEN ? ELSE album END,
+                    genre = CASE WHEN ? != '' THEN ? ELSE genre END
+                WHERE id = ?""",
+                (mb_album or "-", mb_album or "-", mb_genre, mb_genre, track_id),
+            )
+            conn.commit()
+            conn.close()
+
+            # Write tags to file if possible
+            if os.path.isfile(filepath):
+                try:
+                    from mutagen.id3 import ID3 as _ID3, TALB, TCON
+                    try:
+                        tags = _ID3(filepath)
+                    except Exception:
+                        tags = _ID3()
+                    if mb_album and mb_album != "-":
+                        tags.add(TALB(encoding=3, text=mb_album))
+                    if mb_genre:
+                        tags.add(TCON(encoding=3, text=mb_genre))
+                    tags.save(filepath)
+                except Exception as e:
+                    log.debug("Could not write MB tags to %s: %s", filepath, e)
+
+            # Fetch cover art if we have a release_id
+            if release_id and os.path.isfile(filepath):
+                cover_data = autotag.fetch_cover_art(release_id)
+                if cover_data:
+                    try:
+                        from mutagen.id3 import ID3 as _ID3, APIC
+                        tags = _ID3(filepath)
+                        tags.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                                      desc="Front", data=cover_data))
+                        tags.save(filepath)
+                    except Exception as e:
+                        log.debug("Could not write cover to %s: %s", filepath, e)
+
+            enriched += 1
+
+        except Exception as e:
+            log.debug("MB lookup failed for %s - %s: %s", artist, title, e)
+            # Mark as checked
+            conn = db.get_db()
+            conn.execute("UPDATE library_tracks SET album='-' WHERE id=?", (track_id,))
+            conn.commit()
+            conn.close()
+
+    return enriched
+
+
 def _collect_mp3s(base_dir, subdir=None):
     """Walk directory tree and return list of (filepath, stream_subdir) tuples."""
     files = []
@@ -514,6 +727,30 @@ def _daemon_loop():
             log.error("Daemon scan error: %s", e)
             with _scan_lock:
                 _scan_status["running"] = False
+
+        if not _daemon_running:
+            break
+
+        # Phase 1.5: Fix missing ID3 tags (parse from filename, write to file)
+        try:
+            fixed = fix_missing_tags()
+            if fixed > 0:
+                log.info("Auto-fixed %d files with missing ID3 tags", fixed)
+        except Exception as e:
+            log.error("Fix tags error: %s", e)
+
+        if not _daemon_running:
+            break
+
+        # Phase 1.6: MusicBrainz enrichment (fill missing album/genre/cover)
+        mb_enabled = db.get_setting("musicbrainz_enrichment") != "0"  # enabled by default
+        if mb_enabled:
+            try:
+                enriched = _musicbrainz_enrich_batch()
+                if enriched > 0:
+                    log.info("MusicBrainz enriched %d tracks", enriched)
+            except Exception as e:
+                log.error("MusicBrainz enrichment error: %s", e)
 
         if not _daemon_running:
             break

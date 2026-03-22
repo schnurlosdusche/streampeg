@@ -103,6 +103,15 @@ def init_db():
             position_sec REAL NOT NULL,
             UNIQUE(track_id, cue_number)
         );
+
+        CREATE TABLE IF NOT EXISTS stream_favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_name TEXT NOT NULL,
+            stream_name TEXT NOT NULL,
+            stream_id INTEGER,
+            cover_url TEXT DEFAULT '',
+            favorited_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     # Migrate: add columns if missing
     cursor = conn.execute("PRAGMA table_info(streams)")
@@ -669,3 +678,52 @@ def set_cue_points(track_id, cues):
         )
     conn.commit()
     conn.close()
+
+
+# --- Stream favorites (live listening) ---
+
+def add_stream_favorite(track_name, stream_name, stream_id=None, cover_url=""):
+    """Add a favorite from live listening. Returns the new row id."""
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO stream_favorites (track_name, stream_name, stream_id, cover_url) VALUES (?, ?, ?, ?)",
+        (track_name, stream_name, stream_id, cover_url),
+    )
+    conn.commit()
+    row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return row_id
+
+
+def remove_stream_favorite(fav_id):
+    conn = get_db()
+    conn.execute("DELETE FROM stream_favorites WHERE id = ?", (fav_id,))
+    conn.commit()
+    conn.close()
+
+
+def is_stream_favorite(track_name, stream_name):
+    """Check if a track is already favorited. Returns row id or None."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM stream_favorites WHERE track_name = ? AND stream_name = ?",
+        (track_name, stream_name),
+    ).fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def get_stream_favorites(sort="newest", limit=200):
+    """Get all stream favorites. sort: newest, oldest, stream, track."""
+    order = {
+        "newest": "favorited_at DESC",
+        "oldest": "favorited_at ASC",
+        "stream": "stream_name ASC, favorited_at DESC",
+        "track": "track_name ASC",
+    }.get(sort, "favorited_at DESC")
+    conn = get_db()
+    rows = conn.execute(
+        f"SELECT * FROM stream_favorites ORDER BY {order} LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
