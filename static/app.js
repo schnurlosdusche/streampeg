@@ -1,6 +1,17 @@
+// --- Tab visibility tracking ---
+var _tabVisible = !document.hidden;
+document.addEventListener('visibilitychange', function() {
+    _tabVisible = !document.hidden;
+    if (_tabVisible) {
+        // Notify server that client is back
+        fetch('/api/heartbeat', {method: 'POST', credentials: 'include'}).catch(function(){});
+    }
+});
+
 // Poll status every 5 seconds
 function updateStatus() {
-    fetch('/api/status', {credentials: 'include'})
+    var _isPlaying = _playerAudio && !_playerAudio.paused && !_playerAudio.ended ? '1' : '0';
+    fetch('/api/status', {credentials: 'include', headers: {'X-Tab-Visible': _tabVisible ? '1' : '0', 'X-Audio-Playing': _isPlaying}})
     .then(r => r.json())
     .then(data => {
         // Update stream rows on dashboard
@@ -802,7 +813,28 @@ function _renderRepeatButton() {
         cls = '';
         title = 'Repeat: Off';
     }
-    return '<button class="player-btn repeat-btn' + cls + '" onclick="toggleRepeatMode()" title="' + title + '" style="margin-left:20px;">' + icon + '</button>';
+    return '<button class="player-btn repeat-btn' + cls + '" onclick="toggleRepeatMode()" title="' + title + '" style="margin-left:20px;">' + icon + '</button>'
+        + '<button class="player-btn shuffle-btn" onclick="playRandomTrack()" title="Random Track" style="margin-left:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.4"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>';
+}
+
+function playRandomTrack() {
+    // Get current folder's tracks from cache or fetch random from API
+    if (typeof _libTracks !== 'undefined' && _libTracks && _libTracks.length > 0) {
+        var idx = Math.floor(Math.random() * _libTracks.length);
+        var tr = _libTracks[idx];
+        if (typeof playLibraryTrackById === 'function') {
+            playLibraryTrackById(tr.id);
+        }
+    } else {
+        // Fetch a random track from the API
+        fetch('/api/library/random', {credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.id && typeof playLibraryTrackById === 'function') {
+                    playLibraryTrackById(data.id);
+                }
+            }).catch(function() {});
+    }
 }
 
 function toggleRepeatMode() {

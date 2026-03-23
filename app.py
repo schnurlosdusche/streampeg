@@ -23,6 +23,18 @@ import autotag
 import dlna_server
 import library as lib_module
 import bpm_analyzer
+
+# --- Client activity tracking ---
+_last_client_active = 0.0  # timestamp of last active (visible tab) request
+_client_audio_playing = False  # whether browser is playing audio
+_CLIENT_IDLE_THRESHOLD = 60  # seconds before considering no active client
+
+
+def is_client_active():
+    """Check if any browser client is actively viewing the page or playing audio."""
+    if _client_audio_playing:
+        return True
+    return (time.time() - _last_client_active) < _CLIENT_IDLE_THRESHOLD
 import i18n
 from scheduler import SyncScheduler
 
@@ -630,9 +642,13 @@ def api_bpm_status():
         conn.close()
     except Exception:
         pending = 0
+    # Check if workers are paused due to active client
+    bpm_status = bpm_analyzer.get_status()
+    paused = bpm_status.get("paused", False) or is_client_active()
     return jsonify({
         "enabled": enabled,
         "running": daemon.get("running", False),
+        "paused": paused,
         "phase": daemon.get("phase", ""),
         "current_subdir": daemon.get("current_subdir", ""),
         "rescan_running": rescan.get("running", False),
@@ -691,8 +707,21 @@ def settings_sync():
 
 # --- API ---
 
+@app.route("/api/heartbeat", methods=["POST"])
+def api_heartbeat():
+    """Called by browser when tab is visible. Pauses background workers."""
+    global _last_client_active
+    _last_client_active = time.time()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/status")
 def api_status():
+    global _last_client_active, _client_audio_playing
+    # Track active client from status poll (header set by JS)
+    _client_audio_playing = request.headers.get("X-Audio-Playing") == "1"
+    if request.headers.get("X-Tab-Visible") == "1":
+        _last_client_active = time.time()
     streams = db.get_all_streams()
     result = []
     for s in streams:
@@ -1401,6 +1430,20 @@ def api_library_playlist_mixxx(playlist_id):
 
     return Response(xml, mimetype="application/xml",
                     headers={"Content-Disposition": 'attachment; filename="{}.xml"'.format(pl["name"])})
+
+
+@app.route("/api/library/track/<int:track_id>/play")
+@app.route("/api/library/random")
+def api_library_random():
+    """Return a random track from the library."""
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT id, title, artist, stream_subdir FROM library_tracks WHERE trashed=0 ORDER BY RANDOM() LIMIT 1"
+    ).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": "no tracks"}), 404
+    return jsonify({"id": row["id"], "title": row["title"], "artist": row["artist"], "stream_subdir": row["stream_subdir"]})
 
 
 @app.route("/api/library/track/<int:track_id>/play")

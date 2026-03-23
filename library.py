@@ -696,14 +696,34 @@ _daemon_status = {
 _daemon_lock = threading.Lock()
 
 
+def _is_client_active():
+    """Check if a browser client is actively viewing the page."""
+    try:
+        import app as _app
+        return _app.is_client_active()
+    except Exception:
+        return False
+
+
+def _wait_for_idle():
+    """Block until no active client or daemon stopped."""
+    while _is_client_active() and _daemon_running:
+        time.sleep(5)
+
+
 def _daemon_loop():
-    """Continuous background loop: scan for new files, then rescan tags per folder."""
+    """Continuous background loop: scan for new files, then rescan tags per folder.
+    Pauses when a browser client is actively viewing the page."""
     global _daemon_running, _daemon_status
     import time
 
     import bpm_analyzer
 
     while _daemon_running:
+        # Wait for client to go idle before doing heavy work
+        _wait_for_idle()
+        if not _daemon_running:
+            break
         # Phase 1: Library scan (find new files)
         with _daemon_lock:
             _daemon_status["phase"] = "scan"

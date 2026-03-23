@@ -167,6 +167,12 @@
                     text.textContent = pct + '%';
                     text.style.color = '#4caf50';
                     btn.title = 'BPM/Key Analysis\nFolder: ' + subdir + '\nProgress: ' + scanned + ' / ' + total + ' (' + pct + '%)\nClick to disable';
+                } else if (data.paused) {
+                    icon.style.color = '#ff9800';
+                    icon.style.animation = 'none';
+                    text.textContent = 'Paused';
+                    text.style.color = '#ff9800';
+                    btn.title = 'BPM/Key Analyzer (paused — browser active)\nPending: ' + pending + ' tracks\nResumes when tab is hidden or closed\nClick to disable';
                 } else if (data.running) {
                     icon.style.color = '#4caf50';
                     icon.style.animation = 'none';

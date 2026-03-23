@@ -112,13 +112,35 @@ def _analyze_track(filepath, backend):
 
 # --- Background worker ---
 
+def _is_client_active():
+    """Check if a browser client is actively viewing the page."""
+    try:
+        import app as _app
+        return _app.is_client_active()
+    except Exception:
+        return False
+
+
 def _worker_loop():
-    """Main worker loop: find tracks without BPM/Key and analyze them."""
+    """Main worker loop: find tracks without BPM/Key and analyze them.
+    Pauses when a browser client is actively viewing the page."""
     global _worker_running
 
     backend = db.get_setting("bpm_backend") or "aubio"
 
     while _worker_running:
+        # Wait while a client is actively viewing
+        if _is_client_active():
+            with _worker_lock:
+                _worker_status["paused"] = True
+            for _ in range(10):
+                if not _worker_running:
+                    return
+                time.sleep(1)
+            continue
+        with _worker_lock:
+            _worker_status["paused"] = False
+
         conn = db.get_db()
         rows = conn.execute(
             "SELECT id, filepath FROM library_tracks "
@@ -150,6 +172,14 @@ def _worker_loop():
         for row in rows:
             if not _worker_running:
                 return
+
+            # Pause if client becomes active mid-batch
+            while _is_client_active() and _worker_running:
+                with _worker_lock:
+                    _worker_status["paused"] = True
+                time.sleep(5)
+            with _worker_lock:
+                _worker_status["paused"] = False
 
             track_id = row["id"]
             filepath = row["filepath"]
