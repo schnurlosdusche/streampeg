@@ -1432,7 +1432,6 @@ def api_library_playlist_mixxx(playlist_id):
                     headers={"Content-Disposition": 'attachment; filename="{}.xml"'.format(pl["name"])})
 
 
-@app.route("/api/library/track/<int:track_id>/play")
 @app.route("/api/library/random")
 def api_library_random():
     """Return a random track from the library."""
