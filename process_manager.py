@@ -18,6 +18,8 @@ _processes = {}
 # Cache for file counts (expensive NAS glob): stream_id -> {count, size, timestamp}
 _file_count_cache = {}
 _FILE_COUNT_TTL = 300  # seconds (NAS glob is expensive over SMB)
+_file_count_bg_lock = threading.Lock()
+_file_count_bg_running = False
 
 
 class BitrateError(Exception):
@@ -170,18 +172,61 @@ def _count_audio_files(directory):
 
 
 def _get_cached_file_counts(stream_id, dest, nas_dest):
-    """Get file counts with caching to avoid slow NAS glob on every poll."""
-    now = time.time()
+    """Get file counts from cache. Never blocks — returns stale or 0 if not yet cached.
+    Background thread refreshes expired entries."""
     cached = _file_count_cache.get(stream_id)
-    if cached and (now - cached["ts"]) < _FILE_COUNT_TTL:
+    if cached:
+        # Schedule background refresh if stale
+        now = time.time()
+        if (now - cached["ts"]) >= _FILE_COUNT_TTL:
+            _schedule_bg_file_count(stream_id, dest, nas_dest)
         return cached["count"], cached["size"]
+    else:
+        # First access — schedule background count, return 0 for now
+        _schedule_bg_file_count(stream_id, dest, nas_dest)
+        return 0, 0
 
-    worker_count, worker_size = _count_audio_files(dest)
-    nas_count, nas_size = _count_audio_files(nas_dest)
-    total_count = worker_count + nas_count
-    total_size = worker_size + nas_size
-    _file_count_cache[stream_id] = {"count": total_count, "size": total_size, "ts": now}
-    return total_count, total_size
+
+_file_count_queue = []  # [(stream_id, dest, nas_dest), ...]
+
+def _schedule_bg_file_count(stream_id, dest, nas_dest):
+    """Queue a background file count refresh. One worker processes them sequentially."""
+    global _file_count_bg_running
+    with _file_count_bg_lock:
+        # Don't add duplicates
+        for item in _file_count_queue:
+            if item[0] == stream_id:
+                return
+        _file_count_queue.append((stream_id, dest, nas_dest))
+        if _file_count_bg_running:
+            return
+        _file_count_bg_running = True
+
+    def _process_queue():
+        global _file_count_bg_running
+        try:
+            while True:
+                with _file_count_bg_lock:
+                    if not _file_count_queue:
+                        _file_count_bg_running = False
+                        return
+                    sid, d, nd = _file_count_queue.pop(0)
+                try:
+                    worker_count, worker_size = _count_audio_files(d)
+                    nas_count, nas_size = _count_audio_files(nd)
+                    _file_count_cache[sid] = {
+                        "count": worker_count + nas_count,
+                        "size": worker_size + nas_size,
+                        "ts": time.time(),
+                    }
+                except Exception:
+                    pass
+        except Exception:
+            with _file_count_bg_lock:
+                _file_count_bg_running = False
+
+    t = threading.Thread(target=_process_queue, daemon=True)
+    t.start()
 
 
 def get_status_fast(stream):

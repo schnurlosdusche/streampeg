@@ -73,19 +73,38 @@ def _write_tags(filepath, bpm, key):
 
 
 def _analyze_track(filepath, backend):
-    """Analyze a single track in a subprocess. Returns (bpm, key)."""
+    """Analyze a single track in a subprocess. Returns (bpm, key).
+    Uses nice/ionice for low priority and enforces timeout + memory limit."""
+    # Skip files > 100MB (long mixes that eat too much RAM)
+    try:
+        fsize = os.path.getsize(filepath)
+        if fsize > 100 * 1024 * 1024:
+            log.debug("Skipping BPM analysis for large file (%dMB): %s",
+                      fsize // (1024 * 1024), filepath)
+            return -1, "-"
+    except OSError:
+        return 0, ""
+
     script = os.path.join(os.path.dirname(__file__), "_bpm_worker.py")
     try:
-        result = subprocess.run(
-            [sys.executable, script, filepath, backend],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        # Run with nice 19 (lowest priority) and ionice idle class
+        cmd = ["nice", "-n", "19", "ionice", "-c", "3",
+               sys.executable, script, filepath, backend]
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         )
-        if result.returncode == 0:
-            data = json.loads(result.stdout.strip())
+        try:
+            stdout, stderr = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            log.debug("BPM analysis timed out for %s", filepath)
+            return 0, ""
+
+        if proc.returncode == 0 and stdout.strip():
+            data = json.loads(stdout.strip())
             return data.get("bpm", 0), data.get("key", "")
-    except subprocess.TimeoutExpired:
-        log.debug("BPM analysis timed out for %s", filepath)
     except Exception as e:
         log.debug("BPM analysis error for %s: %s", filepath, e)
     return 0, ""
@@ -172,8 +191,8 @@ def _worker_loop():
                 _worker_status["analyzed"] += 1
                 _worker_status["remaining"] = max(0, _worker_status["remaining"] - 1)
 
-            # Small pause between tracks to be gentle on I/O
-            time.sleep(0.5)
+            # Pause between tracks to keep server responsive
+            time.sleep(2)
 
     with _worker_lock:
         _worker_status["running"] = False
