@@ -931,6 +931,19 @@ function _renderBrowserPlayerHTML() {
         + '</div>'
         + '<div class="player-right">'
         + '<div class="player-device-name">' + (_isCasting ? _getLibCastNames() : t('player.browser')) + '</div>'
+        + (function() {
+            var _brtid = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+            var _brdata = (_brtid && typeof _libTrackCache !== 'undefined') ? _libTrackCache[_brtid] : null;
+            if (_brdata && _brdata.bitrate && _brdata.bitrate > 0) {
+                return '<div class="player-bitrate">' + _brdata.bitrate + ' kbit/s</div>';
+            }
+            // Fallback: calculate from size/duration until rescan populates bitrate
+            if (_brdata && _brdata.size_bytes && _brdata.duration_sec && _brdata.duration_sec > 0) {
+                var kbps = Math.round((_brdata.size_bytes * 8) / (_brdata.duration_sec * 1000));
+                if (kbps > 0) return '<div class="player-bitrate">~' + kbps + ' kbit/s</div>';
+            }
+            return '';
+        })()
         + '</div>';
 
     if (_isLibraryTrack) {

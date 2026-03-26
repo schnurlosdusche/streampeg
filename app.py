@@ -40,7 +40,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.80a"
+VERSION = "0.0.101a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -1222,6 +1222,8 @@ def api_library_tracks():
             "rating": t_row.get("rating", 0),
             "favorited": t_row.get("favorited", 0),
             "mtime": t_row.get("mtime", 0),
+            "bitrate": t_row.get("bitrate", 0),
+            "size_bytes": t_row.get("size_bytes", 0),
         })
     return jsonify({
         "tracks": slim, "total": total,

@@ -55,7 +55,7 @@ TRANSLATIONS = {
         "nav.dashboard": "Dashboard",
         "nav.radio_browser": "Radio Browser",
         "nav.logs": "Logs",
-        "nav.yt_download": "YT Download",
+        "nav.yt_download": "YT",
         "nav.add_stream": "+ Stream",
         "nav.settings": "Settings",
         "nav.restart": "Restart",

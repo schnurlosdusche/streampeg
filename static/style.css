@@ -864,6 +864,12 @@ dialog, dialog::backdrop {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.player-bitrate {
+    font-size: 0.6rem;
+    color: #888;
+    white-space: nowrap;
+    font-family: monospace;
+}
 #version-info {
     position: fixed;
     top: 12px;

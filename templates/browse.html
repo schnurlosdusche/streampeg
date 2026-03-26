@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Radio Browser - Streampeg{% endblock %}
 {% block content %}
-<h2>{{ t('browse.title') }}</h2>
+<div style="display:flex;align-items:center;gap:12px;">
+    <h2 style="margin:0;">{{ t('browse.title') }}</h2>
+    <a href="{{ url_for('stream_new') }}" role="button" class="outline" style="font-size:13px;padding:4px 12px;">{{ t('nav.add_stream') }}</a>
+</div>
 
 <div class="grid">
     <div>

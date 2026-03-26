@@ -18,7 +18,7 @@
     font-size: 0.78rem;
     padding: 0.2rem 0.5rem;
 }
-.lib-top-bar input[type="text"] { width: 200px; }
+.lib-top-bar input[type="text"] { width: 400px; }
 .lib-top-bar input[type="number"] { width: 70px; }
 .lib-top-bar select { width: 140px; }
 .lib-top-bar .lib-track-count {
@@ -175,23 +175,23 @@
 #lib-table tbody tr.selected {
     background: rgba(100,181,246,0.1);
 }
-/* Column widths: checkbox, title, artist, rating, bpm, key, duration, add */
+/* Column widths: title, artist, bitrate, bpm, key, duration, heart, rating, add, playlists, trash */
 #lib-table th:nth-child(1),
-#lib-table td:nth-child(1) { width: 28px; text-align: center; }   /* checkbox */
+#lib-table td:nth-child(1) { width: auto; }                        /* title */
 #lib-table th:nth-child(2),
-#lib-table td:nth-child(2) { width: auto; }                        /* title */
+#lib-table td:nth-child(2) { width: 20%; }                         /* artist */
 #lib-table th:nth-child(3),
-#lib-table td:nth-child(3) { width: 20%; }                         /* artist */
+#lib-table td:nth-child(3) { width: 50px; text-align: right; font-family: monospace; }  /* bitrate */
 #lib-table th:nth-child(4),
-#lib-table td:nth-child(4) { width: 30px; text-align: center; }    /* heart */
+#lib-table td:nth-child(4) { width: 50px; text-align: right; font-family: monospace; }  /* bpm */
 #lib-table th:nth-child(5),
-#lib-table td:nth-child(5) { width: 90px; text-align: center; overflow: visible; }    /* rating */
+#lib-table td:nth-child(5) { width: 80px; text-align: center; font-family: monospace; } /* key */
 #lib-table th:nth-child(6),
-#lib-table td:nth-child(6) { width: 65px; text-align: right; font-family: monospace; }  /* bpm */
+#lib-table td:nth-child(6) { width: 85px; text-align: right; font-family: monospace; }  /* duration */
 #lib-table th:nth-child(7),
-#lib-table td:nth-child(7) { width: 80px; text-align: center; font-family: monospace; } /* key */
+#lib-table td:nth-child(7) { width: 36px; text-align: center; }    /* heart */
 #lib-table th:nth-child(8),
-#lib-table td:nth-child(8) { width: 85px; text-align: right; font-family: monospace; }  /* duration */
+#lib-table td:nth-child(8) { width: 90px; text-align: center; overflow: visible; }    /* rating */
 #lib-table th:nth-child(9),
 #lib-table td:nth-child(9) { width: 28px; text-align: center; }    /* add */
 #lib-table th:nth-child(10),
@@ -368,6 +368,14 @@
 }
 </style>
 
+<!-- Playlist overview (shown when nav > Playlists is clicked) -->
+<div id="lib-playlist-overview" style="display:none;">
+    <div class="lib-folder-header">
+        <h3 style="margin:0;font-size:1rem;">Playlists</h3>
+    </div>
+    <div class="lib-folders" id="lib-playlists-grid"></div>
+</div>
+
 <!-- Folder view (shown initially) -->
 <div id="lib-folder-view">
     <div style="text-align:center;margin:1.5rem auto 1rem;max-width:600px;">
@@ -402,9 +410,6 @@
 <!-- Top Bar -->
 <div class="lib-top-bar">
     <input type="text" id="lib-search" placeholder="{{ t('library.search_placeholder') }}">
-    <select id="lib-stream-filter">
-        <option value="">{{ t('library.all_streams') }}</option>
-    </select>
     <input type="number" id="lib-bpm-min" placeholder="BPM min" min="0" max="300">
     <input type="number" id="lib-bpm-max" placeholder="BPM max" min="0" max="300">
     <select id="lib-key-filter">
@@ -446,12 +451,6 @@
     <span class="lib-track-count" id="lib-track-count"></span>
 </div>
 
-<!-- Bulk action bar -->
-<div class="lib-bulk-bar" id="lib-bulk-bar">
-    <span id="lib-selected-count">0</span> {{ t('library.select_all') }}
-    <button class="outline" onclick="showBulkPlaylistMenu(this)">{{ t('library.add_selected') }}</button>
-</div>
-
 <!-- Main area -->
 <div class="lib-main">
     <!-- Loading overlay -->
@@ -469,30 +468,28 @@
     <div class="lib-table-wrap">
         <table id="lib-table">
             <colgroup>
-                <col style="width:30px">   <!-- checkbox -->
                 <col style="width:20%">    <!-- title -->
-                <col style="width:150px">  <!-- artist -->
-                <col style="width:30px">   <!-- heart -->
-                <col style="width:80px">   <!-- rating -->
-                <col style="width:45px">   <!-- bpm -->
+                <col style="width:281px">  <!-- artist -->
+                <col style="width:50px">   <!-- bitrate -->
+                <col style="width:50px">   <!-- bpm -->
                 <col style="width:65px">   <!-- key -->
                 <col style="width:50px">   <!-- duration -->
-                <col style="width:110px">  <!-- date -->
+                <col style="width:36px">   <!-- heart -->
+                <col style="width:80px">   <!-- rating -->
                 <col style="width:28px">   <!-- + -->
                 <col style="width:220px">  <!-- playlists -->
                 <col style="width:60px">   <!-- trash -->
             </colgroup>
             <thead>
                 <tr>
-                    <th><input type="checkbox" id="lib-select-all" onchange="toggleSelectAll(this.checked)"></th>
                     <th data-sort="title" onclick="sortBy('title')">{{ t('library.title_col') }} <span class="sort-arrow"></span></th>
                     <th data-sort="artist" onclick="sortBy('artist')">{{ t('library.artist_col') }} <span class="sort-arrow"></span></th>
-                    <th data-sort="favorited" onclick="sortBy('favorited')">&#9825; <span class="sort-arrow"></span></th>
-                    <th data-sort="rating" onclick="sortBy('rating')">&#9733; <span class="sort-arrow"></span></th>
+                    <th data-sort="bitrate" onclick="sortBy('bitrate')">BIT <span class="sort-arrow"></span></th>
                     <th data-sort="bpm" onclick="sortBy('bpm')">{{ t('library.bpm') }} <span class="sort-arrow"></span></th>
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
                     <th data-sort="duration" onclick="sortBy('duration')">&#9201; <span class="sort-arrow"></span></th>
-                    <th data-sort="mtime" onclick="sortBy('mtime')">{{ t('library.date') }} <span class="sort-arrow"></span></th>
+                    <th data-sort="favorited" onclick="sortBy('favorited')">&#9825; <span class="sort-arrow"></span></th>
+                    <th data-sort="rating" onclick="sortBy('rating')">&#9733; <span class="sort-arrow"></span></th>
                     <th></th>
                     <th>{{ t('library.playlists') }}</th>
                     <th></th>
@@ -582,7 +579,7 @@ function loadTracks() {
 
 // --- Virtual scroll ---
 var _ROW_HEIGHT = 28;
-var _OVERSCAN = 10;
+var _OVERSCAN = 40;
 var _vsScrollLock = false;
 var _vsScrollWrap = null;
 var _vsTbody = null;
@@ -629,7 +626,9 @@ function renderTracks(data) {
     // Set total height via a bottom spacer
     _vsRenderVisible();
 
-    // Attach scroll listener
+    // !! DO NOT MODIFY - scroll-to-active-track infrastructure !!
+    // Attach scroll listener (works together with _vsScrollLock, scrollToPlayingTrack,
+    // _scrollToTrackAttempt). Changing this breaks vertical centering of active track.
     if (_vsScrollWrap && !_vsScrollWrap._vsListener) {
         var _vsRaf = null;
         _vsScrollWrap.addEventListener('scroll', function() {
@@ -641,10 +640,11 @@ function renderTracks(data) {
         });
         _vsScrollWrap._vsListener = true;
     }
+    // !! END DO NOT MODIFY !!
 
     updateSelectAllCheckbox();
     _loadListPlaylists();
-    // Delay scroll to allow layout to settle (container needs clientHeight)
+    // !! DO NOT MODIFY - triggers scroll-to-active-track after layout settles !!
     setTimeout(function() {
         updatePlayButtons();
     }, 200);
@@ -655,25 +655,32 @@ function _vsRenderVisible() {
 
     var scrollTop = _vsScrollWrap.scrollTop;
     var viewH = _vsScrollWrap.clientHeight;
-    var startIdx = Math.max(0, Math.floor(scrollTop / _ROW_HEIGHT) - _OVERSCAN);
-    var endIdx = Math.min(_libTracks.length, Math.ceil((scrollTop + viewH) / _ROW_HEIGHT) + _OVERSCAN);
+    var visStart = Math.floor(scrollTop / _ROW_HEIGHT);
+    var visEnd = Math.ceil((scrollTop + viewH) / _ROW_HEIGHT);
 
-    // Skip if same range
-    if (startIdx === _vsRenderedStart && endIdx === _vsRenderedEnd) return;
+    // Only re-render when visible area reaches into the overscan buffer
+    if (_vsRenderedStart >= 0 && visStart >= _vsRenderedStart + 5 && visEnd <= _vsRenderedEnd - 5) return;
+
+    var startIdx = Math.max(0, visStart - _OVERSCAN);
+    var endIdx = Math.min(_libTracks.length, visEnd + _OVERSCAN);
+
     _vsRenderedStart = startIdx;
     _vsRenderedEnd = endIdx;
 
     var topH = startIdx * _ROW_HEIGHT;
     var botH = Math.max(0, (_libTracks.length - endIdx) * _ROW_HEIGHT);
 
-    // Single innerHTML: top spacer + visible rows + bottom spacer
-    // Total height stays constant = topH + rendered rows + botH
     var html = '<tr><td colspan="12" style="padding:0;border:none;height:' + topH + 'px;"></td></tr>';
     for (var i = startIdx; i < endIdx; i++) {
         html += _renderTrackRow(_libTracks[i], i);
     }
     html += '<tr><td colspan="12" style="padding:0;border:none;height:' + botH + 'px;"></td></tr>';
-    _vsTbody.innerHTML = html;
+
+    // Swap tbody to avoid scroll jitter from in-place innerHTML
+    var newTbody = _vsTbody.cloneNode(false);
+    newTbody.innerHTML = html;
+    _vsTbody.parentNode.replaceChild(newTbody, _vsTbody);
+    _vsTbody = newTbody;
 }
 
 function _renderTrackRow(tr, idx) {
@@ -683,15 +690,14 @@ function _renderTrackRow(tr, idx) {
     var cls = isSelected ? ' class="selected"' : '';
     if (isPlaying) cls = ' class="' + (isSelected ? 'selected lib-playing-row' : 'lib-playing-row') + '"';
     var h = '<tr data-track-id="' + tr.id + '"' + cls + ' style="height:' + _ROW_HEIGHT + 'px;">';
-    h += '<td><input type="checkbox" onchange="toggleTrackSelect(' + tr.id + ', this.checked)"' + (isSelected ? ' checked' : '') + '></td>';
-    h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.title || '') + '">' + (isPlaying ? '<span class="lib-now-playing">&#9654;</span> ' : '') + escHtml(tr.title || '') + '</td>';
+    h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.title || '') + '">' + (isPlaying ? '<svg class="lib-now-playing" width="12" height="12" viewBox="0 0 12 12" style="vertical-align:middle;margin-right:4px;"><polygon points="2,0 12,6 2,12" fill="#4a9eff"/></svg>&nbsp;' : '') + escHtml(tr.title || '') + '</td>';
     h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
-    h += '<td class="col-heart"><span class="lib-heart' + (tr.favorited ? ' heart-active' : '') + '" onclick="toggleListFavorite(' + tr.id + ', this)" title="Favorite">' + (tr.favorited ? '&#10084;' : '&#9825;') + '</span></td>';
-    h += '<td class="col-rating">' + _renderListStars(tr.id, tr.rating || 0) + '</td>';
+    h += '<td>' + (tr.bitrate ? tr.bitrate : '-') + '</td>';
     h += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
     h += '<td>' + fmtKey(tr.key) + '</td>';
     h += '<td>' + dur + '</td>';
-    h += '<td class="col-date">' + fmtDate(tr.mtime) + '</td>';
+    h += '<td class="col-heart"><span class="lib-heart' + (tr.favorited ? ' heart-active' : '') + '" onclick="toggleListFavorite(' + tr.id + ', this)" title="Favorite"><svg width="14" height="14" viewBox="0 0 24 24" style="vertical-align:middle;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="' + (tr.favorited ? '#e91e63' : 'none') + '" stroke="' + (tr.favorited ? '#e91e63' : '#555') + '" stroke-width="1.5"/></svg></span></td>';
+    h += '<td class="col-rating">' + _renderListStars(tr.id, tr.rating || 0) + '</td>';
     h += '<td><button class="lib-add-btn" onclick="showAddToPlaylistMenu(this, ' + tr.id + ')" title="' + t('library.add_to_playlist') + '">+</button></td>';
     var plTags = '';
     var cachedPl = _trackPlaylistCache[String(tr.id)];
@@ -1191,41 +1197,63 @@ function _stopCastPoll() {
     _castTrackDuration = 0;
 }
 
+// !! DO NOT MODIFY - scroll-to-active-track system !!
+// These three functions (updatePlayButtons, scrollToPlayingTrack, _scrollToTrackAttempt)
+// work together to scroll the playing track to the vertical center of the visible area.
+// Uses getBoundingClientRect for pixel-perfect centering (not scrollIntoView which
+// can scroll parent containers and causes progressive offset errors).
+// DO NOT CHANGE without testing thoroughly.
 function updatePlayButtons() {
-    // With virtual scrolling, just re-render visible rows and scroll to playing track
-    _vsRenderedStart = -1; // force re-render
+    _vsRenderedStart = -1;
     _vsRenderVisible();
     scrollToPlayingTrack();
 }
 
 function scrollToPlayingTrack() {
     if (!_libPlayingTrackId) return;
-    // Delay to ensure layout is fully calculated
-    requestAnimationFrame(function() {
-        requestAnimationFrame(function() {
-            _scrollToTrackNow();
-        });
-    });
+    _scrollToTrackAttempt(0);
 }
 
-function _scrollToTrackNow() {
+function _scrollToTrackAttempt(attempt) {
+    if (attempt > 5 || !_libPlayingTrackId) return;
     _vsScrollWrap = document.querySelector('.lib-table-wrap');
-    if (!_vsScrollWrap || !_libPlayingTrackId) return;
+    if (!_vsScrollWrap) return;
 
+    var idx = -1;
     for (var i = 0; i < _libTracks.length; i++) {
-        if (_libTracks[i].id === _libPlayingTrackId) {
-            var viewH = _vsScrollWrap.clientHeight;
-            if (viewH < 50) return;
-            var targetScroll = Math.max(0, (i * _ROW_HEIGHT) - (viewH / 2) + (_ROW_HEIGHT / 2));
-            _vsScrollLock = true;
-            _vsScrollWrap.scrollTop = targetScroll;
+        if (_libTracks[i].id === _libPlayingTrackId) { idx = i; break; }
+    }
+    if (idx < 0) return;
+
+    var viewH = _vsScrollWrap.clientHeight;
+    if (viewH < 50) {
+        setTimeout(function() { _scrollToTrackAttempt(attempt + 1); }, 100);
+        return;
+    }
+
+    // Step 1: approximate scroll so virtual scroll renders rows around target
+    var approxScroll = Math.max(0, (idx * _ROW_HEIGHT) - viewH / 2);
+    _vsScrollLock = true;
+    _vsScrollWrap.scrollTop = approxScroll;
+    _vsRenderedStart = -1;
+    _vsRenderVisible();
+
+    // Step 2: measure actual DOM position and adjust for pixel-perfect centering
+    requestAnimationFrame(function() {
+        var row = _vsScrollWrap.querySelector('tr[data-track-id="' + _libPlayingTrackId + '"]');
+        if (row) {
+            var rowRect = row.getBoundingClientRect();
+            var wrapRect = _vsScrollWrap.getBoundingClientRect();
+            var rowCenter = rowRect.top + rowRect.height / 2;
+            var wrapCenter = wrapRect.top + wrapRect.height / 2;
+            _vsScrollWrap.scrollTop += (rowCenter - wrapCenter);
             _vsRenderedStart = -1;
             _vsRenderVisible();
-            setTimeout(function() { _vsScrollLock = false; }, 100);
-            break;
         }
-    }
+        setTimeout(function() { _vsScrollLock = false; }, 200);
+    });
 }
+// !! END DO NOT MODIFY - scroll-to-active-track system !!
 
 /* --- Add to playlist menu --- */
 function showAddToPlaylistMenu(btn, trackId) {
@@ -1432,17 +1460,38 @@ function createPlaylist() {
     .catch(function() {});
 }
 
+function _updateBreadcrumb() {
+    var bcLink = document.querySelector('#lib-breadcrumb > a');
+    var bcCurrent = document.getElementById('lib-bc-folder');
+    if (_selectedPlaylistId && _playlists) {
+        var pl = _playlists.find(function(p) { return p.id === _selectedPlaylistId; });
+        if (bcLink) {
+            bcLink.textContent = 'Playlists';
+            bcLink.setAttribute('onclick', 'showPlaylistOverview()');
+        }
+        if (bcCurrent) bcCurrent.textContent = pl ? pl.name : '';
+    } else {
+        if (bcLink) {
+            bcLink.textContent = t('library.title');
+            bcLink.setAttribute('onclick', 'showFolderView()');
+        }
+        if (bcCurrent) bcCurrent.textContent = _currentFolder || t('library.all_streams');
+    }
+}
+
 function selectPlaylist(id) {
     if (_selectedPlaylistId === id) {
         // Deselect: go back to stream view
         _selectedPlaylistId = null;
         _playlistTracksRaw = [];
         renderPlaylists();
+        _updateBreadcrumb();
         loadTracks();
         return;
     }
     _selectedPlaylistId = id;
     renderPlaylists();
+    _updateBreadcrumb();
     // Load playlist tracks into main table
     _showLibLoading();
     fetch('/api/library/playlists/' + id + '/tracks', {credentials: 'include'})
@@ -1587,10 +1636,11 @@ function pollScanStatus() {
 
 /* --- Stream filter population --- */
 function loadStreamFilters() {
+    var sel = document.getElementById('lib-stream-filter');
+    if (!sel) return;
     fetch('/api/library/subdirs', {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var sel = document.getElementById('lib-stream-filter');
             var subdirs = data.subdirs || [];
             for (var i = 0; i < subdirs.length; i++) {
                 var opt = document.createElement('option');
@@ -1818,13 +1868,12 @@ function openFolder(subdir) {
     _libPage = 1;
 
     document.getElementById('lib-folder-view').style.display = 'none';
+    document.getElementById('lib-playlist-overview').style.display = 'none';
     document.getElementById('lib-track-view').style.display = 'flex';
+    _selectedPlaylistId = null;
+    _updateBreadcrumb();
     document.getElementById('lib-bc-folder').textContent = subdir || t('library.all_streams');
     setTimeout(_resizeLibrary, 10);
-
-    // Set stream filter dropdown to match
-    var sel = document.getElementById('lib-stream-filter');
-    if (sel) sel.value = subdir;
 
     loadTracks();
 }
@@ -1834,6 +1883,7 @@ function showFolderView() {
     _libFilters = {};
     document.getElementById('lib-folder-view').style.display = '';
     document.getElementById('lib-track-view').style.display = 'none';
+    document.getElementById('lib-playlist-overview').style.display = 'none';
     _restoreLibraryOverflow();
     // Reset global search
     var searchInput = document.getElementById('lib-global-search');
@@ -1842,6 +1892,59 @@ function showFolderView() {
     if (resultsDiv) { resultsDiv.style.display = 'none'; resultsDiv.innerHTML = ''; }
     document.getElementById('lib-folders-grid').style.display = '';
     loadFolders();
+}
+
+function showPlaylistOverview() {
+    _currentFolder = null;
+    _selectedPlaylistId = null;
+    _libFilters = {};
+    document.getElementById('lib-folder-view').style.display = 'none';
+    document.getElementById('lib-track-view').style.display = 'none';
+    document.getElementById('lib-playlist-overview').style.display = '';
+    _restoreLibraryOverflow();
+    loadPlaylistOverview();
+}
+
+function loadPlaylistOverview() {
+    fetch('/api/library/playlists', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var playlists = data.playlists || [];
+            _playlists = playlists;
+            var grid = document.getElementById('lib-playlists-grid');
+            if (!grid) return;
+            var html = '';
+            for (var i = 0; i < playlists.length; i++) {
+                var pl = playlists[i];
+                html += '<div class="lib-folder" onclick="openPlaylist(' + pl.id + ')">';
+                html += '<div class="lib-folder-icon">&#127925;</div>';
+                html += '<div class="lib-folder-name">' + escHtml(pl.name) + '</div>';
+                html += '<div class="lib-folder-count">' + (pl.track_count || 0) + ' ' + t('library.tracks_count') + '</div>';
+                html += '</div>';
+            }
+            grid.innerHTML = html;
+        })
+        .catch(function() {});
+}
+
+function openPlaylist(id) {
+    document.getElementById('lib-playlist-overview').style.display = 'none';
+    document.getElementById('lib-folder-view').style.display = 'none';
+    document.getElementById('lib-track-view').style.display = 'flex';
+    setTimeout(_resizeLibrary, 10);
+    _selectedPlaylistId = id;
+    _updateBreadcrumb();
+    renderPlaylists();
+    // Load playlist tracks
+    _showLibLoading();
+    fetch('/api/library/playlists/' + id + '/tracks', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            _playlistTracksRaw = (data.tracks || []).slice();
+            renderTracks(data);
+            _hideLibLoading();
+        })
+        .catch(function() { _hideLibLoading(); });
 }
 
 /* --- Init --- */
@@ -1880,26 +1983,19 @@ function initLibrary() {
     loadStreamFilters();
     initGlobalSearch();
 
-    // Playlist view: show track table and auto-select first playlist
+    // Playlist view: show playlist overview grid
     if (viewMode === 'playlists') {
         document.getElementById('lib-folder-view').style.display = 'none';
-        document.getElementById('lib-track-view').style.display = 'flex';
-        setTimeout(_resizeLibrary, 10);
-        loadPlaylists(true);
+        document.getElementById('lib-track-view').style.display = 'none';
+        document.getElementById('lib-playlist-overview').style.display = '';
+        loadPlaylistOverview();
+        loadPlaylists();
         return;
     }
 
     loadPlaylists();
 
-    // If a library track is playing, open its folder and scroll to it
-    if (_libPlayingTrackId && _browserLibStream) {
-        openFolder(_browserLibStream);
-        // After tracks load, scroll to playing track
-        return;
-    }
-
-    // Otherwise show folder view
-    _libPlayingTrackId = _libPlayingTrackId || null;
+    // Always show folder overview when navigating to Library
     document.getElementById('lib-folder-view').style.display = '';
     document.getElementById('lib-track-view').style.display = 'none';
     loadFolders();

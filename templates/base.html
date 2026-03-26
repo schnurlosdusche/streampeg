@@ -18,7 +18,6 @@
             <li><a href="{{ url_for('library') }}">{{ t('nav.library') }}</a></li>
             <li><a href="{{ url_for('library', view='playlists') }}">{{ t('nav.playlists') }}</a></li>
             <li><a href="{{ url_for('yt_download') }}">{{ t('nav.yt_download') }}</a></li>
-            <li><a href="{{ url_for('stream_new') }}">{{ t('nav.add_stream') }}</a></li>
             <li><a href="{{ url_for('settings') }}">{{ t('nav.settings') }}</a></li>
             <li id="scan-indicator" style="display:none;">
                 <a href="#" onclick="toggleScanDaemon(event)" id="scan-indicator-btn" title="BPM/Key Analyzer">

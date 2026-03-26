@@ -159,6 +159,10 @@ def init_db():
     if "loudness_lufs" not in lib_columns:
         conn.execute("ALTER TABLE library_tracks ADD COLUMN loudness_lufs REAL DEFAULT NULL")
         conn.commit()
+    # Migrate library_tracks: add bitrate column
+    if "bitrate" not in lib_columns:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN bitrate INTEGER DEFAULT NULL")
+        conn.commit()
 
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
@@ -455,7 +459,7 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
         camelot_case = _build_camelot_case()
         order_sql = f"ORDER BY {camelot_case} {order}, bpm {order}"
     elif sort in ("title", "artist", "album", "genre", "bpm", "key",
-                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir", "rating", "favorited"):
+                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir", "rating", "favorited", "bitrate"):
         order_sql = f"ORDER BY {sort} {order}"
     else:
         order_sql = f"ORDER BY title {order}"

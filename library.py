@@ -158,6 +158,7 @@ def _read_id3(filepath):
         "bpm": 0,
         "key": "",
         "duration_sec": 0,
+        "bitrate": 0,
     }
     if not _mutagen_available:
         return result
@@ -165,9 +166,10 @@ def _read_id3(filepath):
         audio = MP3(filepath)
         dur = int(audio.info.length) if audio.info else 0
         if dur <= 0:
-            # Mutagen fails on CBR MP3s without Xing/LAME header — use ffprobe
             dur = _ffprobe_duration(filepath)
         result["duration_sec"] = dur
+        if audio.info and audio.info.bitrate:
+            result["bitrate"] = int(audio.info.bitrate / 1000)  # kbit/s
     except Exception:
         result["duration_sec"] = _ffprobe_duration(filepath)
     try:
@@ -225,17 +227,6 @@ def fix_missing_tags(stream_subdir=None):
         if not os.path.isfile(filepath):
             continue
 
-        # Parse artist/title from filename
-        name_base = os.path.splitext(filename)[0]
-        if " - " not in name_base:
-            continue
-        parts = name_base.split(" - ", 1)
-        fn_artist = parts[0].strip().replace("_", " ")
-        fn_title = parts[1].strip().replace("_", " ")
-
-        if not fn_artist or not fn_title:
-            continue
-
         # Check if file already has ID3 tags
         try:
             tags = ID3(filepath)
@@ -247,6 +238,28 @@ def fix_missing_tags(stream_subdir=None):
             tags = None
 
         if has_title and has_artist:
+            continue
+
+        fn_artist = ""
+        fn_title = ""
+
+        # Try parsing "Artist - Title" from existing ID3 title (e.g. streamripper metadata)
+        if has_title and not has_artist:
+            id3_title = str(tags.get("TIT2"))
+            if " - " in id3_title:
+                parts = id3_title.split(" - ", 1)
+                fn_artist = parts[0].strip()
+                fn_title = parts[1].strip()
+
+        # Fallback: parse from filename
+        if not fn_artist or not fn_title:
+            name_base = os.path.splitext(filename)[0]
+            if " - " in name_base:
+                parts = name_base.split(" - ", 1)
+                fn_artist = parts[0].strip().replace("_", " ")
+                fn_title = parts[1].strip().replace("_", " ")
+
+        if not fn_artist or not fn_title:
             continue
 
         # Write tags to file
@@ -547,13 +560,13 @@ def _scan_files(files):
                     """UPDATE library_tracks SET
                         title = CASE WHEN ? != '' THEN ? ELSE title END,
                         artist = CASE WHEN ? != '' THEN ? ELSE artist END,
-                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?
+                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?, bitrate = ?
                     WHERE filepath = ?""",
                     (
                         tags["title"], tags["title"],
                         tags["artist"], tags["artist"],
                         tags["album"], tags["genre"],
-                        tags["bpm"], tags["key"], tags["duration_sec"],
+                        tags["bpm"], tags["key"], tags["duration_sec"], tags["bitrate"],
                         filepath,
                     ),
                 )
@@ -700,7 +713,8 @@ def _run_rescan_tags(subdir):
             key = tags["key"]
 
             # Phase 2: If BPM or Key missing, run audio analysis
-            if _has_analyzer and ((not bpm or bpm <= 0) or not key):
+            needs_analysis = (not bpm or bpm <= 0) or not key
+            if _has_analyzer and needs_analysis:
                 a_bpm, a_key = bpm_analyzer._analyze_track(filepath, backend)
                 if not bpm or bpm <= 0:
                     bpm = a_bpm
@@ -716,7 +730,7 @@ def _run_rescan_tags(subdir):
                 """UPDATE library_tracks SET
                     title = CASE WHEN ? != '' THEN ? ELSE title END,
                     artist = CASE WHEN ? != '' THEN ? ELSE artist END,
-                    album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?
+                    album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?, bitrate = ?
                 WHERE id = ?""",
                 (
                     tags["title"], tags["title"],
@@ -724,7 +738,7 @@ def _run_rescan_tags(subdir):
                     tags["album"], tags["genre"],
                     bpm if bpm and bpm > 0 else tags["bpm"],
                     key if key else tags["key"],
-                    tags["duration_sec"],
+                    tags["duration_sec"], tags["bitrate"],
                     track_id,
                 ),
             )
@@ -1093,7 +1107,7 @@ def _daemon_loop():
                     """UPDATE library_tracks SET
                         title = CASE WHEN ? != '' THEN ? ELSE title END,
                         artist = CASE WHEN ? != '' THEN ? ELSE artist END,
-                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?
+                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?, bitrate = ?
                     WHERE id = ?""",
                     (
                         tags["title"], tags["title"],
@@ -1101,7 +1115,7 @@ def _daemon_loop():
                         tags["album"], tags["genre"],
                         bpm if bpm and bpm > 0 else (tags["bpm"] if tags["bpm"] else -1),
                         key if key else tags["key"],
-                        tags["duration_sec"],
+                        tags["duration_sec"], tags["bitrate"],
                         track_id,
                     ),
                 )
