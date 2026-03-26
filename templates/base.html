@@ -16,6 +16,7 @@
             <li><a href="{{ url_for('dashboard') }}">{{ t('nav.dashboard') }}</a></li>
             <li><a href="{{ url_for('browse') }}">{{ t('nav.radio_browser') }}</a></li>
             <li><a href="{{ url_for('library') }}">{{ t('nav.library') }}</a></li>
+            <li><a href="{{ url_for('library', view='playlists') }}">{{ t('nav.playlists') }}</a></li>
             <li><a href="{{ url_for('yt_download') }}">{{ t('nav.yt_download') }}</a></li>
             <li><a href="{{ url_for('stream_new') }}">{{ t('nav.add_stream') }}</a></li>
             <li><a href="{{ url_for('settings') }}">{{ t('nav.settings') }}</a></li>
@@ -26,6 +27,14 @@
                         <circle cx="12" cy="12" r="3"/>
                     </svg>
                     <span id="scan-indicator-text" style="font-size:11px;margin-left:3px;"></span>
+                </a>
+            </li>
+            <li id="loudness-indicator" style="display:none;">
+                <a href="#" onclick="return false;" id="loudness-indicator-btn" title="Loudness Normalization">
+                    <svg id="loudness-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;display:inline-block;">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                    </svg>
+                    <span id="loudness-indicator-text" style="font-size:11px;margin-left:3px;"></span>
                 </a>
             </li>
             <li><a href="#" id="restart-service-btn" onclick="restartService(event)" title="{{ t('nav.restart_title') }}">{{ t('nav.restart') }}</a></li>
@@ -202,6 +211,38 @@
             });
     }
     pollScanIndicator();
+
+    // --- Loudness normalization indicator ---
+    var _loudPollTimer = null;
+    function pollLoudnessIndicator() {
+        fetch('/api/library/loudness/status', {credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var li = document.getElementById('loudness-indicator');
+                var icon = document.getElementById('loudness-icon');
+                var text = document.getElementById('loudness-indicator-text');
+                var btn = document.getElementById('loudness-indicator-btn');
+                if (!li) return;
+
+                if (data.running && data.total > 0) {
+                    var pct = Math.round(data.processed / data.total * 100);
+                    li.style.display = '';
+                    icon.style.color = '#e040fb';
+                    icon.style.animation = 'spin 3s linear infinite';
+                    text.textContent = pct + '%';
+                    text.style.color = '#e040fb';
+                    btn.title = 'Loudness Normalization (-14 LUFS)\nProgress: ' + data.processed + ' / ' + data.total + ' (' + pct + '%)\nCurrent: ' + (data.current_file || '');
+                } else {
+                    li.style.display = 'none';
+                }
+
+                _loudPollTimer = setTimeout(pollLoudnessIndicator, 10000);
+            })
+            .catch(function() {
+                _loudPollTimer = setTimeout(pollLoudnessIndicator, 15000);
+            });
+    }
+    pollLoudnessIndicator();
     </script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
     <script>

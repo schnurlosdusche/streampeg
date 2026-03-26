@@ -4,6 +4,7 @@ populate the library_tracks table.  Also handles M3U playlist generation.
 """
 
 import os
+import subprocess
 import threading
 import logging
 
@@ -14,11 +15,127 @@ try:
 except ImportError:
     _mutagen_available = False
 
+
+def _ffprobe_duration(filepath):
+    """Get duration in seconds via ffprobe (fallback for CBR MP3s without VBR header)."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", filepath],
+            capture_output=True, text=True, timeout=10)
+        return int(float(r.stdout.strip())) if r.stdout.strip() else 0
+    except Exception:
+        return 0
+
+import json as _json
+import tempfile
+import shutil
+import time
+
 import db
 import sync
 import config
 
 log = logging.getLogger(__name__)
+
+# Loudness normalization constants
+_TARGET_LUFS = -14.0   # YouTube / Spotify standard
+_TARGET_TP = -1.0      # true peak ceiling (dBTP)
+_TARGET_LRA = 11.0     # loudness range
+
+
+def _normalize_loudness(filepath):
+    """Normalize MP3 to -14 LUFS using ffmpeg two-pass loudnorm.
+    Returns measured input LUFS on success, None on failure."""
+
+    # Pass 1: Measure integrated loudness
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-i", filepath, "-af",
+             f"loudnorm=I={_TARGET_LUFS}:TP={_TARGET_TP}:LRA={_TARGET_LRA}:print_format=json",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120)
+        output = r.stderr
+        json_start = output.rfind('{')
+        json_end = output.rfind('}') + 1
+        if json_start < 0 or json_end <= json_start:
+            log.warning("loudnorm: no JSON in ffmpeg output for %s", filepath)
+            return None
+        stats = _json.loads(output[json_start:json_end])
+        measured_i = float(stats["input_i"])
+        measured_tp = float(stats["input_tp"])
+        measured_lra = float(stats["input_lra"])
+        measured_thresh = float(stats["input_thresh"])
+    except Exception as e:
+        log.warning("Loudness measurement failed for %s: %s", filepath, e)
+        return None
+
+    # If already within 0.5 dB of target, skip re-encoding
+    if abs(measured_i - _TARGET_LUFS) < 0.5:
+        log.debug("Track already at target loudness (%.1f LUFS): %s", measured_i, filepath)
+        return measured_i
+
+    # Detect original bitrate to preserve quality
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=bit_rate",
+             "-of", "csv=p=0", filepath],
+            capture_output=True, text=True, timeout=10)
+        bitrate = int(r.stdout.strip()) // 1000 if r.stdout.strip() else 192
+    except Exception:
+        bitrate = 192
+    bitrate = max(128, min(320, bitrate))
+
+    # Save ID3 tags before re-encoding (ffmpeg may lose cover art)
+    saved_tags = None
+    if _mutagen_available:
+        try:
+            tags = ID3(filepath)
+            saved_tags = tags
+        except Exception:
+            pass
+
+    # Pass 2: Apply normalization to temp file
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".mp3", dir=os.path.dirname(filepath))
+        os.close(fd)
+        r = subprocess.run(
+            ["ffmpeg", "-i", filepath, "-af",
+             f"loudnorm=I={_TARGET_LUFS}:TP={_TARGET_TP}:LRA={_TARGET_LRA}:"
+             f"measured_I={measured_i}:measured_TP={measured_tp}:"
+             f"measured_LRA={measured_lra}:measured_thresh={measured_thresh}:"
+             f"linear=true",
+             "-c:a", "libmp3lame", "-b:a", f"{bitrate}k",
+             "-map_metadata", "0", "-id3v2_version", "3",
+             "-y", tmp_path],
+            capture_output=True, text=True, timeout=300)
+
+        if r.returncode != 0:
+            log.warning("Loudness normalization failed for %s: %s", filepath, r.stderr[-300:])
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            return None
+
+        # Replace original with normalized version
+        shutil.move(tmp_path, filepath)
+        tmp_path = None
+
+        # Restore ID3 tags (cover art, etc.) that ffmpeg may have dropped
+        if saved_tags and _mutagen_available:
+            try:
+                saved_tags.save(filepath)
+            except Exception as e:
+                log.debug("Could not restore ID3 tags after normalization for %s: %s", filepath, e)
+
+        log.info("Normalized %s from %.1f to %.1f LUFS @ %dk", filepath, measured_i, _TARGET_LUFS, bitrate)
+        return measured_i
+
+    except Exception as e:
+        log.warning("Loudness normalization error for %s: %s", filepath, e)
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return None
 
 # Background scan state
 _scan_status = {
@@ -46,9 +163,13 @@ def _read_id3(filepath):
         return result
     try:
         audio = MP3(filepath)
-        result["duration_sec"] = int(audio.info.length) if audio.info else 0
+        dur = int(audio.info.length) if audio.info else 0
+        if dur <= 0:
+            # Mutagen fails on CBR MP3s without Xing/LAME header — use ffprobe
+            dur = _ffprobe_duration(filepath)
+        result["duration_sec"] = dur
     except Exception:
-        pass
+        result["duration_sec"] = _ffprobe_duration(filepath)
     try:
         tags = ID3(filepath)
     except (ID3NoHeaderError, Exception):
@@ -637,20 +758,162 @@ def get_rescan_status():
         return dict(_rescan_status)
 
 
+def _safe_playlist_name(name):
+    """Sanitize playlist name for filesystem use."""
+    return "".join(c for c in name if c.isalnum() or c in " _-").strip()
+
+
+def _get_playlist_dir(playlist_name):
+    """Get the playlist folder path on the sync target."""
+    nas_target = sync.get_sync_target()
+    if not nas_target or not os.path.isdir(nas_target):
+        return None
+    safe_name = _safe_playlist_name(playlist_name)
+    pl_dir = os.path.join(nas_target, "_playlists", safe_name)
+    return pl_dir
+
+
+def _sync_playlist_files(playlist_id):
+    """Copy all playlist tracks into the playlist folder and remove stale files."""
+    playlist = db.get_playlist(playlist_id)
+    if not playlist:
+        return
+    tracks = db.get_playlist_tracks(playlist_id)
+    pl_dir = _get_playlist_dir(playlist["name"])
+    if not pl_dir:
+        return
+
+    os.makedirs(pl_dir, exist_ok=True)
+
+    # Build set of expected filenames
+    expected_files = set()
+    for t in tracks:
+        filepath = t.get("filepath", "")
+        filename = os.path.basename(filepath)
+        expected_files.add(filename)
+        dest = os.path.join(pl_dir, filename)
+        # Copy if not already there or source is newer
+        if os.path.isfile(filepath):
+            if not os.path.isfile(dest):
+                try:
+                    import shutil
+                    shutil.copy2(filepath, dest)
+                except OSError as e:
+                    log.error("Failed to copy %s to playlist dir: %s", filename, e)
+            else:
+                # Update if source is newer
+                try:
+                    if os.path.getmtime(filepath) > os.path.getmtime(dest):
+                        import shutil
+                        shutil.copy2(filepath, dest)
+                except OSError:
+                    pass
+
+    # Remove files that are no longer in the playlist
+    try:
+        for f in os.listdir(pl_dir):
+            if f.endswith(".m3u"):
+                continue
+            if f not in expected_files:
+                try:
+                    os.remove(os.path.join(pl_dir, f))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def copy_track_to_playlist(playlist_id, track_id):
+    """Copy a single track into the playlist folder."""
+    playlist = db.get_playlist(playlist_id)
+    if not playlist:
+        return
+    track = db.get_library_track(track_id)
+    if not track:
+        return
+    pl_dir = _get_playlist_dir(playlist["name"])
+    if not pl_dir:
+        return
+    os.makedirs(pl_dir, exist_ok=True)
+    filepath = track["filepath"]
+    if os.path.isfile(filepath):
+        dest = os.path.join(pl_dir, os.path.basename(filepath))
+        if not os.path.isfile(dest):
+            try:
+                import shutil
+                shutil.copy2(filepath, dest)
+            except OSError as e:
+                log.error("Failed to copy track to playlist: %s", e)
+
+
+def remove_track_from_playlist_dir(playlist_id, track_id):
+    """Remove a single track file from the playlist folder."""
+    playlist = db.get_playlist(playlist_id)
+    if not playlist:
+        return
+    track = db.get_library_track(track_id)
+    if not track:
+        return
+    pl_dir = _get_playlist_dir(playlist["name"])
+    if not pl_dir:
+        return
+    dest = os.path.join(pl_dir, os.path.basename(track["filepath"]))
+    try:
+        if os.path.isfile(dest):
+            os.remove(dest)
+    except OSError as e:
+        log.error("Failed to remove track from playlist dir: %s", e)
+
+
+def delete_playlist_dir(playlist_name):
+    """Remove the entire playlist folder."""
+    pl_dir = _get_playlist_dir(playlist_name)
+    if pl_dir and os.path.isdir(pl_dir):
+        try:
+            import shutil
+            shutil.rmtree(pl_dir)
+        except OSError as e:
+            log.error("Failed to delete playlist dir: %s", e)
+
+
+def rename_playlist_dir(old_name, new_name):
+    """Rename playlist folder when playlist is renamed."""
+    old_dir = _get_playlist_dir(old_name)
+    new_dir = _get_playlist_dir(new_name)
+    if old_dir and new_dir and os.path.isdir(old_dir):
+        try:
+            os.rename(old_dir, new_dir)
+        except OSError as e:
+            log.error("Failed to rename playlist dir: %s", e)
+
+
 def generate_m3u(playlist_id):
-    """Generate an M3U playlist file on the sync target.
+    """Generate an M3U playlist file in the playlist folder and sync files.
     Returns the written file path or None on error."""
     playlist = db.get_playlist(playlist_id)
     if not playlist:
         return None
 
     tracks = db.get_playlist_tracks(playlist_id)
-    if not tracks:
+
+    pl_dir = _get_playlist_dir(playlist["name"])
+    if not pl_dir:
         return None
 
-    nas_target = sync.get_sync_target()
-    if not nas_target or not os.path.isdir(nas_target):
-        return None
+    os.makedirs(pl_dir, exist_ok=True)
+
+    # Sync track files to playlist folder
+    _sync_playlist_files(playlist_id)
+
+    if not tracks:
+        # Empty playlist — write empty M3U
+        m3u_path = os.path.join(pl_dir, _safe_playlist_name(playlist["name"]) + ".m3u")
+        try:
+            with open(m3u_path, "w", encoding="utf-8") as f:
+                f.write("#EXTM3U\n")
+            return m3u_path
+        except OSError:
+            return None
 
     lines = ["#EXTM3U"]
     for t in tracks:
@@ -658,22 +921,13 @@ def generate_m3u(playlist_id):
         artist = t.get("artist", "")
         title = t.get("title", "") or t.get("filename", "")
         display = f"{artist} - {title}" if artist else title
-
-        # Make path relative to sync target root
-        filepath = t.get("filepath", "")
-        if filepath.startswith(nas_target):
-            rel_path = os.path.relpath(filepath, nas_target)
-        else:
-            # File is local; use stream_subdir/filename as relative path
-            rel_path = os.path.join(t.get("stream_subdir", ""), t.get("filename", ""))
-
+        # M3U paths relative to playlist folder (just the filename)
+        filename = os.path.basename(t.get("filepath", ""))
         lines.append(f"#EXTINF:{duration},{display}")
-        lines.append(rel_path)
+        lines.append(filename)
 
-    playlist_name = playlist["name"]
-    # Sanitize filename
-    safe_name = "".join(c for c in playlist_name if c.isalnum() or c in " _-").strip()
-    m3u_path = os.path.join(nas_target, f"{safe_name}.m3u")
+    safe_name = _safe_playlist_name(playlist["name"])
+    m3u_path = os.path.join(pl_dir, f"{safe_name}.m3u")
 
     try:
         with open(m3u_path, "w", encoding="utf-8") as f:
@@ -863,7 +1117,25 @@ def _daemon_loop():
             with _rescan_lock:
                 _rescan_status["running"] = False
 
-        # Phase 3: Idle — wait before next cycle
+        # Phase 3: Sync playlist folders with DB
+        if not _daemon_running:
+            break
+        with _daemon_lock:
+            _daemon_status["phase"] = "playlist-sync"
+            _daemon_status["current_subdir"] = ""
+        try:
+            playlists = db.get_all_playlists()
+            for pl in playlists:
+                if not _daemon_running:
+                    break
+                with _daemon_lock:
+                    _daemon_status["current_subdir"] = pl["name"]
+                _sync_playlist_files(pl["id"])
+                generate_m3u(pl["id"])
+        except Exception as e:
+            log.error("Playlist sync error: %s", e)
+
+        # Phase 4: Idle — wait before next cycle
         with _daemon_lock:
             _daemon_status["phase"] = "idle"
             _daemon_status["current_subdir"] = ""
@@ -893,17 +1165,146 @@ def start_daemon():
 
 
 def stop_daemon():
-    """Stop the background library worker."""
-    global _daemon_running
+    """Stop the background library worker (and loudness thread)."""
+    global _daemon_running, _loudness_running
     _daemon_running = False
+    _loudness_running = False
     with _daemon_lock:
         _daemon_status["running"] = False
 
 
 def get_daemon_status():
-    """Return daemon status."""
+    """Return daemon status (includes loudness info)."""
     with _daemon_lock:
-        return dict(_daemon_status)
+        status = dict(_daemon_status)
+    with _loudness_lock:
+        status["loudness"] = dict(_loudness_status)
+    return status
+
+
+# --- Independent loudness normalization thread ---
+_loudness_running = False
+_loudness_status = {
+    "running": False,
+    "processed": 0,
+    "total": 0,
+    "current_file": "",
+}
+_loudness_lock = threading.Lock()
+
+
+def _loudness_loop():
+    """Continuous background loop: normalize tracks to -14 LUFS.
+    Runs independently from the main daemon, always active."""
+    global _loudness_running
+
+    # Wait 30s after startup so the main scan can register files first
+    for _ in range(30):
+        if not _loudness_running:
+            return
+        time.sleep(1)
+
+    while _loudness_running:
+        try:
+            conn = db.get_db()
+            rows = conn.execute(
+                """SELECT id, filepath, filename FROM library_tracks
+                   WHERE trashed = 0 AND loudness_lufs IS NULL
+                   LIMIT 100"""
+            ).fetchall()
+            conn.close()
+        except Exception as e:
+            log.error("Loudness query error: %s", e)
+            time.sleep(60)
+            continue
+
+        if not rows:
+            # Nothing to do — sleep 5 minutes, then check again
+            for _ in range(300):
+                if not _loudness_running:
+                    return
+                time.sleep(1)
+            continue
+
+        with _loudness_lock:
+            _loudness_status["running"] = True
+            _loudness_status["total"] = len(rows)
+            _loudness_status["processed"] = 0
+
+        for row in rows:
+            if not _loudness_running:
+                break
+
+            track_id = row["id"]
+            filepath = row["filepath"]
+
+            with _loudness_lock:
+                _loudness_status["current_file"] = row["filename"]
+
+            if not os.path.isfile(filepath):
+                conn = db.get_db()
+                conn.execute(
+                    "UPDATE library_tracks SET loudness_lufs = 0 WHERE id = ?",
+                    (track_id,),
+                )
+                conn.commit()
+                conn.close()
+                with _loudness_lock:
+                    _loudness_status["processed"] += 1
+                continue
+
+            measured = _normalize_loudness(filepath)
+            if measured is not None:
+                new_mtime = os.stat(filepath).st_mtime
+                conn = db.get_db()
+                conn.execute(
+                    "UPDATE library_tracks SET loudness_lufs = ?, mtime = ? WHERE id = ?",
+                    (measured, new_mtime, track_id),
+                )
+                conn.commit()
+                conn.close()
+            else:
+                conn = db.get_db()
+                conn.execute(
+                    "UPDATE library_tracks SET loudness_lufs = 0 WHERE id = ?",
+                    (track_id,),
+                )
+                conn.commit()
+                conn.close()
+
+            with _loudness_lock:
+                _loudness_status["processed"] += 1
+
+            # Pause between tracks
+            time.sleep(1)
+
+        with _loudness_lock:
+            _loudness_status["running"] = False
+            _loudness_status["current_file"] = ""
+
+        log.info("Loudness normalization batch done: %d tracks", len(rows))
+
+    with _loudness_lock:
+        _loudness_status["running"] = False
+
+
+def start_loudness_daemon():
+    """Start the independent loudness normalization thread."""
+    global _loudness_running
+    with _loudness_lock:
+        if _loudness_status["running"]:
+            return
+        _loudness_running = True
+        _loudness_status["running"] = True
+    t = threading.Thread(target=_loudness_loop, daemon=True)
+    t.start()
+    log.info("Loudness normalization thread started (-14 LUFS target)")
+
+
+def get_loudness_status():
+    """Return loudness normalization status."""
+    with _loudness_lock:
+        return dict(_loudness_status)
 
 
 def delete_m3u(playlist_name):

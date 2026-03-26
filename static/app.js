@@ -150,6 +150,12 @@ var _browserIcyTrack = '';
 var _browserIcyCover = null;
 var _isLibraryTrack = false;
 var _browserLibStream = '';
+var _libCastDeviceId = null;  // primary cast device for library player (volume control)
+var _libCastDeviceName = '';  // display name of primary cast device
+var _libCastDeviceIds = [];   // all active cast device IDs
+var _castPlayStart = 0;       // timestamp when cast started current track
+var _castTrackDuration = 0;   // duration of currently casting track (seconds)
+var _libTrackDuration = 0;    // DB duration for current library track (fallback for broken headers)
 var _seekDragging = false;
 var _loopMode = false; // arrow key micro-loop active
 var _loopStart = 0;
@@ -158,6 +164,7 @@ var _seekStep = 5; // seconds to jump with left/right arrows
 var _waveformData = null; // Float32Array of peak values for current track
 var _waveformTrackUrl = null;
 var _libRepeatMode = localStorage.getItem('_libRepeatMode') || 'none'; // none, all, one
+var _libShuffleMode = localStorage.getItem('_libShuffleMode') === '1'; // true/false
 var _cuePoints = {}; // {trackId: {1: timeInSec, 2: timeInSec, ...}}
 var _CUE_COLORS = ['#42a5f5','#ff9800','#4caf50','#e91e63','#9c27b0','#00bcd4','#ffeb3b','#ff5722'];
 var _trackRatings = {}; // {trackId: 0-5}
@@ -170,10 +177,25 @@ function _initBrowserAudio() {
         _playerAudio.addEventListener('error', function() { stopListen(); });
         _playerAudio.addEventListener('timeupdate', _onSeekUpdate);
         _playerAudio.addEventListener('ended', function() {
+            // Guard against premature 'ended' from defective MP3s
+            var _edDur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
+            if (_isLibraryTrack && _edDur > 0) {
+                var remaining = _edDur - _playerAudio.currentTime;
+                if (remaining > 5) {
+                    // Ended fired but we're far from the real end — defective file
+                    console.warn('Premature ended event at', _playerAudio.currentTime, '/', _playerAudio.duration);
+                    return;
+                }
+            }
             if (_isLibraryTrack && _libRepeatMode === 'one') {
                 // Repeat current track
                 _playerAudio.currentTime = 0;
                 _playerAudio.play().catch(function() {});
+                return;
+            }
+            if (_isLibraryTrack && _libShuffleMode) {
+                // Shuffle: play random next
+                _playRandomTrack();
                 return;
             }
             if (_isLibraryTrack && _libRepeatMode === 'all' && typeof _libPlayNextTrack === 'function') {
@@ -216,6 +238,19 @@ function toggleListen(streamId, url) {
 
 function stopListen() {
     _waveformData = null;
+    // Stop all cast devices if library track was casting
+    if (_libCastDeviceIds && _libCastDeviceIds.length > 0) {
+        _libCastDeviceIds.forEach(function(did) {
+            fetch('/api/cast/stop', {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({device_id: did})
+            }).catch(function() {});
+        });
+    }
+    _libCastDeviceId = null;
+    _libCastDeviceName = '';
+    _libCastDeviceIds = [];
     if (_playerAudio) {
         _playerAudio.pause();
         _playerAudio.removeAttribute('src');
@@ -645,14 +680,97 @@ function _renderPlayerHTML(p, idx) {
     return html;
 }
 
+function _renderLibCastPlayerHTML(p) {
+    var castTrack = p.current_track || '';
+    var castHasTrack = castTrack && castTrack.replace(/[\s\-]/g, '') !== '';
+    var castCover = p.cover_url || null;
+    var vol = _getVolState(p.device_id);
+    var curVol = (_playerVolumeLocal[p.device_id] != null && _playerVolumeLocal[p.device_id] !== true)
+        ? _playerVolumeLocal[p.device_id] : (p.volume != null ? p.volume : 50);
+
+    var coverHtml = castCover
+        ? '<img src="' + castCover + '" alt="">'
+        : '<div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>';
+
+    var html = '<div class="player-bar player-bar-libcast" data-device-id="' + p.device_id + '">'
+        + '<div class="player-bar-inner">'
+        + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+        + '<div class="player-info">'
+        + '<div class="player-track">' + (castHasTrack ? _escHtmlPlayer(castTrack) : t('player.waiting_track')) + '</div>'
+        + '<div class="player-stream">Library</div>'
+        + '</div>'
+        + '<div class="player-volume">'
+        // Prev
+        + '<button class="player-btn" onclick="_libPlayPrevTrack()" title="Previous">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="4" width="3" height="16" rx="1"/><path d="M22 4L9 12l13 8z"/></svg>'
+        + '</button>'
+        // Stop
+        + '<button class="player-btn" onclick="stopLibCast(\'' + p.device_id + '\')" title="Stop">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
+        + '</button>'
+        // Next
+        + '<button class="player-btn" onclick="_libPlayNextTrack(false)" title="Next">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="19" y="4" width="3" height="16" rx="1"/><path d="M2 4l13 8-13 8z"/></svg>'
+        + '</button>'
+        // Volume
+        + '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="playerVolumeStep(\'' + p.device_id + '\', -2)">&#8722;</button>'
+        + '<div class="vol-slider" data-device-id="' + p.device_id + '">'
+        + '<div class="vol-slider-track"></div>'
+        + '<div class="vol-slider-fill" style="width:' + curVol + '%"></div>'
+        + '<div class="vol-slider-handle" style="left:' + curVol + '%"></div>'
+        + '</div>'
+        + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + p.device_id + '\', 2)">+</button>'
+        + '<span class="player-volume-value">' + curVol + '</span>'
+        + '</div>'
+        + '<div class="player-right">'
+        + '<div class="player-device-name">' + _escHtmlPlayer(p.device_name) + '</div>'
+        + '</div>'
+        + '</div></div>';
+    return html;
+}
+
+function stopLibCast(deviceId) {
+    fetch('/api/cast/stop', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: deviceId})
+    }).catch(function() {});
+    // Remove from active list
+    if (_libCastDeviceIds) {
+        _libCastDeviceIds = _libCastDeviceIds.filter(function(id) { return id !== deviceId; });
+    }
+    if (_libCastDeviceId === deviceId) {
+        if (_libCastDeviceIds.length > 0) {
+            _libCastDeviceId = _libCastDeviceIds[_libCastDeviceIds.length - 1];
+        } else {
+            _libCastDeviceId = null;
+            _libCastDeviceName = '';
+            _stopCastPoll();
+        }
+    }
+    _refreshPlayerBar();
+}
+
 var _multiroomGroupCount = 0;
 
 function _renderBrowserPlayerHTML() {
     var st = _lastStreamStatus[_playerStreamId] || {};
     // Use ICY data if available (fetched independently), fall back to recording status
+    var _isCasting = _libCastDeviceIds && _libCastDeviceIds.length > 0;
     var trackName = _browserIcyTrack || st.current_track || '';
     var hasTrack = trackName && trackName !== 'recording' && trackName !== '-' && trackName.replace(/[\s\-]/g, '') !== '';
     var coverUrl = _browserIcyCover || st.cover_url || null;
+    // For library cast: get track name and cover from cache
+    if (_isLibraryTrack && _isCasting && _libPlayingTrackId) {
+        var _ct = (typeof _libTrackCache !== 'undefined') ? _libTrackCache[_libPlayingTrackId] : null;
+        if (_ct) {
+            var _a = _ct.artist || '', _t = _ct.title || '';
+            trackName = _a ? (_a + ' - ' + _t) : _t;
+            hasTrack = !!trackName;
+        }
+        // Use cover from _loadLibraryCover (embedded or iTunes), fallback to embedded endpoint
+        if (!coverUrl) coverUrl = '/api/library/track/' + _libPlayingTrackId + '/cover';
+    }
     var streamName = (_playerStreamId === 'browse') ? _browseStreamName : (st.stream_name || ('Stream ' + _playerStreamId));
     var volPct = Math.round(_browserVolume * 100);
 
@@ -663,10 +781,20 @@ function _renderBrowserPlayerHTML() {
     // Seek bar with waveform for library tracks (finite duration)
     var seekHtml = '';
     var cueHtml = '';
-    if (_isLibraryTrack && _playerAudio) {
-        var dur = _playerAudio.duration || 0;
-        var cur = _playerAudio.currentTime || 0;
-        var seekPct = (dur && isFinite(dur)) ? (cur / dur * 100) : 0;
+    if (_isLibraryTrack && (_playerAudio || _isCasting)) {
+        var dur, cur, seekPct;
+        if (_isCasting && _castPlayStart && _castTrackDuration > 0) {
+            dur = _castTrackDuration;
+            cur = (Date.now() / 1000) - _castPlayStart;
+            if (cur > dur) cur = dur;
+            seekPct = (cur / dur * 100);
+        } else if (_playerAudio) {
+            dur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
+            cur = _playerAudio.currentTime || 0;
+            seekPct = (dur > 0) ? (cur / dur * 100) : 0;
+        } else {
+            dur = 0; cur = 0; seekPct = 0;
+        }
 
         // Cue point markers inside the waveform
         var cueMarkers = '';
@@ -680,9 +808,10 @@ function _renderBrowserPlayerHTML() {
             }
         }
 
+        var noSeek = _isCasting ? ' style="pointer-events:none;"' : '';
         seekHtml = '<div class="player-seek-row">'
             + '<span class="player-seek-time" id="seek-time">' + _fmtTime(cur) + '</span>'
-            + '<div class="player-seek-bar" id="seek-bar">'
+            + '<div class="player-seek-bar" id="seek-bar"' + noSeek + '>'
             + '<canvas id="waveform-canvas" class="player-waveform" width="1200" height="64"></canvas>'
             + '<div class="player-seek-overlay" id="seek-fill" style="width:' + seekPct + '%"></div>'
             + '<div class="player-seek-handle" id="seek-handle" style="left:' + seekPct + '%"></div>'
@@ -691,7 +820,8 @@ function _renderBrowserPlayerHTML() {
             + '<span class="player-seek-time" id="seek-dur">' + _fmtTime(dur) + '</span>'
             + '</div>';
 
-        // Cue buttons row — uses same grid as controls (250px spacer + buttons)
+        // Cue buttons row — only in browser mode (not usable during cast)
+        if (_isCasting) { cueHtml = ''; } else {
         cueHtml = '<div class="player-cue-row"><div class="player-cue-buttons">';
         for (var ci = 1; ci <= 8; ci++) {
             var isSet = trackCues[ci] != null;
@@ -704,6 +834,7 @@ function _renderBrowserPlayerHTML() {
                 + ci + '</button>';
         }
         cueHtml += '</div></div>';
+        }
     }
 
     var html = '<div class="player-bar player-bar-browser' + (_isLibraryTrack ? ' player-bar-library' : '') + '">';
@@ -763,27 +894,43 @@ function _renderBrowserPlayerHTML() {
             + '</button>';
     }
 
-    html += '<button class="player-btn" onclick="stopListen()" title="' + t('player.stop_title') + '">'
+    html += '<button class="player-btn" onclick="' + (_isCasting ? 'stopAllLibCasts()' : 'stopListen()') + '" title="' + t('player.stop_title') + '">'
         + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
         + '</button>'
         // Fwd button
         + '<button class="player-btn" onclick="_libPlayNextTrack(false)" title="Next">'
         + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>'
         + '</button>'
-        + '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="_browserVolumeStep(-5)">&#8722;</button>'
-        + '<div class="vol-slider" data-device-id="browser">'
-        + '<div class="vol-slider-track"></div>'
-        + '<div class="vol-slider-fill" style="width:' + volPct + '%"></div>'
-        + '<div class="vol-slider-handle" style="left:' + volPct + '%"></div>'
-        + '</div>'
-        + '<button class="player-vol-btn" onclick="_browserVolumeStep(5)">+</button>'
-        + '<span class="player-volume-value">' + (_isLibraryTrack ? _seekStep + 's' : volPct) + '</span>'
+        + (function() {
+            if (_isCasting && _libCastDeviceId) {
+                var castVol = (_playerVolumeLocal[_libCastDeviceId] != null && _playerVolumeLocal[_libCastDeviceId] !== true)
+                    ? _playerVolumeLocal[_libCastDeviceId]
+                    : ((_volState[_libCastDeviceId] && _volState[_libCastDeviceId].value != null) ? _volState[_libCastDeviceId].value : 50);
+                return '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="playerVolumeStep(\'' + _libCastDeviceId + '\', -2)">&#8722;</button>'
+                    + '<div class="vol-slider" data-device-id="' + _libCastDeviceId + '">'
+                    + '<div class="vol-slider-track"></div>'
+                    + '<div class="vol-slider-fill" style="width:' + castVol + '%"></div>'
+                    + '<div class="vol-slider-handle" style="left:' + castVol + '%"></div>'
+                    + '</div>'
+                    + '<button class="player-vol-btn" onclick="playerVolumeStep(\'' + _libCastDeviceId + '\', 2)">+</button>'
+                    + '<span class="player-volume-value">' + castVol + '</span>';
+            }
+            return '<button class="player-vol-btn" style="margin-left:0.5rem;" onclick="_browserVolumeStep(-5)">&#8722;</button>'
+                + '<div class="vol-slider" data-device-id="browser">'
+                + '<div class="vol-slider-track"></div>'
+                + '<div class="vol-slider-fill" style="width:' + volPct + '%"></div>'
+                + '<div class="vol-slider-handle" style="left:' + volPct + '%"></div>'
+                + '</div>'
+                + '<button class="player-vol-btn" onclick="_browserVolumeStep(5)">+</button>'
+                + '<span class="player-volume-value">' + (_isLibraryTrack ? _seekStep + 's' : volPct) + '</span>';
+        })()
+
         + _renderRepeatButton()
-        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn()
+        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerCastBtn() + _renderPlayerTrashBtn()
             : _renderStreamHeartBtn())
         + '</div>'
         + '<div class="player-right">'
-        + '<div class="player-device-name">' + t('player.browser') + '</div>'
+        + '<div class="player-device-name">' + (_isCasting ? _getLibCastNames() : t('player.browser')) + '</div>'
         + '</div>';
 
     if (_isLibraryTrack) {
@@ -798,8 +945,8 @@ function _renderBrowserPlayerHTML() {
 function _renderRepeatButton() {
     var icon, cls, title;
     if (_libRepeatMode === 'one') {
-        // Repeat one: filled icon with "1"
-        icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor">1</text></svg>';
+        // Repeat one: just "1"
+        icon = '<span style="font-size:calc(28px * 0.7);line-height:28px;font-weight:200;color:#64b5f6;">1</span>';
         cls = ' repeat-active';
         title = 'Repeat: One';
     } else if (_libRepeatMode === 'all') {
@@ -814,19 +961,38 @@ function _renderRepeatButton() {
         title = 'Repeat: Off';
     }
     return '<button class="player-btn repeat-btn' + cls + '" onclick="toggleRepeatMode()" title="' + title + '" style="margin-left:20px;">' + icon + '</button>'
-        + '<button class="player-btn shuffle-btn" onclick="playRandomTrack()" title="Random Track" style="margin-left:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.4"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>';
+        + '<button class="player-btn shuffle-btn' + (_libShuffleMode ? ' repeat-active' : '') + '" onclick="toggleShuffleMode()" title="Shuffle: ' + (_libShuffleMode ? 'On' : 'Off') + '" style="margin-left:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"' + (_libShuffleMode ? '' : ' opacity="0.4"') + '><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>';
 }
 
-function playRandomTrack() {
+function toggleShuffleMode() {
+    _libShuffleMode = !_libShuffleMode;
+    localStorage.setItem('_libShuffleMode', _libShuffleMode ? '1' : '0');
+    // Update button directly without full re-render
+    var btn = document.querySelector('.shuffle-btn');
+    if (btn) {
+        btn.style.color = _libShuffleMode ? '#ff9800' : '';
+        btn.style.borderColor = _libShuffleMode ? '#ff9800' : '';
+        btn.title = 'Shuffle: ' + (_libShuffleMode ? 'On' : 'Off');
+        var svg = btn.querySelector('svg');
+        if (svg) svg.setAttribute('opacity', _libShuffleMode ? '1' : '0.4');
+    }
+}
+
+function _playRandomTrack() {
     // Get current folder's tracks from cache or fetch random from API
     if (typeof _libTracks !== 'undefined' && _libTracks && _libTracks.length > 0) {
         var idx = Math.floor(Math.random() * _libTracks.length);
+        // Avoid playing the same track
+        if (_libTracks.length > 1) {
+            while (_libTracks[idx].id === _libPlayingTrackId) {
+                idx = Math.floor(Math.random() * _libTracks.length);
+            }
+        }
         var tr = _libTracks[idx];
         if (typeof playLibraryTrackById === 'function') {
             playLibraryTrackById(tr.id);
         }
     } else {
-        // Fetch a random track from the API
         fetch('/api/library/random', {credentials: 'include'})
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -847,41 +1013,33 @@ function toggleRepeatMode() {
 
 // Play previous track in library table
 function _libPlayPrevTrack() {
-    var rows = document.querySelectorAll('#lib-table tr[data-track-id]');
-    if (!rows.length) return;
+    if (!_libTracks || !_libTracks.length) return;
     var currentIdx = -1;
-    for (var i = 0; i < rows.length; i++) {
-        if (parseInt(rows[i].getAttribute('data-track-id')) === _libPlayingTrackId) {
-            currentIdx = i;
-            break;
-        }
+    for (var i = 0; i < _libTracks.length; i++) {
+        if (_libTracks[i].id === _libPlayingTrackId) { currentIdx = i; break; }
     }
     var prevIdx = currentIdx - 1;
-    if (prevIdx < 0) prevIdx = rows.length - 1; // wrap to end
-    var prevRow = rows[prevIdx];
-    var tid = parseInt(prevRow.getAttribute('data-track-id'));
-    if (tid && typeof playLibraryTrackById === 'function') playLibraryTrackById(tid);
+    if (prevIdx < 0) prevIdx = _libTracks.length - 1;
+    if (typeof playLibraryTrackById === 'function') playLibraryTrackById(_libTracks[prevIdx].id);
 }
 
-// Play next track in library table (for repeat-all)
+// Play next track in library table (for repeat-all / shuffle)
 function _libPlayNextTrack(wrap) {
-    var rows = document.querySelectorAll('#lib-table tr[data-track-id]');
-    if (!rows.length) return;
+    if (_libShuffleMode) {
+        _playRandomTrack();
+        return;
+    }
+    if (!_libTracks || !_libTracks.length) return;
     var currentIdx = -1;
-    for (var i = 0; i < rows.length; i++) {
-        if (parseInt(rows[i].getAttribute('data-track-id')) === _libPlayingTrackId) {
-            currentIdx = i;
-            break;
-        }
+    for (var i = 0; i < _libTracks.length; i++) {
+        if (_libTracks[i].id === _libPlayingTrackId) { currentIdx = i; break; }
     }
     var nextIdx = currentIdx + 1;
-    if (nextIdx >= rows.length) {
+    if (nextIdx >= _libTracks.length) {
         if (wrap) nextIdx = 0;
         else return;
     }
-    var nextRow = rows[nextIdx];
-    var tid = parseInt(nextRow.getAttribute('data-track-id'));
-    if (tid && typeof playLibraryTrackById === 'function') playLibraryTrackById(tid);
+    if (typeof playLibraryTrackById === 'function') playLibraryTrackById(_libTracks[nextIdx].id);
 }
 
 // --- Cue Points ---
@@ -998,7 +1156,12 @@ function toggleFavorite() {
             if (typeof _libTrackCache !== 'undefined' && _libTrackCache[trackId]) {
                 _libTrackCache[trackId].favorited = data.favorited;
             }
-            _refreshPlayerBar();
+            // Update player heart directly
+            var playerHeart = document.querySelector('.player-heart');
+            if (playerHeart) {
+                playerHeart.innerHTML = data.favorited ? '&#10084;' : '&#9825;';
+                playerHeart.classList.toggle('heart-active', !!data.favorited);
+            }
             // Update list heart if visible
             var row = document.querySelector('#lib-table tr[data-track-id="' + trackId + '"]');
             if (row) {
@@ -1174,6 +1337,205 @@ function _renderPlayerPlaylistBtn() {
     return html;
 }
 
+// --- Player cast button ---
+var _playerCastMenu = null;
+
+function _renderPlayerCastBtn() {
+    return '<button class="player-btn player-cast-btn" onclick="_showPlayerCastMenu(this)" title="Cast" style="margin-left:12px;">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>'
+        + '<line x1="2" y1="20" x2="2.01" y2="20"/></svg></button>';
+}
+
+function _showPlayerCastMenu(btn) {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; return; }
+
+    var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    if (!trackId) return;
+
+    var menu = document.createElement('div');
+    menu.className = 'cast-menu';
+    menu.style.position = 'fixed';
+    menu.style.zIndex = '3000';
+
+    var rect = btn.getBoundingClientRect();
+    menu.style.left = rect.left + 'px';
+    menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+
+    var html = '';
+    var isBrowser = !_libCastDeviceIds || _libCastDeviceIds.length === 0;
+    // Browser option
+    html += '<button class="cast-menu-item' + (isBrowser ? ' cast-menu-active' : '') + '" onclick="castLibraryTrack(\'browser\')">'
+        + '&#9654; Browser <span class="cast-device-badge" style="background:#666;">Local</span></button>';
+    if (_castDevicesCache && _castDevicesCache.length > 0) {
+        _castDevicesCache.forEach(function(d) {
+            if (d.enabled === false) return;
+            var isActive = _libCastDeviceIds && _libCastDeviceIds.indexOf(d.id) !== -1;
+            var badge = d.type === 'lms'
+                ? '<span class="cast-device-badge badge-lms">LMS</span>'
+                : '<span class="cast-device-badge badge-sonos">Sonos</span>';
+            // Click on active device = stop that device, click on inactive = add it
+            var onclick = isActive ? 'castLibraryTrackStop(\'' + d.id + '\')' : 'castLibraryTrack(\'' + d.id + '\')';
+            html += '<button class="cast-menu-item' + (isActive ? ' cast-menu-active' : '') + '" onclick="' + onclick + '">'
+                + (isActive ? '&#9632; ' : '&#9654; ') + d.name + badge + '</button>';
+        });
+    }
+
+    menu.innerHTML = html;
+    document.body.appendChild(menu);
+    _playerCastMenu = menu;
+}
+
+function castLibraryTrack(deviceId) {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; }
+    var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    if (!trackId) return;
+
+    // If selecting "browser", stop all casts and resume browser playback
+    if (deviceId === 'browser') {
+        _libCastDeviceIds.forEach(function(did) {
+            fetch('/api/cast/stop', {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({device_id: did})
+            }).catch(function() {});
+        });
+        _libCastDeviceId = null;
+        _libCastDeviceName = '';
+        _libCastDeviceIds = [];
+        _stopCastPoll();
+        // Resume browser audio
+        if (_playerAudio && _playerAudio.paused) {
+            _playerAudio.play().catch(function() {});
+            _browserPaused = false;
+        }
+        _refreshPlayerBar();
+        return;
+    }
+
+    // Add cast device (don't stop previous — allow multi-cast)
+    fetch('/api/cast/play-library', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({track_id: trackId, device_id: deviceId})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.success) { alert(data.message || data.error); return; }
+        // Pause browser audio — track plays on cast device(s)
+        if (_playerAudio && !_playerAudio.paused) {
+            _playerAudio.pause();
+            _browserPaused = true;
+        }
+        // Add to active cast devices list
+        if (!_libCastDeviceIds) _libCastDeviceIds = [];
+        if (_libCastDeviceIds.indexOf(deviceId) === -1) _libCastDeviceIds.push(deviceId);
+        // Track elapsed time for waveform position
+        if (!_castPlayStart) {
+            _castPlayStart = Date.now() / 1000;
+            var _tid = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+            var _tr = (_tid && typeof _libTrackCache !== 'undefined') ? _libTrackCache[_tid] : null;
+            _castTrackDuration = (_tr && _tr.duration) ? _tr.duration : 0;
+        }
+        // Primary device for volume control = most recently added
+        _libCastDeviceId = deviceId;
+        _libCastDeviceName = deviceId;
+        if (_castDevicesCache) {
+            for (var i = 0; i < _castDevicesCache.length; i++) {
+                if (_castDevicesCache[i].id === deviceId) {
+                    _libCastDeviceName = _castDevicesCache[i].name;
+                    break;
+                }
+            }
+        }
+        _startCastPoll();
+        // Fetch device volume and update player
+        fetch('/api/cast/volume/' + encodeURIComponent(deviceId), {credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(vdata) {
+                if (vdata.volume != null) {
+                    _volState[deviceId] = {value: vdata.volume, dragging: false};
+                }
+                _refreshPlayerBar();
+            })
+            .catch(function() { _refreshPlayerBar(); });
+    }).catch(function() {});
+}
+
+function _getLibCastNames() {
+    if (!_libCastDeviceIds || !_castDevicesCache) return '';
+    var names = _libCastDeviceIds.map(function(did) {
+        for (var i = 0; i < _castDevicesCache.length; i++) {
+            if (_castDevicesCache[i].id === did) return _escHtmlPlayer(_castDevicesCache[i].name);
+        }
+        return _escHtmlPlayer(did);
+    });
+    return names.join(', ');
+}
+
+function stopAllLibCasts() {
+    if (_libCastDeviceIds && _libCastDeviceIds.length > 0) {
+        _libCastDeviceIds.forEach(function(did) {
+            fetch('/api/cast/stop', {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({device_id: did})
+            }).catch(function() {});
+        });
+    }
+    _libCastDeviceId = null;
+    _libCastDeviceName = '';
+    _libCastDeviceIds = [];
+    _stopCastPoll();
+    _libPlayingTrackId = null;
+    sessionStorage.removeItem('_libPlayingTrackId');
+    sessionStorage.removeItem('_browserLibStream');
+    _refreshPlayerBar();
+    if (typeof updatePlayButtons === 'function') updatePlayButtons();
+}
+
+function castLibraryTrackStop(deviceId) {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; }
+    // Stop this specific device
+    fetch('/api/cast/stop', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: deviceId})
+    }).catch(function() {});
+    // Remove from active list
+    _libCastDeviceIds = _libCastDeviceIds.filter(function(id) { return id !== deviceId; });
+    // If no more cast devices, switch primary back to null (browser mode)
+    if (_libCastDeviceIds.length === 0) {
+        _libCastDeviceId = null;
+        _libCastDeviceName = '';
+        _stopCastPoll();
+        if (_playerAudio && _playerAudio.paused) {
+            _playerAudio.play().catch(function() {});
+            _browserPaused = false;
+        }
+    } else {
+        // Switch primary to remaining device
+        _libCastDeviceId = _libCastDeviceIds[_libCastDeviceIds.length - 1];
+        _libCastDeviceName = _libCastDeviceId;
+        if (_castDevicesCache) {
+            for (var i = 0; i < _castDevicesCache.length; i++) {
+                if (_castDevicesCache[i].id === _libCastDeviceId) {
+                    _libCastDeviceName = _castDevicesCache[i].name;
+                    break;
+                }
+            }
+        }
+    }
+    _refreshPlayerBar();
+}
+
+// Close cast menu on outside click
+document.addEventListener('click', function(e) {
+    if (_playerCastMenu && !_playerCastMenu.contains(e.target) && !e.target.closest('.player-cast-btn')) {
+        _playerCastMenu.remove();
+        _playerCastMenu = null;
+    }
+});
+
 function _renderPlayerTrashBtn() {
     var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
     if (!trackId) return '';
@@ -1213,13 +1575,19 @@ function _playerTrashAction(trackId, fullDelete) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success) {
-                // Stop playback
+                // Stop current playback
                 if (_playerAudio) { _playerAudio.pause(); _playerAudio.src = ''; }
-                _libPlayingTrackId = null;
-                _refreshPlayerBar();
                 // Remove from list if visible
                 var row = document.querySelector('tr[data-track-id="' + trackId + '"]');
                 if (row) row.remove();
+                // Play next track based on shuffle/repeat mode
+                if (_libShuffleMode) {
+                    _playRandomTrack();
+                } else if (_libRepeatMode === 'all') {
+                    _libPlayNextTrack(true);
+                } else {
+                    _libPlayNextTrack(false);
+                }
             }
         });
 }
@@ -1389,7 +1757,7 @@ document.addEventListener('keydown', function(e) {
     // Left/Right: jump _seekStep seconds in track
     if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && _isLibraryTrack && _playerAudio) {
         e.preventDefault();
-        var dur = _playerAudio.duration || 0;
+        var dur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
         if (e.code === 'ArrowLeft') {
             _playerAudio.currentTime = Math.max(0, _playerAudio.currentTime - _seekStep);
         } else {
@@ -1418,13 +1786,17 @@ document.addEventListener('keydown', function(e) {
     }
 
     // Number keys 1-8: jump to existing cue; Shift+1-8: delete cue
-    if (_isLibraryTrack && _playerAudio && !e.ctrlKey && !e.altKey && !e.metaKey && e.key >= '1' && e.key <= '8') {
-        e.preventDefault();
-        var cueNum = parseInt(e.key);
-        if (e.shiftKey) {
-            cueClear(cueNum, e);
-        } else {
-            cueAction(cueNum);
+    // Use e.code (KeyDigit1-8) to work regardless of keyboard layout (Shift+1 = '!' on DE keyboards)
+    if (_isLibraryTrack && _playerAudio && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        var codeMatch = e.code && e.code.match(/^Digit([1-8])$/);
+        if (codeMatch) {
+            e.preventDefault();
+            var cueNum = parseInt(codeMatch[1]);
+            if (e.shiftKey) {
+                cueClear(cueNum, e);
+            } else {
+                cueAction(cueNum);
+            }
         }
     }
 
@@ -1464,7 +1836,7 @@ function _stopLoopEnforce() {
 // --- Seek slider for library tracks ---
 function _onSeekUpdate() {
     if (_seekDragging || !_isLibraryTrack || !_playerAudio) return;
-    var dur = _playerAudio.duration || 0;
+    var dur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
     var cur = _playerAudio.currentTime || 0;
     if (!dur || !isFinite(dur)) return;
     var pct = (cur / dur) * 100;
@@ -1523,8 +1895,8 @@ function _seekFromEvent(e) {
     var rect = bar.getBoundingClientRect();
     var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
     var pct = Math.max(0, Math.min(1, x / rect.width));
-    var dur = _playerAudio.duration || 0;
-    if (dur && isFinite(dur)) {
+    var dur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
+    if (dur > 0) {
         _playerAudio.currentTime = pct * dur;
     }
     var fill = document.getElementById('seek-fill');
@@ -1556,6 +1928,25 @@ document.addEventListener('mouseup', function() { _seekDragging = false; });
 document.addEventListener('touchend', function() { _seekDragging = false; });
 
 // --- Waveform visualization ---
+function _loadWaveformById(trackId) {
+    var key = 'track:' + trackId;
+    if (_waveformTrackUrl === key && _waveformData) {
+        _drawWaveform();
+        return;
+    }
+    _waveformData = null;
+    _waveformTrackUrl = key;
+    fetch('/api/library/track/' + trackId + '/waveform', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.peaks && data.peaks.length) {
+                _waveformData = new Float32Array(data.peaks);
+                _drawWaveform();
+            }
+        })
+        .catch(function() { _waveformData = null; });
+}
+
 function _loadWaveform(url) {
     if (_waveformTrackUrl === url && _waveformData) {
         _drawWaveform();
@@ -1593,8 +1984,16 @@ function _drawWaveform() {
 
     // Draw waveform bars
     var progress = 0;
-    if (_playerAudio && _playerAudio.duration && isFinite(_playerAudio.duration)) {
-        progress = _playerAudio.currentTime / _playerAudio.duration;
+    var _isCastWf = _libCastDeviceIds && _libCastDeviceIds.length > 0;
+    if (_isCastWf && _castPlayStart && _castTrackDuration > 0) {
+        var elapsed = (Date.now() / 1000) - _castPlayStart;
+        if (elapsed > _castTrackDuration) elapsed = _castTrackDuration;
+        progress = elapsed / _castTrackDuration;
+    } else {
+        var _wfDur = (_playerAudio && _playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
+        if (_playerAudio && _wfDur > 0) {
+            progress = _playerAudio.currentTime / _wfDur;
+        }
     }
 
     for (var i = 0; i < bars; i++) {
@@ -1641,7 +2040,7 @@ function _refreshPlayerBar() {
         JSON.stringify(_trackRatings[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || 0),
         JSON.stringify(_trackPlaylists[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || []),
         JSON.stringify(_cuePoints[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || {}),
-        _loopMode,
+        _loopMode, _libCastDeviceId || '',
         hasCast ? JSON.stringify(_playerData.players.map(function(p){return p.device_id+':'+p.stream_id})) : '',
     ].join('|');
 
@@ -1665,11 +2064,12 @@ function _refreshPlayerBar() {
             _playerData.speakers.forEach(function(s) { if (s.active_for) _multiroomGroupCount++; });
         }
 
-        var players = _playerData.players.slice(0, MAX_CASTS);
-        players.forEach(function(p, idx) {
+        var streamPlayers = _playerData.players.filter(function(p) { return !p.is_library; }).slice(0, MAX_CASTS);
+        streamPlayers.forEach(function(p, idx) {
             html += _renderPlayerHTML(p, idx);
         });
-        totalPlayers += players.length;
+        // Library cast players are controlled via the browser player bar — no separate bar
+        totalPlayers += streamPlayers.length;
 
         // Update volume sliders from server data (only if not dragging/stepping)
         // (deferred to after innerHTML set)
@@ -1703,7 +2103,17 @@ function _refreshPlayerBar() {
     // Init seek drag + visualizer for library tracks
     if (hasBrowser && _isLibraryTrack) {
         _initSeekDrag();
-        if (_playerAudio && _playerAudio.src) _loadWaveform(_playerAudio.src);
+        var _isCastingNow = _libCastDeviceIds && _libCastDeviceIds.length > 0;
+        if (_isCastingNow && _libPlayingTrackId) {
+            // Cast mode: load waveform by track ID, redraw existing data
+            if (_waveformData) {
+                _drawWaveform();
+            } else {
+                _loadWaveformById(_libPlayingTrackId);
+            }
+        } else if (_playerAudio && _playerAudio.src) {
+            _loadWaveform(_playerAudio.src);
+        }
     } else {
         _waveformData = null;
     }
@@ -1712,9 +2122,7 @@ function _refreshPlayerBar() {
 }
 
 function _updateVersionPosition(playerCount) {
-    var mainEl = document.querySelector('main.container');
-    var totalH = playerCount * 70;
-    if (mainEl) mainEl.style.paddingBottom = (totalH + 20) + 'px';
+    // No-op: flex layout handles spacing automatically
 }
 
 function _escHtmlPlayer(s) {

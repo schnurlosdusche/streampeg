@@ -1,8 +1,18 @@
+html {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+}
 body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
 }
 .container {
     max-width: 100%;
@@ -15,7 +25,18 @@ nav.container {
 }
 main.container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+/* Hide scrollbars but keep scroll functionality */
+.lib-table-wrap, .lib-pl-list, main.container {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+.lib-table-wrap::-webkit-scrollbar, .lib-pl-list::-webkit-scrollbar, main.container::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
 }
 
 
@@ -299,15 +320,9 @@ dialog, dialog::backdrop {
 }
 
 /* Player bar spacing — dynamically updated by JS */
-body {
-    padding-bottom: 90px;
-}
 /* Multi-player container */
 #player-container {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    flex-shrink: 0;
     z-index: 1000;
 }
 .player-bar {
@@ -587,12 +602,12 @@ body {
     transition: border-color 0.15s, color 0.15s;
 }
 .player-btn:hover {
-    border-color: #ff9800;
-    color: #ff9800;
+    border-color: #64b5f6;
+    color: #64b5f6;
 }
-.repeat-btn.repeat-active {
-    color: #ff9800;
-    border-color: #ff9800;
+.repeat-btn.repeat-active, .shuffle-btn.repeat-active {
+    color: #64b5f6;
+    border-color: #64b5f6;
 }
 .player-stars {
     display: inline-flex;
@@ -703,8 +718,8 @@ body {
     transition: border-color 0.15s, color 0.15s;
 }
 .player-vol-btn:hover {
-    border-color: #ff9800;
-    color: #ff9800;
+    border-color: #64b5f6;
+    color: #64b5f6;
 }
 /* Custom volume slider */
 .vol-slider {
@@ -999,7 +1014,10 @@ body {
 #lib-table th:hover { color: #ccc; }
 #lib-table th .sort-arrow { margin-left: 4px; font-size: 10px; }
 #lib-table td {
-    padding: 0.3rem 0.5rem;
+    padding: 0 0.5rem;
+    height: 28px;
+    line-height: 28px;
+    box-sizing: border-box;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1045,8 +1063,8 @@ body {
 }
 .lib-row-selected td { background: #2a2a4a !important; }
 #lib-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
-#lib-table tbody tr.lib-playing td { background: rgba(66,165,245,0.1) !important; }
-#lib-table tbody tr.lib-playing { outline: 1px solid #fff; outline-offset: -1px; }
+#lib-table tbody tr.lib-playing td, #lib-table tbody tr.lib-playing-row td { background: rgba(66,165,245,0.1) !important; }
+#lib-table tbody tr.lib-playing, #lib-table tbody tr.lib-playing-row { outline: 1px solid #fff; outline-offset: -1px; }
 .lib-clickable { cursor: pointer; }
 .lib-clickable:hover { color: #64b5f6; }
 .lib-now-playing { color: #42a5f5; font-size: 10px; margin-right: 4px; }
@@ -1194,3 +1212,7 @@ body {
     font-size: 12px;
     margin-left: 0.5rem;
 }
+/* Playlist action buttons */
+.pl-actions-row { display: flex; gap: 4px; padding: 4px 6px !important; flex-wrap: wrap; }
+.pl-action-btn { font-size: 10px !important; padding: 2px 6px !important; margin: 0 !important; }
+.pl-delete-btn { margin-left: auto !important; color: #f44 !important; border-color: #f44 !important; }

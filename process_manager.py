@@ -488,6 +488,33 @@ class _PidWrapper:
         raise subprocess.TimeoutExpired(cmd="streamripper", timeout=timeout)
 
 
+def _check_mp3_integrity(filepath):
+    """Check if an MP3 file can be fully decoded by ffmpeg.
+    Returns False if the actual decodable duration is less than 50% of the header duration."""
+    try:
+        # Get header duration
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", filepath],
+            capture_output=True, text=True, timeout=10)
+        header_dur = float(result.stdout.strip()) if result.stdout.strip() else 0
+        if header_dur <= 0:
+            return False
+
+        # Decode fully and get actual duration
+        result = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", filepath, "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30)
+
+        # If ffmpeg reports errors, file is defective
+        if result.stderr.strip():
+            return False
+
+        return True
+    except Exception:
+        return False
+
+
 class _FileWatcher:
     """Watches a directory for new audio files, trims and syncs them to NAS."""
 
@@ -610,6 +637,15 @@ class _FileWatcher:
                     if fsize < self.min_size_bytes:
                         log_event(self.stream_id, "cleanup",
                                   f"Zu klein ({fsize // 1024} KB), gelöscht: {os.path.basename(filepath)}")
+                        try:
+                            os.remove(filepath)
+                        except OSError:
+                            pass
+                        continue
+                    # Integrity check: verify MP3 is fully decodable
+                    if not _check_mp3_integrity(filepath):
+                        log_event(self.stream_id, "cleanup",
+                                  f"Defekte MP3 gelöscht: {os.path.basename(filepath)}")
                         try:
                             os.remove(filepath)
                         except OSError:

@@ -85,10 +85,12 @@ TRANSLATIONS = {
 
         # Library
         "nav.library": "Library",
+        "nav.playlists": "Playlists",
         "library.title": "Music Library",
         "library.search_placeholder": "Search title or artist...",
+        "library.search_all": "Search all tracks...",
         "library.all_streams": "All streams",
-        "library.scan": "Scan Library",
+        "library.scan": "Reload Library",
         "library.scanning": "Scanning...",
         "library.scan_complete": "Scan complete",
         "library.title_col": "Title",
@@ -457,6 +459,7 @@ TRANSLATIONS = {
 
         # Library
         "nav.library": "Bibliothek",
+        "nav.playlists": "Playlists",
         "library.title": "Musikbibliothek",
         "library.search_placeholder": "Titel oder Interpret suchen...",
         "library.all_streams": "Alle Streams",
@@ -742,6 +745,7 @@ TRANSLATIONS = {
 
         # Library
         "nav.library": "Bibliothèque",
+        "nav.playlists": "Playlists",
         "library.title": "Bibliothèque musicale",
         "library.search_placeholder": "Rechercher titre ou artiste...",
         "library.all_streams": "Tous les flux",
@@ -995,6 +999,7 @@ TRANSLATIONS = {
 
         # Library
         "nav.library": "Biblioteca",
+        "nav.playlists": "Playlists",
         "library.title": "Biblioteca musical",
         "library.search_placeholder": "Buscar título o artista...",
         "library.all_streams": "Todos los streams",
@@ -1240,6 +1245,7 @@ TRANSLATIONS = {
 
         # Library
         "nav.library": "Biblioteka",
+        "nav.playlists": "Playlisty",
         "library.title": "Biblioteka muzyczna",
         "library.search_placeholder": "Szukaj tytułu lub artysty...",
         "library.all_streams": "Wszystkie streamy",
@@ -1485,6 +1491,7 @@ TRANSLATIONS = {
 
         # Library
         "nav.library": "Libreria",
+        "nav.playlists": "Playlist",
         "library.title": "Libreria musicale",
         "library.search_placeholder": "Cerca titolo o artista...",
         "library.all_streams": "Tutti gli stream",

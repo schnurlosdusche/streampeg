@@ -21,6 +21,8 @@ import cast_queue
 import cover_art
 import autotag
 import dlna_server
+import slimproto
+import lms_compat
 import library as lib_module
 import bpm_analyzer
 
@@ -38,7 +40,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.52a"
+VERSION = "0.0.80a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -827,6 +829,62 @@ def api_cast_play():
     return jsonify({"success": ok, "message": msg})
 
 
+@app.route("/api/cast/play-library", methods=["POST"])
+def api_cast_play_library():
+    """Cast a library track to a device."""
+    data = request.get_json() or {}
+    track_id = data.get("track_id")
+    device_id = data.get("device_id")
+    if not track_id or not device_id:
+        return jsonify({"success": False, "error": "track_id and device_id required"}), 400
+
+    track = db.get_library_track(int(track_id))
+    if not track:
+        return jsonify({"success": False, "error": "Track not found"}), 404
+
+    # Build URL that the cast device can reach
+    server_ip = _get_server_ip()
+    track_url = f"http://{server_ip}:{PORT}/api/library/track/{track_id}/play"
+
+    # Stop existing cast on this device
+    active = cast.get_active_casts()
+    if device_id in active:
+        cast.stop_cast(device_id)
+        cast.remove_active_cast_by_device(device_id)
+
+    active = cast.get_active_casts()
+    if len(active) >= 4:
+        return jsonify({"success": False, "message": "Max 4 casts"}), 400
+
+    ok, msg = cast.cast_stream(track_url, device_id)
+    if ok:
+        cast.set_active_cast(-int(track_id), device_id)  # negative ID = library track
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/cast/device-mode", methods=["GET"])
+def api_cast_device_mode():
+    """Get playback mode of a cast device (play/stop/pause)."""
+    device_id = request.args.get("device_id", "")
+    if not device_id:
+        return jsonify({"mode": None})
+    mode = cast.get_device_playback_mode(device_id)
+    return jsonify({"mode": mode})
+
+
+def _get_server_ip():
+    """Get the server's LAN IP address."""
+    try:
+        import socket as _s
+        sock = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 @app.route("/api/cast/stop", methods=["POST"])
 def api_cast_stop():
     """Stop casting a stream. Accepts stream_id (stops all devices) or device_id (stops one)."""
@@ -892,9 +950,39 @@ def api_cast_player():
 
     for device_id, stream_id_raw in active.items():
         stream_id = int(stream_id_raw) if isinstance(stream_id_raw, str) else stream_id_raw
-        stream = stream_map.get(stream_id)
         device = dev_map.get(device_id)
-        if not stream or not device:
+        if not device:
+            # Device not found in discovery (may be temporarily unreachable)
+            # Use fallback so cast player still renders
+            device = {"id": device_id, "name": device_id, "type": "unknown"}
+
+        # Library track cast (negative stream_id)
+        if stream_id < 0:
+            track_id = -stream_id
+            track = db.get_library_track(track_id)
+            track_name = ""
+            cover_url = f"/api/library/track/{track_id}/cover"
+            if track:
+                artist = track.get("artist", "") or ""
+                title = track.get("title", "") or ""
+                track_name = (artist + " - " + title) if artist else title
+            vol = cast.get_volume(device_id)
+            players.append({
+                "stream_id": stream_id,
+                "stream_name": "Library",
+                "device_id": device_id,
+                "device_name": device.get("name", device_id),
+                "device_type": device.get("type", ""),
+                "current_track": track_name,
+                "cover_url": cover_url,
+                "volume": vol,
+                "running": True,
+                "is_library": True,
+            })
+            continue
+
+        stream = stream_map.get(stream_id)
+        if not stream:
             continue
 
         st = process_manager.get_status(stream)
@@ -1121,8 +1209,22 @@ def api_library_tracks():
         stream=stream, search=search, bpm_min=bpm_min, bpm_max=bpm_max,
         key_filter=key_filter
     )
+    # Slim down response — only fields needed for the list view
+    slim = []
+    for t_row in tracks:
+        slim.append({
+            "id": t_row["id"],
+            "title": t_row.get("title", ""),
+            "artist": t_row.get("artist", ""),
+            "bpm": t_row.get("bpm", 0),
+            "key": t_row.get("key", ""),
+            "duration_sec": t_row.get("duration_sec", 0),
+            "rating": t_row.get("rating", 0),
+            "favorited": t_row.get("favorited", 0),
+            "mtime": t_row.get("mtime", 0),
+        })
     return jsonify({
-        "tracks": tracks, "total": total,
+        "tracks": slim, "total": total,
         "page": page, "per_page": per_page,
         "pages": (total + per_page - 1) // per_page if per_page > 0 else 0,
     })
@@ -1148,6 +1250,11 @@ def api_library_scan():
 @app.route("/api/library/scan/status")
 def api_library_scan_status():
     return jsonify(lib_module.get_scan_status())
+
+
+@app.route("/api/library/loudness/status")
+def api_library_loudness_status():
+    return jsonify(lib_module.get_loudness_status())
 
 
 @app.route("/api/library/rescan-tags", methods=["POST"])
@@ -1189,6 +1296,7 @@ def api_library_delete_playlist(playlist_id):
     if not pl:
         return jsonify({"error": "not found"}), 404
     lib_module.delete_m3u(pl["name"])
+    lib_module.delete_playlist_dir(pl["name"])
     db.delete_playlist(playlist_id)
     return jsonify({"success": True})
 
@@ -1202,7 +1310,9 @@ def api_library_rename_playlist(playlist_id):
     old = db.get_playlist(playlist_id)
     if old:
         lib_module.delete_m3u(old["name"])
+        lib_module.rename_playlist_dir(old["name"], name)
     db.rename_playlist(playlist_id, name)
+    lib_module.generate_m3u(playlist_id)
     return jsonify({"success": True})
 
 
@@ -1220,12 +1330,16 @@ def api_library_playlist_add(playlist_id):
     if not track_ids:
         return jsonify({"error": "No tracks"}), 400
     db.add_to_playlist(playlist_id, track_ids)
+    # Copy tracks to playlist folder
+    for tid in track_ids:
+        lib_module.copy_track_to_playlist(playlist_id, tid)
     lib_module.generate_m3u(playlist_id)
     return jsonify({"success": True})
 
 
 @app.route("/api/library/playlists/<int:playlist_id>/tracks/<int:track_id>", methods=["DELETE"])
 def api_library_playlist_remove(playlist_id, track_id):
+    lib_module.remove_track_from_playlist_dir(playlist_id, track_id)
     db.remove_from_playlist(playlist_id, track_id)
     lib_module.generate_m3u(playlist_id)
     return jsonify({"success": True})
@@ -1247,12 +1361,97 @@ def api_library_playlist_m3u(playlist_id):
         return jsonify({"error": "not found"}), 404
     # Generate fresh M3U
     lib_module.generate_m3u(playlist_id)
-    sync_target = sync.get_sync_target()
-    m3u_path = os.path.join(sync_target, pl["name"] + ".m3u")
-    if not os.path.isfile(m3u_path):
+    pl_dir = lib_module._get_playlist_dir(pl["name"])
+    safe_name = lib_module._safe_playlist_name(pl["name"])
+    m3u_path = os.path.join(pl_dir, safe_name + ".m3u") if pl_dir else None
+    if not m3u_path or not os.path.isfile(m3u_path):
         return jsonify({"error": "M3U not found"}), 404
     return send_file(m3u_path, mimetype="audio/x-mpegurl",
                      as_attachment=True, download_name=pl["name"] + ".m3u")
+
+
+@app.route("/api/usb-devices")
+def api_usb_devices():
+    """List mounted USB/removable storage devices."""
+    import subprocess
+    devices = []
+    try:
+        result = subprocess.run(
+            ["lsblk", "-J", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,LABEL,FSTYPE,RM,HOTPLUG"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            for dev in data.get("blockdevices", []):
+                _find_usb_mounts(dev, devices)
+    except Exception as e:
+        log.error("USB device scan error: %s", e)
+    return jsonify({"devices": devices})
+
+
+def _find_usb_mounts(dev, results, parent_removable=False):
+    """Recursively find mounted partitions on removable/hotplug devices."""
+    is_removable = dev.get("rm") or dev.get("hotplug") or parent_removable
+    mountpoint = dev.get("mountpoint")
+    if is_removable and mountpoint and dev.get("type") == "part":
+        label = dev.get("label") or dev.get("name", "")
+        size = dev.get("size", "")
+        # Check free space
+        try:
+            stat = os.statvfs(mountpoint)
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        except Exception:
+            free_gb = 0
+        results.append({
+            "name": dev.get("name", ""),
+            "label": label,
+            "mountpoint": mountpoint,
+            "size": size,
+            "free_gb": round(free_gb, 1),
+            "fstype": dev.get("fstype", ""),
+        })
+    for child in dev.get("children", []):
+        _find_usb_mounts(child, results, is_removable)
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/export.zip")
+def api_library_playlist_export_zip(playlist_id):
+    """Stream playlist as ZIP download (M3U + all MP3s)."""
+    import zipfile, io
+    pl = db.get_playlist(playlist_id)
+    if not pl:
+        return jsonify({"error": "not found"}), 404
+    tracks = db.get_playlist_tracks(playlist_id)
+    safe_name = lib_module._safe_playlist_name(pl["name"])
+
+    def generate():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_STORED) as zf:
+            # Generate M3U
+            lines = ["#EXTM3U"]
+            for t in tracks:
+                dur = t.get("duration_sec", 0)
+                artist = t.get("artist", "")
+                title = t.get("title", "") or t.get("filename", "")
+                display = f"{artist} - {title}" if artist else title
+                filename = os.path.basename(t.get("filepath", ""))
+                lines.append(f"#EXTINF:{dur},{display}")
+                lines.append(filename)
+            zf.writestr(f"{safe_name}/{safe_name}.m3u", "\n".join(lines) + "\n")
+            # Add MP3 files
+            for t in tracks:
+                filepath = t.get("filepath", "")
+                if os.path.isfile(filepath):
+                    filename = os.path.basename(filepath)
+                    zf.write(filepath, f"{safe_name}/{filename}")
+        buf.seek(0)
+        yield buf.read()
+
+    return app.response_class(
+        generate(),
+        mimetype='application/zip',
+        headers={'Content-Disposition': f'attachment; filename="{safe_name}.zip"'}
+    )
 
 
 @app.route("/api/library/track/<int:track_id>")
@@ -1430,6 +1629,32 @@ def api_library_playlist_mixxx(playlist_id):
 
     return Response(xml, mimetype="application/xml",
                     headers={"Content-Disposition": 'attachment; filename="{}.xml"'.format(pl["name"])})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/csv")
+def api_library_playlist_csv(playlist_id):
+    """Export playlist as CSV with BPM, Key, Duration."""
+    pl = db.get_playlist(playlist_id)
+    if not pl:
+        return jsonify({"error": "not found"}), 404
+    tracks = db.get_playlist_tracks(playlist_id)
+
+    import csv, io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Title", "Artist", "BPM", "Key", "Duration", "Rating", "Filepath"])
+    for t in tracks:
+        dur_min = t.get("duration_sec", 0) or 0
+        dur_str = f"{dur_min // 60}:{dur_min % 60:02d}" if dur_min else ""
+        writer.writerow([
+            t.get("title", ""), t.get("artist", ""),
+            t.get("bpm", ""), t.get("key", ""),
+            dur_str, t.get("rating", ""),
+            t.get("filepath", ""),
+        ])
+
+    return Response(output.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{pl["name"]}.csv"'})
 
 
 @app.route("/api/library/random")
@@ -1671,6 +1896,137 @@ def yt_download():
     return render_template("yt_download.html")
 
 
+@app.route("/api/yt-search", methods=["POST"])
+def api_yt_search():
+    """Search YouTube for audio content via yt-dlp."""
+    import subprocess
+    data = request.get_json() or {}
+    query = data.get("query", "").strip()
+    if not query:
+        return jsonify({"ok": False, "error": "Query required"}), 400
+
+    yt_dlp_candidates = [
+        os.path.expanduser("~/.local/bin/yt-dlp"),
+        "/usr/local/bin/yt-dlp",
+        "/usr/bin/yt-dlp",
+        "yt-dlp",
+    ]
+    yt_dlp = next((p for p in yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
+
+    try:
+        result = subprocess.run(
+            [yt_dlp, "--flat-playlist", "--no-warnings", "-j",
+             f"ytsearch10:{query}"],
+            capture_output=True, text=True, timeout=30
+        )
+        items = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+                items.append({
+                    "id": entry.get("id", ""),
+                    "title": entry.get("title", "Unknown"),
+                    "uploader": entry.get("uploader") or entry.get("channel", ""),
+                    "duration": entry.get("duration"),
+                    "url": f"https://www.youtube.com/watch?v={entry.get('id', '')}",
+                    "thumbnail": entry.get("thumbnail") or entry.get("thumbnails", [{}])[-1].get("url", ""),
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+        return jsonify({"ok": True, "results": items})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Search timeout"}), 504
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+
+@app.route("/api/yt-preview", methods=["GET"])
+def api_yt_preview():
+    """Get a streamable audio URL for a YouTube video (for preview)."""
+    import subprocess
+    video_id = request.args.get("id", "").strip()
+    if not video_id:
+        return jsonify({"ok": False, "error": "id required"}), 400
+
+    yt_dlp_candidates = [
+        os.path.expanduser("~/.local/bin/yt-dlp"),
+        "/usr/local/bin/yt-dlp",
+        "/usr/bin/yt-dlp",
+        "yt-dlp",
+    ]
+    yt_dlp = next((p for p in yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
+
+    try:
+        result = subprocess.run(
+            [yt_dlp, "-f", "bestaudio", "-g", "--no-warnings",
+             "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
+            capture_output=True, text=True, timeout=15
+        )
+        url = result.stdout.strip().split("\n")[0]
+        if url and url.startswith("http"):
+            # Return proxy URL to avoid CORS issues
+            return jsonify({"ok": True, "url": f"/api/yt-preview/stream?id={video_id}"})
+        return jsonify({"ok": False, "error": "Could not get audio URL"})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Timeout"}), 504
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/yt-preview/stream", methods=["GET"])
+def api_yt_preview_stream():
+    """Proxy-stream audio from YouTube to avoid CORS issues."""
+    import subprocess
+    video_id = request.args.get("id", "").strip()
+    if not video_id:
+        return "Missing id", 400
+
+    yt_dlp_candidates = [
+        os.path.expanduser("~/.local/bin/yt-dlp"),
+        "/usr/local/bin/yt-dlp",
+        "/usr/bin/yt-dlp",
+        "yt-dlp",
+    ]
+    yt_dlp = next((p for p in yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
+
+    try:
+        result = subprocess.run(
+            [yt_dlp, "-f", "bestaudio", "-g", "--no-warnings",
+             "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
+            capture_output=True, text=True, timeout=15
+        )
+        audio_url = result.stdout.strip().split("\n")[0]
+        if not audio_url or not audio_url.startswith("http"):
+            return "Could not get audio URL", 502
+    except Exception:
+        return "Error getting audio URL", 502
+
+    # Stream the audio through our server
+    import urllib.request as _ur
+    try:
+        req = _ur.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = _ur.urlopen(req, timeout=10)
+        content_type = resp.headers.get("Content-Type", "audio/webm")
+
+        def generate():
+            try:
+                while True:
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                resp.close()
+
+        return app.response_class(generate(), mimetype=content_type,
+                                  headers={"Accept-Ranges": "none"})
+    except Exception:
+        return "Stream error", 502
+
+
 @app.route("/api/yt-download/check", methods=["POST"])
 def api_yt_download_check():
     """Check a YouTube URL: single video or playlist? Return metadata."""
@@ -1705,14 +2061,14 @@ def api_yt_download_check():
     # Real playlist prefixes: PL (user), OL (official), FL (favorites)
     # Not a playlist: RD (radio/mix), UU (channel uploads), WL (watch later), LL (liked)
     is_real_playlist = list_id.startswith(("PL", "OL", "FL"))
+    is_mix = list_id.startswith("RD") or list_id.startswith("UU")
     is_explicit_playlist = "/playlist" in url.split("?")[0]
-    is_playlist_url = is_explicit_playlist or is_real_playlist
+    is_playlist_url = is_explicit_playlist or is_real_playlist or is_mix
     has_single_video = "watch?v=" in url or "youtu.be/" in url
 
-    # For mixes/radio: strip the list= param so yt-dlp treats it as single video
-    if list_id and not is_real_playlist and not is_explicit_playlist:
-        url = re.sub(r"[&?]list=[^&]*", "", url)
-        url = re.sub(r"[&?]index=[^&]*", "", url)
+    # Keep original URL for playlist fetch (don't strip list= anymore)
+    single_url = re.sub(r"[&?]list=[^&]*", "", url)
+    single_url = re.sub(r"[&?]index=[^&]*", "", single_url)
 
     # Step 1: Always get single video info first (unless explicit playlist URL)
     # Use --print instead of --dump-json to skip slow format extraction
@@ -1721,7 +2077,7 @@ def api_yt_download_check():
         try:
             result = subprocess.run(
                 [yt_dlp, "--no-playlist", "--no-download", "--no-warnings",
-                 "--print", "%(title)s\n%(duration)s\n%(uploader)s", url],
+                 "--print", "%(title)s\n%(duration)s\n%(uploader)s", single_url],
                 capture_output=True, text=True, timeout=15, env=env,
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -1734,17 +2090,11 @@ def api_yt_download_check():
         except Exception:
             pass
 
-    # Step 2: Only fetch playlist entries for real playlists (index= or /playlist page)
+    # Step 2: Fetch playlist entries for playlists and mixes
     if is_playlist_url:
         try:
-            # Extract the list= parameter to check for Mixes (RD...) which are auto-generated
-            list_id = ""
-            if "list=" in url:
-                list_id = url.split("list=")[1].split("&")[0]
-            is_mix = list_id.startswith("RD") or list_id.startswith("UU")
-
-            # Limit entries: Mixes are quasi-infinite, cap at 50; real playlists at 500
-            max_entries = 50 if is_mix else 500
+            # Limit entries: Mixes are quasi-infinite, cap at 25; real playlists at 500
+            max_entries = 25 if is_mix else 500
 
             result = subprocess.run(
                 [yt_dlp, "--flat-playlist", "--dump-json", "--no-warnings",
@@ -2049,6 +2399,8 @@ def _shutdown():
     if scheduler:
         scheduler.stop()
     dlna_server.stop()
+    lms_compat.stop()
+    slimproto.stop()
     print("Shutdown complete.")
 
 
@@ -2104,6 +2456,20 @@ if __name__ == "__main__":
     scheduler = SyncScheduler(app)
     scheduler.start()
 
+    # Start SlimProto server (embedded Squeezelite server, replaces LMS)
+    try:
+        slimproto.start()
+        print("SlimProto server started on port 3483")
+    except Exception as e:
+        print(f"SlimProto server start failed: {e}")
+
+    # Start LMS compatibility layer (JSON-RPC on 9000, CLI on 9090 — for Jivelite)
+    try:
+        lms_compat.start()
+        print("LMS compat server started (HTTP:9000, CLI:9090)")
+    except Exception as e:
+        print(f"LMS compat server start failed: {e}")
+
     # Start DLNA server if enabled
     if dlna_server.is_enabled():
         try:
@@ -2116,6 +2482,12 @@ if __name__ == "__main__":
         lib_module.start_daemon()
     except Exception as e:
         print(f"Library daemon start failed: {e}")
+
+    # Start loudness normalization thread (parallel, independent)
+    try:
+        lib_module.start_loudness_daemon()
+    except Exception as e:
+        print(f"Loudness normalization thread start failed: {e}")
 
     # Start background ICY metadata poller for cast players
     cast.start_icy_poller()

@@ -4,6 +4,20 @@
 {% block content %}
 <h3>{{ t('yt.title') }}</h3>
 
+<!-- YouTube Search -->
+<form id="yt-search-form" onsubmit="return ytSearch(event)" style="margin-bottom:1rem;">
+    <fieldset role="group">
+        <input type="text" id="yt-search-input" placeholder="Search YouTube..." autocomplete="off">
+        <button type="submit" id="btn-search">Search</button>
+    </fieldset>
+</form>
+<div id="yt-search-results" style="display:none; margin-bottom:1.5rem;">
+    <div id="yt-search-list"></div>
+</div>
+
+<hr style="margin-bottom:1rem;">
+
+<!-- Direct URL -->
 <form id="yt-url-form" onsubmit="return checkUrl(event)">
     <fieldset role="group">
         <input type="url" id="yt-url" name="url" placeholder="{{ t('yt.url_placeholder') }}" required>
@@ -282,5 +296,123 @@ function escHtml(s) {
 
 function show(id) { document.getElementById(id).style.display = ''; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+// --- YouTube Search ---
+var _ytPreviewAudio = null;
+var _ytPreviewId = null;
+
+function ytSearch(e) {
+    e.preventDefault();
+    var q = document.getElementById('yt-search-input').value.trim();
+    if (!q) return;
+    var btn = document.getElementById('btn-search');
+    btn.disabled = true;
+    btn.textContent = 'Searching...';
+    btn.setAttribute('aria-busy', 'true');
+    hide('yt-search-results');
+
+    fetch('/api/yt-search', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({query: q})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.disabled = false;
+        btn.textContent = 'Search';
+        btn.removeAttribute('aria-busy');
+        if (!data.ok || !data.results || !data.results.length) {
+            document.getElementById('yt-search-list').innerHTML = '<p style="color:var(--pico-muted-color);">No results found.</p>';
+            show('yt-search-results');
+            return;
+        }
+        var html = '<table role="grid" style="font-size:0.85rem;"><thead><tr>'
+            + '<th style="width:50px;"></th>'
+            + '<th>Title</th>'
+            + '<th style="width:150px;">Channel</th>'
+            + '<th style="width:60px;">Duration</th>'
+            + '<th style="width:90px;"></th>'
+            + '</tr></thead><tbody>';
+        data.results.forEach(function(r) {
+            var dur = r.duration ? formatDuration(r.duration) : '?';
+            var thumb = r.thumbnail ? '<img src="' + escHtml(r.thumbnail) + '" style="width:48px;height:36px;object-fit:cover;border-radius:3px;" loading="lazy">' : '';
+            html += '<tr data-yt-id="' + escHtml(r.id) + '">'
+                + '<td>' + thumb + '</td>'
+                + '<td>' + escHtml(r.title) + '</td>'
+                + '<td style="color:var(--pico-muted-color);">' + escHtml(r.uploader) + '</td>'
+                + '<td>' + dur + '</td>'
+                + '<td>'
+                + '<button class="outline btn-yt-preview" onclick="ytPreview(\'' + escHtml(r.id) + '\', this)" title="Preview" style="padding:0.2rem 0.4rem;font-size:0.75rem;margin-right:0.3rem;">&#9654;</button>'
+                + '<button class="btn-start btn-yt-dl" onclick="ytSearchDownload(\'' + escHtml(r.url) + '\')" title="Download" style="padding:0.2rem 0.4rem;font-size:0.75rem;">&#8615;</button>'
+                + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('yt-search-list').innerHTML = html;
+        show('yt-search-results');
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = 'Search';
+        btn.removeAttribute('aria-busy');
+        alert('Search error: ' + err);
+    });
+}
+
+function ytPreview(videoId, btn) {
+    // Toggle off if already playing this
+    if (_ytPreviewAudio && _ytPreviewId === videoId) {
+        _ytPreviewAudio.pause();
+        _ytPreviewAudio = null;
+        _ytPreviewId = null;
+        btn.innerHTML = '&#9654;';
+        return;
+    }
+    // Stop previous preview
+    if (_ytPreviewAudio) {
+        _ytPreviewAudio.pause();
+        _ytPreviewAudio = null;
+        // Reset all preview buttons
+        document.querySelectorAll('.btn-yt-preview').forEach(function(b) { b.innerHTML = '&#9654;'; });
+    }
+    btn.innerHTML = '&#9632;';
+    btn.setAttribute('aria-busy', 'true');
+    _ytPreviewId = videoId;
+
+    // Get audio stream URL via yt-dlp
+    fetch('/api/yt-preview?id=' + encodeURIComponent(videoId))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.removeAttribute('aria-busy');
+        if (!data.ok || !data.url) {
+            btn.innerHTML = '&#9654;';
+            _ytPreviewId = null;
+            return;
+        }
+        _ytPreviewAudio = new Audio(data.url);
+        _ytPreviewAudio.volume = 0.5;
+        _ytPreviewAudio.play().catch(function() {});
+        _ytPreviewAudio.addEventListener('ended', function() {
+            btn.innerHTML = '&#9654;';
+            _ytPreviewAudio = null;
+            _ytPreviewId = null;
+        });
+    })
+    .catch(function() {
+        btn.removeAttribute('aria-busy');
+        btn.innerHTML = '&#9654;';
+        _ytPreviewId = null;
+    });
+}
+
+function ytSearchDownload(url) {
+    // Stop preview if playing
+    if (_ytPreviewAudio) { _ytPreviewAudio.pause(); _ytPreviewAudio = null; _ytPreviewId = null; }
+    // Fill URL field and trigger check
+    document.getElementById('yt-url').value = url;
+    currentUrl = url;
+    hide('yt-search-results');
+    // Auto-start download
+    startDownload('single');
+}
 </script>
 {% endblock %}

@@ -2,6 +2,7 @@
 Cast module — discover and stream to network audio devices.
 
 Supported backends:
+  - SlimProto (embedded server for Squeezelite players — no LMS needed) — ACTIVE
   - LMS (Logitech Media Server / Squeezebox / Max2Play) — ACTIVE
   - Sonos (via SoCo) — streaming controlled via settings (default: disabled)
 """
@@ -148,6 +149,70 @@ def lms_get_current_track(device):
     return track, cover_url, r.get("mode")
 
 
+def seek_device(device_id, position_seconds):
+    """Seek a device to a specific position in seconds."""
+    device = _find_device(device_id)
+    if not device:
+        return False, "Device not found"
+    if device["type"] == "slim":
+        import slimproto
+        ok = slimproto.seek_player(device["player_id"], position_seconds)
+        return ok, "OK" if ok else "SlimProto seek not supported"
+    elif device["type"] == "lms":
+        result = _lms_request(
+            device["host"], device["port"], device["player_id"],
+            ["time", str(position_seconds)],
+        )
+        return bool(result), "OK" if result else "LMS seek failed"
+    elif device["type"] == "sonos":
+        try:
+            sp = soco.SoCo(device["host"])
+            h = int(position_seconds // 3600)
+            m = int((position_seconds % 3600) // 60)
+            s = int(position_seconds % 60)
+            sp.seek(f"{h}:{m:02d}:{s:02d}")
+            return True, "OK"
+        except Exception as e:
+            return False, str(e)
+    return False, "Unknown device type"
+
+
+def get_device_playback_mode(device_id):
+    """Return playback mode for a device: 'play', 'stop', 'pause', or None."""
+    device = _find_device(device_id)
+    if not device:
+        return None
+    if device["type"] == "slim":
+        import slimproto
+        return slimproto.get_state(device["player_id"])
+    elif device["type"] == "lms":
+        _track, _cover, mode = lms_get_current_track(device)
+        return mode  # 'play', 'stop', 'pause'
+    elif device["type"] == "sonos":
+        try:
+            sp = soco.SoCo(device["host"])
+            info = sp.get_current_transport_info()
+            state = info.get("current_transport_state", "")
+            if state == "PLAYING":
+                return "play"
+            elif state == "PAUSED_PLAYBACK":
+                return "pause"
+            else:
+                return "stop"
+        except Exception:
+            return None
+    return None
+
+
+def _find_device(device_id):
+    """Find a device by its ID from discovered devices."""
+    devices = discover_devices()
+    for d in devices:
+        if d["id"] == device_id:
+            return d
+    return None
+
+
 # ===== Sonos discovery (SoCo) =============================================
 # NOTE: Sonos streaming is DISABLED. Only discovery is active so devices
 # show up in the UI (greyed out / marked as unavailable).
@@ -201,13 +266,28 @@ def discover_devices(force=False):
 
     devices = []
 
+    # SlimProto (embedded server — direct Squeezelite connections, no LMS)
+    try:
+        import slimproto
+        if slimproto.is_running():
+            slim_players = slimproto.get_players()
+            devices.extend(slim_players)
+    except Exception:
+        pass
+
+    # Collect SlimProto player IDs to avoid duplicates from LMS
+    slim_player_ids = {d.get("player_id") for d in devices if d["type"] == "slim"}
+
     # LMS
     lms_host = _discover_lms_server()
     if lms_host:
         players = _discover_lms_players(lms_host)
         for p in players:
+            # Skip players already connected via SlimProto
+            if p.get("player_id") in slim_player_ids:
+                continue
             p["enabled"] = True
-        devices.extend(players)
+            devices.append(p)
 
     # Sonos (discovery only)
     devices.extend(_discover_sonos())
@@ -315,6 +395,13 @@ def cast_stream(stream_url, device_id):
             return False, "Sonos-Streaming ist in den Settings deaktiviert"
         return False, "Gerät ist nicht verfügbar"
 
+    if device["type"] == "slim":
+        import slimproto
+        ok = slimproto.play_url(device["player_id"], stream_url)
+        if ok:
+            return True, f"Stream gestartet auf {device['name']}"
+        return False, f"SlimProto-Fehler auf {device['name']}"
+
     if device["type"] == "lms":
         lms_play(device, stream_url)
         return True, f"Stream gestartet auf {device['name']}"
@@ -334,6 +421,11 @@ def stop_cast(device_id):
     if not device:
         return False, "Gerät nicht gefunden"
 
+    if device["type"] == "slim":
+        import slimproto
+        slimproto.stop_player(device["player_id"])
+        return True, f"Wiedergabe gestoppt auf {device['name']}"
+
     if device["type"] == "lms":
         lms_stop(device)
         return True, f"Wiedergabe gestoppt auf {device['name']}"
@@ -350,6 +442,11 @@ def pause_cast(device_id, stream_url=None):
     device = get_device(device_id)
     if not device:
         return False, "Device not found"
+
+    if device["type"] == "slim":
+        import slimproto
+        slimproto.pause_player(device["player_id"])
+        return True, f"Pause toggled on {device['name']}"
 
     if device["type"] == "lms":
         lms_pause(device)
@@ -491,6 +588,9 @@ def get_volume(device_id):
     device = get_device(device_id)
     if not device:
         return None
+    if device["type"] == "slim":
+        import slimproto
+        return slimproto.get_volume(device["player_id"])
     if device["type"] == "lms":
         return lms_get_volume(device)
     if device["type"] == "sonos":
@@ -504,7 +604,10 @@ def set_volume(device_id, level):
     if not device:
         return
     level = max(0, min(100, int(level)))
-    if device["type"] == "lms":
+    if device["type"] == "slim":
+        import slimproto
+        slimproto.set_volume(device["player_id"], level)
+    elif device["type"] == "lms":
         lms_set_volume(device, level)
     elif device["type"] == "sonos":
         sonos_set_volume(device, level)

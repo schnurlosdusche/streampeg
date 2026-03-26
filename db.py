@@ -155,6 +155,11 @@ def init_db():
     if "favorited" not in lib_columns:
         conn.execute("ALTER TABLE library_tracks ADD COLUMN favorited INTEGER DEFAULT 0")
         conn.commit()
+    # Migrate library_tracks: add loudness_lufs column
+    if "loudness_lufs" not in lib_columns:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN loudness_lufs REAL DEFAULT NULL")
+        conn.commit()
+
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
         conn.execute("UPDATE streams SET offset_end = split_delay WHERE split_delay > 0")
@@ -333,10 +338,30 @@ def upsert_library_track(data_dict):
     vals = [data_dict.get(c, "") for c in cols]
     placeholders = ", ".join(["?"] * len(cols))
     col_names = ", ".join(cols)
+
+    # Check if track already exists and preserve favorited status
+    filepath = data_dict.get("filepath", "")
+    existing = conn.execute(
+        "SELECT favorited FROM library_tracks WHERE filepath = ?", (filepath,)
+    ).fetchone()
+    favorited = existing["favorited"] if existing else 0
+
+    # For new tracks, check if favorited as a stream favorite
+    if not existing:
+        title = data_dict.get("title", "")
+        artist = data_dict.get("artist", "")
+        track_name = (artist + " - " + title) if artist else title
+        if track_name:
+            fav = conn.execute(
+                "SELECT id FROM stream_favorites WHERE track_name = ?", (track_name,)
+            ).fetchone()
+            if fav:
+                favorited = 1
+
     conn.execute(
-        f"INSERT OR REPLACE INTO library_tracks ({col_names}, scanned_at) "
-        f"VALUES ({placeholders}, datetime('now'))",
-        vals,
+        f"INSERT OR REPLACE INTO library_tracks ({col_names}, favorited, scanned_at) "
+        f"VALUES ({placeholders}, ?, datetime('now'))",
+        vals + [favorited],
     )
     conn.commit()
     conn.close()
