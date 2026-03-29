@@ -23,6 +23,7 @@ function updateStatus() {
                     cover_url: s.cover_url,
                     stream_name: s.name,
                     running: s.running,
+                    bitrate: s.bitrate || 0,
                 };
 
                 const row = document.querySelector('tr[data-stream-id="' + s.id + '"]');
@@ -178,13 +179,15 @@ function _initBrowserAudio() {
         _playerAudio.addEventListener('timeupdate', _onSeekUpdate);
         _playerAudio.addEventListener('ended', function() {
             // Guard against premature 'ended' from defective MP3s
-            var _edDur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
-            if (_isLibraryTrack && _edDur > 0) {
-                var remaining = _edDur - _playerAudio.currentTime;
-                if (remaining > 5) {
-                    // Ended fired but we're far from the real end — defective file
-                    console.warn('Premature ended event at', _playerAudio.currentTime, '/', _playerAudio.duration);
-                    return;
+            // Skip guard if repeat-one is active (always honor ended)
+            if (_isLibraryTrack && _libRepeatMode !== 'one') {
+                var _edDur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
+                if (_edDur > 0) {
+                    var remaining = _edDur - _playerAudio.currentTime;
+                    if (remaining > 5) {
+                        console.warn('Premature ended event at', _playerAudio.currentTime, '/', _playerAudio.duration);
+                        return;
+                    }
                 }
             }
             if (_isLibraryTrack && _libRepeatMode === 'one') {
@@ -812,9 +815,9 @@ function _renderBrowserPlayerHTML() {
         seekHtml = '<div class="player-seek-row">'
             + '<span class="player-seek-time" id="seek-time">' + _fmtTime(cur) + '</span>'
             + '<div class="player-seek-bar" id="seek-bar"' + noSeek + '>'
-            + '<canvas id="waveform-canvas" class="player-waveform" width="1200" height="64"></canvas>'
+            + '<canvas id="waveform-canvas" class="player-waveform" width="1200" height="80"></canvas>'
             + '<div class="player-seek-overlay" id="seek-fill" style="width:' + seekPct + '%"></div>'
-            + '<div class="player-seek-handle" id="seek-handle" style="left:' + seekPct + '%"></div>'
+            + '<div class="player-seek-handle" id="seek-handle" style="left:' + seekPct + '%"><span class="seek-remaining" id="seek-remaining"></span></div>'
             + cueMarkers
             + '</div>'
             + '<span class="player-seek-time" id="seek-dur">' + _fmtTime(dur) + '</span>'
@@ -930,20 +933,8 @@ function _renderBrowserPlayerHTML() {
             : _renderStreamHeartBtn())
         + '</div>'
         + '<div class="player-right">'
+        + _renderPlayerBitrate()
         + '<div class="player-device-name">' + (_isCasting ? _getLibCastNames() : t('player.browser')) + '</div>'
-        + (function() {
-            var _brtid = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
-            var _brdata = (_brtid && typeof _libTrackCache !== 'undefined') ? _libTrackCache[_brtid] : null;
-            if (_brdata && _brdata.bitrate && _brdata.bitrate > 0) {
-                return '<div class="player-bitrate">' + _brdata.bitrate + ' kbit/s</div>';
-            }
-            // Fallback: calculate from size/duration until rescan populates bitrate
-            if (_brdata && _brdata.size_bytes && _brdata.duration_sec && _brdata.duration_sec > 0) {
-                var kbps = Math.round((_brdata.size_bytes * 8) / (_brdata.duration_sec * 1000));
-                if (kbps > 0) return '<div class="player-bitrate">~' + kbps + ' kbit/s</div>';
-            }
-            return '';
-        })()
         + '</div>';
 
     if (_isLibraryTrack) {
@@ -953,6 +944,22 @@ function _renderBrowserPlayerHTML() {
         html += '</div></div>';
     }
     return html;
+}
+
+function _renderPlayerBitrate() {
+    var br = 0;
+    var _brtid = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+    var _brdata = (_brtid && typeof _libTrackCache !== 'undefined') ? _libTrackCache[_brtid] : null;
+    if (_brdata && _brdata.bitrate && _brdata.bitrate > 0) {
+        br = _brdata.bitrate;
+    } else if (_brdata && _brdata.size_bytes && _brdata.duration_sec && _brdata.duration_sec > 0) {
+        br = Math.round((_brdata.size_bytes * 8) / (_brdata.duration_sec * 1000));
+    } else if (_playerStreamId && _lastStreamStatus[_playerStreamId]) {
+        br = _lastStreamStatus[_playerStreamId].bitrate || 0;
+    }
+    if (!br) return '';
+    var brColor = br >= 128 ? '#4caf50' : '#ff9800';
+    return '<div class="player-bitrate" style="color:' + brColor + ';border-color:' + brColor + ';">' + br + ' kBit/s</div>';
 }
 
 function _renderRepeatButton() {
@@ -1861,6 +1868,8 @@ function _onSeekUpdate() {
     if (timeEl) timeEl.textContent = _fmtTime(cur);
     var durEl = document.getElementById('seek-dur');
     if (durEl) durEl.textContent = _fmtTime(dur);
+    var remEl = document.getElementById('seek-remaining');
+    if (remEl) remEl.textContent = '-' + _fmtTime(dur - cur);
     _updateCueMarkers(dur);
     _scheduleWaveformRedraw();
 }

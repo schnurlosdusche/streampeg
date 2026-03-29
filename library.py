@@ -4,6 +4,7 @@ populate the library_tracks table.  Also handles M3U playlist generation.
 """
 
 import os
+import re
 import subprocess
 import threading
 import logging
@@ -467,10 +468,20 @@ def _scan_files(files):
         _scan_status["files_scanned"] = 0
         _scan_status["files_updated"] = 0
         _scan_status["progress"] = 0
+        _scan_status["phase"] = "new"
 
     # Build a map of filepath -> mtime from DB for skip check and cleanup
+    # Only consider tracks from the same subdirs being scanned
+    scan_subdirs = set(subdir for _, subdir in files) if files else set()
     conn = db.get_db()
-    rows = conn.execute("SELECT filepath, mtime FROM library_tracks").fetchall()
+    if scan_subdirs:
+        placeholders = ",".join("?" for _ in scan_subdirs)
+        rows = conn.execute(
+            f"SELECT filepath, mtime FROM library_tracks WHERE stream_subdir IN ({placeholders})",
+            list(scan_subdirs),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT filepath, mtime FROM library_tracks").fetchall()
     conn.close()
     existing_mtimes = {r["filepath"]: r["mtime"] for r in rows}
     existing_paths = set(existing_mtimes.keys())
@@ -541,32 +552,66 @@ def _scan_files(files):
     for path in removed:
         db.delete_library_track_by_path(path)
 
-    # Phase 2: Read ID3 tags for new files (slower, but library is already browsable)
-    if new_files:
+    # Phase 2: Read ID3 tags only for tracks that actually need data
+    # - new files (no tags yet)
+    # - tracks missing bitrate, duration, bpm, key, or tag_status
+    conn = db.get_db()
+    incomplete_rows = conn.execute(
+        """SELECT filepath FROM library_tracks WHERE
+            bitrate IS NULL OR bitrate = 0
+            OR duration_sec IS NULL OR duration_sec = 0
+            OR tag_status IS NULL"""
+    ).fetchall()
+    conn.close()
+    incomplete_paths = set(r["filepath"] for r in incomplete_rows)
+    phase2_files = list(set(new_files) | incomplete_paths)
+
+    if phase2_files:
         with _scan_lock:
             _scan_status["files_scanned"] = 0
-            _scan_status["files_total"] = len(new_files)
+            _scan_status["files_total"] = len(phase2_files)
             _scan_status["files_updated"] = 0
             _scan_status["progress"] = 0
+            _scan_status["phase"] = "scan"
 
-        for filepath in new_files:
+        for filepath in phase2_files:
             if not _scan_status["running"]:
                 break
+            if not os.path.isfile(filepath):
+                with _scan_lock:
+                    _scan_status["files_scanned"] += 1
+                    total = _scan_status["files_total"]
+                    _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
+                continue
             tags = _read_id3(filepath)
-            # Only update if we got meaningful tag data
-            if tags.get("title") or tags.get("artist") or tags.get("bpm") or tags.get("duration_sec"):
+            has_artist = bool(tags.get("artist"))
+            has_title = bool(tags.get("title"))
+            tag_status = "ok" if (has_artist and has_title) else "needs_tag"
+
+            if tags.get("title") or tags.get("artist") or tags.get("bpm") or tags.get("duration_sec") or tags.get("bitrate"):
                 conn = db.get_db()
                 conn.execute(
                     """UPDATE library_tracks SET
                         title = CASE WHEN ? != '' THEN ? ELSE title END,
                         artist = CASE WHEN ? != '' THEN ? ELSE artist END,
-                        album = ?, genre = ?, bpm = ?, key = ?, duration_sec = ?, bitrate = ?
+                        album = CASE WHEN ? != '' THEN ? ELSE album END,
+                        genre = CASE WHEN ? != '' THEN ? ELSE genre END,
+                        bpm = CASE WHEN ? > 0 THEN ? ELSE bpm END,
+                        key = CASE WHEN ? != '' THEN ? ELSE key END,
+                        duration_sec = CASE WHEN ? > 0 THEN ? ELSE duration_sec END,
+                        bitrate = CASE WHEN ? > 0 THEN ? ELSE bitrate END,
+                        tag_status = ?
                     WHERE filepath = ?""",
                     (
                         tags["title"], tags["title"],
                         tags["artist"], tags["artist"],
-                        tags["album"], tags["genre"],
-                        tags["bpm"], tags["key"], tags["duration_sec"], tags["bitrate"],
+                        tags["album"], tags["album"],
+                        tags["genre"], tags["genre"],
+                        tags["bpm"], tags["bpm"],
+                        tags["key"], tags["key"],
+                        tags["duration_sec"], tags["duration_sec"],
+                        tags["bitrate"], tags["bitrate"],
+                        tag_status,
                         filepath,
                     ),
                 )
@@ -577,6 +622,168 @@ def _scan_files(files):
                 _scan_status["files_scanned"] += 1
                 total = _scan_status["files_total"]
                 _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
+
+    # Phase 3: Autotag tracks that need identification
+    try:
+        import autotag
+        if autotag.is_enabled() and autotag.get_acoustid_key():
+            conn = db.get_db()
+            needs_tag = conn.execute(
+                "SELECT id, filepath FROM library_tracks WHERE tag_status = 'needs_tag' AND trashed = 0"
+            ).fetchall()
+            conn.close()
+
+            if needs_tag:
+                log.info("Phase 3: Autotagging %d tracks", len(needs_tag))
+                with _scan_lock:
+                    _scan_status["files_scanned"] = 0
+                    _scan_status["files_total"] = len(needs_tag)
+                    _scan_status["progress"] = 0
+                    _scan_status["phase"] = "tag"
+
+                for row in needs_tag:
+                    if not _scan_status["running"]:
+                        break
+                    filepath = row["filepath"]
+                    track_id = row["id"]
+                    if not os.path.isfile(filepath):
+                        with _scan_lock:
+                            _scan_status["files_scanned"] += 1
+                            total = _scan_status["files_total"]
+                            _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
+                        continue
+
+                    ok, method = autotag.process_file(filepath)
+                    if ok and method == "acoustid":
+                        # Re-read tags and update DB
+                        tags = _read_id3(filepath)
+                        conn = db.get_db()
+                        conn.execute(
+                            """UPDATE library_tracks SET
+                                title = ?, artist = ?, album = ?, genre = ?,
+                                bpm = CASE WHEN ? > 0 THEN ? ELSE bpm END,
+                                key = CASE WHEN ? != '' THEN ? ELSE key END,
+                                duration_sec = ?, bitrate = ?, tag_status = 'tagged'
+                            WHERE id = ?""",
+                            (
+                                tags["title"], tags["artist"], tags["album"], tags["genre"],
+                                tags["bpm"], tags["bpm"],
+                                tags["key"], tags["key"],
+                                tags["duration_sec"], tags["bitrate"],
+                                track_id,
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                    else:
+                        # Fallback: parse Artist - Title from filename
+                        name_base = os.path.splitext(os.path.basename(filepath))[0]
+                        name_clean = re.sub(r"_\d{8,}$", "", name_base)
+                        name_clean = name_clean.replace("_", " ")
+                        # Remove common YT suffixes
+                        for suffix in ["Official Music Video", "Official Video", "Official Audio",
+                                       "Official Lyric Video", "Official Visualiser", "Official Visualizer",
+                                       "Lyric Video", "Lyrics", "HD", "HQ", "4K",
+                                       "Music Video", "Visualizer", "Visualiser"]:
+                            name_clean = re.sub(r"\s*[\(\[]?" + re.escape(suffix) + r"[\)\]]?\s*", " ", name_clean, flags=re.IGNORECASE)
+                        name_clean = re.sub(r"\s+", " ", name_clean).strip()
+                        fb_artist, fb_title = "", name_clean
+                        for sep in (" - ", " – ", " — "):
+                            if sep in name_clean:
+                                parts = name_clean.split(sep, 1)
+                                fb_artist = parts[0].strip()
+                                fb_title = parts[1].strip()
+                                break
+                        conn = db.get_db()
+                        if fb_artist:
+                            conn.execute(
+                                "UPDATE library_tracks SET artist = ?, title = ?, tag_status = 'filename' WHERE id = ?",
+                                (fb_artist, fb_title, track_id),
+                            )
+                        else:
+                            conn.execute(
+                                "UPDATE library_tracks SET title = ?, tag_status = 'failed' WHERE id = ?",
+                                (fb_title, track_id),
+                            )
+                        conn.commit()
+                        conn.close()
+
+                    with _scan_lock:
+                        _scan_status["files_scanned"] += 1
+                        total = _scan_status["files_total"]
+                        _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
+    except Exception as e:
+        log.error("Phase 3 autotag error: %s", e)
+
+
+def generate_waveform(filepath):
+    """Generate 256-bar waveform peaks for a single file. Returns list of floats or None."""
+    import struct
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", filepath, "-ac", "1", "-ar", "8000", "-f", "s16le",
+             "-acodec", "pcm_s16le", "-v", "quiet", "-"],
+            capture_output=True, timeout=30
+        )
+        if result.returncode != 0:
+            return None
+        raw = result.stdout
+        num_samples = len(raw) // 2
+        if num_samples == 0:
+            return None
+        bars = 512
+        block_size = max(1, num_samples // bars)
+        peaks = []
+        for i in range(bars):
+            start = i * block_size * 2
+            end = min(start + block_size * 2, len(raw))
+            chunk = raw[start:end]
+            if not chunk:
+                peaks.append(0)
+                continue
+            total = 0
+            count = len(chunk) // 2
+            for j in range(count):
+                sample = struct.unpack_from('<h', chunk, j * 2)[0]
+                total += abs(sample)
+            peaks.append(total / count / 32768.0 if count > 0 else 0)
+        max_val = max(peaks) if peaks else 1
+        if max_val > 0:
+            peaks = [p / max_val for p in peaks]
+        return [round(p, 3) for p in peaks]
+    except Exception:
+        return None
+
+
+def _generate_missing_waveforms():
+    """Generate waveforms for tracks that don't have one yet. Batch of 50 per cycle."""
+    import json
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT id, filepath FROM library_tracks WHERE waveform IS NULL AND trashed = 0 LIMIT 50"
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return
+
+    with _daemon_lock:
+        _daemon_status["phase"] = "waveform"
+        _daemon_status["current_subdir"] = ""
+
+    for row in rows:
+        if not _daemon_running:
+            break
+        if _is_client_active():
+            break
+        if not os.path.isfile(row["filepath"]):
+            continue
+        peaks = generate_waveform(row["filepath"])
+        conn = db.get_db()
+        conn.execute("UPDATE library_tracks SET waveform = ? WHERE id = ?",
+                     (json.dumps(peaks) if peaks else "[]", row["id"]))
+        conn.commit()
+        conn.close()
 
 
 def scan_library():
@@ -627,6 +834,9 @@ def _run_scan(subdir=None):
     """Background scan worker."""
     global _scan_status
     try:
+        import backup
+        backup.create_backup()
+
         if subdir:
             scan_stream(subdir)
         else:
@@ -992,6 +1202,14 @@ def _daemon_loop():
         _wait_for_idle()
         if not _daemon_running:
             break
+
+        # Daily automatic DB backup (max 1 per day)
+        try:
+            import backup
+            backup.create_backup_if_needed()
+        except Exception as e:
+            log.debug("Daily backup check: %s", e)
+
         # Phase 1: Library scan (find new files)
         with _daemon_lock:
             _daemon_status["phase"] = "scan"
@@ -1149,7 +1367,16 @@ def _daemon_loop():
         except Exception as e:
             log.error("Playlist sync error: %s", e)
 
-        # Phase 4: Idle — wait before next cycle
+        # Phase 4: Generate missing waveforms
+        if not _daemon_running:
+            break
+        _wait_for_idle()
+        try:
+            _generate_missing_waveforms()
+        except Exception as e:
+            log.error("Waveform generation error: %s", e)
+
+        # Phase 5: Idle — wait before next cycle
         with _daemon_lock:
             _daemon_status["phase"] = "idle"
             _daemon_status["current_subdir"] = ""
@@ -1248,6 +1475,10 @@ def _loudness_loop():
         for row in rows:
             if not _loudness_running:
                 break
+
+            # Pause while stream test or active client
+            while _is_client_active() and _loudness_running:
+                time.sleep(20)
 
             track_id = row["id"]
             filepath = row["filepath"]

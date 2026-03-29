@@ -163,6 +163,15 @@ def init_db():
     if "bitrate" not in lib_columns:
         conn.execute("ALTER TABLE library_tracks ADD COLUMN bitrate INTEGER DEFAULT NULL")
         conn.commit()
+    # Migrate library_tracks: add tag_status column
+    cursor = conn.execute("PRAGMA table_info(library_tracks)")
+    lib_columns2 = [row[1] for row in cursor.fetchall()]
+    if "tag_status" not in lib_columns2:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN tag_status TEXT DEFAULT NULL")
+        conn.commit()
+    if "waveform" not in lib_columns2:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN waveform TEXT DEFAULT NULL")
+        conn.commit()
 
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
@@ -458,11 +467,12 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
     if sort == "camelot":
         camelot_case = _build_camelot_case()
         order_sql = f"ORDER BY {camelot_case} {order}, bpm {order}"
-    elif sort in ("title", "artist", "album", "genre", "bpm", "key",
-                  "duration_sec", "size_bytes", "mtime", "filename", "stream_subdir", "rating", "favorited", "bitrate"):
+    elif sort in ("title", "artist", "album", "genre", "filename", "stream_subdir"):
+        order_sql = f"ORDER BY LOWER({sort}) {order}"
+    elif sort in ("bpm", "key", "duration_sec", "size_bytes", "mtime", "rating", "favorited", "bitrate"):
         order_sql = f"ORDER BY {sort} {order}"
     else:
-        order_sql = f"ORDER BY title {order}"
+        order_sql = f"ORDER BY LOWER(title) {order}"
 
     offset = (page - 1) * per_page
     rows = conn.execute(
@@ -550,7 +560,7 @@ def get_playlist_tracks(playlist_id):
         "SELECT lt.*, pt.position, pt.id as playlist_track_id "
         "FROM playlist_tracks pt "
         "JOIN library_tracks lt ON pt.track_id = lt.id "
-        "WHERE pt.playlist_id = ? ORDER BY pt.position",
+        "WHERE pt.playlist_id = ? AND lt.trashed = 0 ORDER BY pt.position",
         (playlist_id,),
     ).fetchall()
     conn.close()

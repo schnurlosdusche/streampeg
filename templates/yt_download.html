@@ -298,8 +298,8 @@ function show(id) { document.getElementById(id).style.display = ''; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
 
 // --- YouTube Search ---
-var _ytPreviewAudio = null;
 var _ytPreviewId = null;
+var _ytPreviewBtn = null;
 
 function ytSearch(e) {
     e.preventDefault();
@@ -335,9 +335,9 @@ function ytSearch(e) {
             + '</tr></thead><tbody>';
         data.results.forEach(function(r) {
             var dur = r.duration ? formatDuration(r.duration) : '?';
-            var thumb = r.thumbnail ? '<img src="' + escHtml(r.thumbnail) + '" style="width:48px;height:36px;object-fit:cover;border-radius:3px;" loading="lazy">' : '';
+            var thumb = r.thumbnail ? '<img src="' + escHtml(r.thumbnail) + '" style="width:48px;height:48px;object-fit:cover;border-radius:3px;" loading="lazy">' : '';
             html += '<tr data-yt-id="' + escHtml(r.id) + '">'
-                + '<td>' + thumb + '</td>'
+                + '<td style="padding:2px;line-height:0;">' + thumb + '</td>'
                 + '<td>' + escHtml(r.title) + '</td>'
                 + '<td style="color:var(--pico-muted-color);">' + escHtml(r.uploader) + '</td>'
                 + '<td>' + dur + '</td>'
@@ -360,53 +360,36 @@ function ytSearch(e) {
 
 function ytPreview(videoId, btn) {
     // Toggle off if already playing this
-    if (_ytPreviewAudio && _ytPreviewId === videoId) {
-        _ytPreviewAudio.pause();
-        _ytPreviewAudio = null;
-        _ytPreviewId = null;
+    if (_ytPreviewId === videoId && _playerStreamId === 'yt-preview') {
+        stopBrowseStream();
         btn.innerHTML = '&#9654;';
+        _ytPreviewId = null;
+        _ytPreviewBtn = null;
         return;
     }
-    // Stop previous preview
-    if (_ytPreviewAudio) {
-        _ytPreviewAudio.pause();
-        _ytPreviewAudio = null;
-        // Reset all preview buttons
-        document.querySelectorAll('.btn-yt-preview').forEach(function(b) { b.innerHTML = '&#9654;'; });
-    }
+    // Reset previous preview button
+    if (_ytPreviewBtn) _ytPreviewBtn.innerHTML = '&#9654;';
+
     btn.innerHTML = '&#9632;';
     btn.setAttribute('aria-busy', 'true');
     _ytPreviewId = videoId;
+    _ytPreviewBtn = btn;
 
-    // Get audio stream URL via yt-dlp
-    fetch('/api/yt-preview?id=' + encodeURIComponent(videoId))
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        btn.removeAttribute('aria-busy');
-        if (!data.ok || !data.url) {
-            btn.innerHTML = '&#9654;';
-            _ytPreviewId = null;
-            return;
-        }
-        _ytPreviewAudio = new Audio(data.url);
-        _ytPreviewAudio.volume = 0.5;
-        _ytPreviewAudio.play().catch(function() {});
-        _ytPreviewAudio.addEventListener('ended', function() {
-            btn.innerHTML = '&#9654;';
-            _ytPreviewAudio = null;
-            _ytPreviewId = null;
-        });
-    })
-    .catch(function() {
-        btn.removeAttribute('aria-busy');
-        btn.innerHTML = '&#9654;';
-        _ytPreviewId = null;
-    });
+    // Get title from the row
+    var row = btn.closest('tr');
+    var title = row ? row.querySelector('td:nth-child(2)').textContent.trim() : 'YouTube Preview';
+
+    // Use global player bar via playBrowseStream
+    var streamUrl = '/api/yt-preview/stream?id=' + encodeURIComponent(videoId);
+    btn.removeAttribute('aria-busy');
+    playBrowseStream(streamUrl, title);
 }
 
 function ytSearchDownload(url) {
     // Stop preview if playing
-    if (_ytPreviewAudio) { _ytPreviewAudio.pause(); _ytPreviewAudio = null; _ytPreviewId = null; }
+    if (_playerStreamId === 'yt-preview') { stopBrowseStream(); }
+    if (_ytPreviewBtn) { _ytPreviewBtn.innerHTML = '&#9654;'; _ytPreviewBtn = null; }
+    _ytPreviewId = null;
     // Fill URL field and trigger check
     document.getElementById('yt-url').value = url;
     currentUrl = url;

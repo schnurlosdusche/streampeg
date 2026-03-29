@@ -139,7 +139,7 @@
     // --- Scan indicator in navbar ---
     var _scanPollTimer = null;
     function pollScanIndicator() {
-        fetch('/api/bpm-analyzer/status', {credentials: 'include'})
+        fetch('/api/bpm-analyzer/status', {credentials: 'include', headers: {'X-Tab-Visible': document.hidden ? '0' : '1'}})
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 var li = document.getElementById('scan-indicator');
@@ -162,25 +162,40 @@
                     text.textContent = 'Off';
                     text.style.color = '#666';
                     btn.title = 'BPM/Key Analyzer (disabled)\nClick to enable';
-                } else if (data.phase === 'scan') {
-                    icon.style.color = '#ff9800';
-                    icon.style.animation = 'spin 2s linear infinite';
-                    text.textContent = 'Scan';
-                    text.style.color = '#ff9800';
-                    btn.title = 'Scanning library for new files...\n' + (subdir ? 'Folder: ' + subdir + '\n' : '') + 'Click to disable';
-                } else if (data.phase === 'tags' && data.rescan_running) {
-                    var pct = total > 0 ? Math.round(scanned / total * 100) : 0;
-                    icon.style.color = '#4caf50';
-                    icon.style.animation = 'spin 2s linear infinite';
-                    text.textContent = pct + '%';
-                    text.style.color = '#4caf50';
-                    btn.title = 'BPM/Key Analysis\nFolder: ' + subdir + '\nProgress: ' + scanned + ' / ' + total + ' (' + pct + '%)\nClick to disable';
                 } else if (data.paused) {
                     icon.style.color = '#ff9800';
                     icon.style.animation = 'none';
                     text.textContent = 'Paused';
                     text.style.color = '#ff9800';
-                    btn.title = 'BPM/Key Analyzer (paused — browser active)\nPending: ' + pending + ' tracks\nResumes when tab is hidden or closed\nClick to disable';
+                    btn.title = 'Background tasks paused (browser active)\nResumes when tab is hidden or closed\nClick to disable';
+                } else if (data.phase === 'scan' && data.scan_phase === 'tag') {
+                    var sPct = data.scan_total > 0 ? Math.round(data.scan_scanned / data.scan_total * 100) : 0;
+                    icon.style.color = '#ff9800';
+                    icon.style.animation = 'spin 2s linear infinite';
+                    text.textContent = 'TAG ' + sPct + '%';
+                    text.style.color = '#ff9800';
+                    btn.title = 'Auto-tagging tracks (AcoustID/MusicBrainz)\n' + data.scan_scanned + ' / ' + data.scan_total + ' (' + sPct + '%)\nClick to disable';
+                } else if (data.phase === 'scan') {
+                    var sPct = data.scan_total > 0 ? Math.round(data.scan_scanned / data.scan_total * 100) : 0;
+                    var sLabel = data.scan_phase === 'new' ? 'NEW' : 'SCAN';
+                    icon.style.color = '#ff9800';
+                    icon.style.animation = 'spin 2s linear infinite';
+                    text.textContent = sLabel + ' ' + sPct + '%';
+                    text.style.color = '#ff9800';
+                    btn.title = sLabel + '\n' + (subdir ? 'Folder: ' + subdir + '\n' : '') + data.scan_scanned + ' / ' + data.scan_total + ' (' + sPct + '%)\nClick to disable';
+                } else if (data.phase === 'waveform') {
+                    icon.style.color = '#42a5f5';
+                    icon.style.animation = 'spin 2s linear infinite';
+                    text.textContent = 'WAVE';
+                    text.style.color = '#42a5f5';
+                    btn.title = 'Generating waveforms...\nClick to disable';
+                } else if (data.phase === 'tags' && data.rescan_running) {
+                    var pct = total > 0 ? Math.round(scanned / total * 100) : 0;
+                    icon.style.color = '#4caf50';
+                    icon.style.animation = 'spin 2s linear infinite';
+                    text.textContent = 'BPM/KEY ' + pct + '%';
+                    text.style.color = '#4caf50';
+                    btn.title = 'BPM/Key Analysis\nFolder: ' + subdir + '\n' + scanned + ' / ' + total + ' (' + pct + '%)\nClick to disable';
                 } else if (data.running) {
                     icon.style.color = '#4caf50';
                     icon.style.animation = 'none';

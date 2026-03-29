@@ -25,22 +25,26 @@ import slimproto
 import lms_compat
 import library as lib_module
 import bpm_analyzer
+import backup
 
 # --- Client activity tracking ---
 _last_client_active = 0.0  # timestamp of last active (visible tab) request
 _client_audio_playing = False  # whether browser is playing audio
+_stream_test_active = False  # whether a stream test is running
 _CLIENT_IDLE_THRESHOLD = 60  # seconds before considering no active client
 
 
 def is_client_active():
     """Check if any browser client is actively viewing the page or playing audio."""
+    if _stream_test_active:
+        return True
     if _client_audio_playing:
         return True
     return (time.time() - _last_client_active) < _CLIENT_IDLE_THRESHOLD
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.101a"
+VERSION = "0.0.134a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -317,6 +321,8 @@ def api_test_stream():
     ua = USER_AGENTS.get(ua_key, USER_AGENTS[DEFAULT_USER_AGENT])
 
     def generate():
+        global _stream_test_active
+        _stream_test_active = True
         import urllib.parse as _up
         from stream_tester import (_test_http, _test_icy_deep, _test_shoutcast_api,
                                    _test_icecast_api, _test_tunein,
@@ -420,6 +426,8 @@ def api_test_stream():
             modes = [{"mode": r["mode"], "score": r["score"], "reason": r["reason"]} for r in rec]
             yield send({"done": True, "recommendation": modes, "suitable": True, "best_mode": rec[0]["mode"]})
 
+        _stream_test_active = False
+
     return Response(generate(), mimetype="text/event-stream")
 
 
@@ -488,6 +496,41 @@ def api_browse_search():
         return jsonify({"error": str(e)}), 502
 
 
+@app.route("/api/browse/probe-bitrate")
+def api_browse_probe_bitrate():
+    """Quick probe of a stream URL to get bitrate from ICY headers."""
+    url = request.args.get("url", "")
+    if not url:
+        return jsonify({"bitrate": 0})
+    try:
+        import http.client
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        if parsed.scheme == "https":
+            import ssl
+            conn = http.client.HTTPSConnection(host, port, timeout=5, context=ssl._create_unverified_context())
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=5)
+        conn.request("GET", path, headers={
+            "User-Agent": "Streampeg/1.0",
+            "Icy-MetaData": "1",
+        })
+        resp = conn.getresponse()
+        bitrate = 0
+        icy_br = resp.getheader("icy-br", "")
+        if icy_br:
+            bitrate = int(icy_br.split(",")[0])
+        conn.close()
+        return jsonify({"bitrate": bitrate})
+    except Exception:
+        return jsonify({"bitrate": 0})
+
+
 # --- Settings ---
 
 @app.route("/settings")
@@ -521,7 +564,31 @@ def settings():
                            bpm_backend=bpm_backend,
                            essentia_available=essentia_available,
                            mb_enrichment_enabled=mb_enrichment_enabled,
-                           languages=i18n.LANGUAGES)
+                           languages=i18n.LANGUAGES,
+                           backups=backup.list_backups())
+
+
+@app.route("/api/backups")
+def api_backups():
+    return jsonify(backup.list_backups())
+
+
+@app.route("/api/backup/create", methods=["POST"])
+def api_backup_create():
+    filename = backup.create_backup()
+    if filename:
+        return jsonify({"ok": True, "filename": filename})
+    return jsonify({"ok": False, "error": "Backup failed"}), 500
+
+
+@app.route("/settings/backup/restore", methods=["POST"])
+def settings_backup_restore():
+    data = request.get_json()
+    filename = data.get("filename", "")
+    location = data.get("location", "local")
+    if backup.restore_backup(filename, location):
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Restore failed"}), 500
 
 
 @app.route("/settings/module/<name>/toggle", methods=["POST"])
@@ -632,6 +699,9 @@ def settings_bpm_backend():
 
 @app.route("/api/bpm-analyzer/status")
 def api_bpm_status():
+    global _last_client_active
+    if request.headers.get("X-Tab-Visible") == "1":
+        _last_client_active = time.time()
     daemon = lib_module.get_daemon_status()
     rescan = lib_module.get_rescan_status()
     enabled = db.get_setting("bpm_analyzer_enabled") == "1"
@@ -647,6 +717,7 @@ def api_bpm_status():
     # Check if workers are paused due to active client
     bpm_status = bpm_analyzer.get_status()
     paused = bpm_status.get("paused", False) or is_client_active()
+    scan_status = lib_module.get_scan_status()
     return jsonify({
         "enabled": enabled,
         "running": daemon.get("running", False),
@@ -657,6 +728,9 @@ def api_bpm_status():
         "rescan_total": rescan.get("total", 0),
         "rescan_scanned": rescan.get("scanned", 0),
         "pending": pending,
+        "scan_phase": scan_status.get("phase", ""),
+        "scan_scanned": scan_status.get("files_scanned", 0),
+        "scan_total": scan_status.get("files_total", 0),
     })
 
 
@@ -1695,49 +1769,28 @@ def api_cover_search():
 
 @app.route("/api/library/track/<int:track_id>/waveform")
 def api_library_track_waveform(track_id):
-    """Generate waveform peaks server-side (400 bars, normalized 0-1)."""
+    """Return waveform peaks (256 bars, normalized 0-1). Cached in DB."""
     track = db.get_library_track(track_id)
     if not track:
         return jsonify({"peaks": []}), 404
+
+    # Return cached waveform if available
+    if track.get("waveform"):
+        return jsonify({"peaks": json.loads(track["waveform"])})
+
     filepath = track["filepath"]
     if not os.path.isfile(filepath):
         return jsonify({"peaks": []}), 404
     try:
-        import subprocess, struct
-        # Use ffmpeg to extract raw PCM samples (mono, 8kHz, 16-bit) — fast and low memory
-        result = subprocess.run(
-            ["ffmpeg", "-i", filepath, "-ac", "1", "-ar", "8000", "-f", "s16le",
-             "-acodec", "pcm_s16le", "-v", "quiet", "-"],
-            capture_output=True, timeout=30
-        )
-        if result.returncode != 0:
-            return jsonify({"peaks": []})
-        raw = result.stdout
-        num_samples = len(raw) // 2
-        if num_samples == 0:
-            return jsonify({"peaks": []})
-        bars = 400
-        block_size = max(1, num_samples // bars)
-        peaks = []
-        for i in range(bars):
-            start = i * block_size * 2
-            end = min(start + block_size * 2, len(raw))
-            chunk = raw[start:end]
-            if not chunk:
-                peaks.append(0)
-                continue
-            # Compute average absolute amplitude
-            total = 0
-            count = len(chunk) // 2
-            for j in range(count):
-                sample = struct.unpack_from('<h', chunk, j * 2)[0]
-                total += abs(sample)
-            peaks.append(total / count / 32768.0 if count > 0 else 0)
-        # Normalize
-        max_val = max(peaks) if peaks else 1
-        if max_val > 0:
-            peaks = [p / max_val for p in peaks]
-        return jsonify({"peaks": [round(p, 3) for p in peaks]})
+        peaks = lib_module.generate_waveform(filepath)
+        if peaks:
+            conn = db.get_db()
+            conn.execute("UPDATE library_tracks SET waveform = ? WHERE id = ?",
+                         (json.dumps(peaks), track_id))
+            conn.commit()
+            conn.close()
+            return jsonify({"peaks": peaks})
+        return jsonify({"peaks": []})
     except Exception as e:
         return jsonify({"peaks": [], "error": str(e)})
 
@@ -1994,37 +2047,32 @@ def api_yt_preview_stream():
     ]
     yt_dlp = next((p for p in yt_dlp_candidates if os.path.isfile(p)), "yt-dlp")
 
+    # Use yt-dlp + ffmpeg to pipe audio as mp3
     try:
-        result = subprocess.run(
-            [yt_dlp, "-f", "bestaudio", "-g", "--no-warnings",
+        proc = subprocess.Popen(
+            [yt_dlp, "-f", "bestaudio", "-o", "-", "--no-warnings",
              "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
-            capture_output=True, text=True, timeout=15
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
         )
-        audio_url = result.stdout.strip().split("\n")[0]
-        if not audio_url or not audio_url.startswith("http"):
-            return "Could not get audio URL", 502
-    except Exception:
-        return "Error getting audio URL", 502
-
-    # Stream the audio through our server
-    import urllib.request as _ur
-    try:
-        req = _ur.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
-        resp = _ur.urlopen(req, timeout=10)
-        content_type = resp.headers.get("Content-Type", "audio/webm")
+        ffmpeg = subprocess.Popen(
+            ["ffmpeg", "-i", "pipe:0", "-f", "mp3", "-q:a", "5", "-"],
+            stdin=proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        proc.stdout.close()
 
         def generate():
             try:
                 while True:
-                    chunk = resp.read(8192)
+                    chunk = ffmpeg.stdout.read(8192)
                     if not chunk:
                         break
                     yield chunk
             finally:
-                resp.close()
+                ffmpeg.stdout.close()
+                ffmpeg.wait()
+                proc.wait()
 
-        return app.response_class(generate(), mimetype=content_type,
-                                  headers={"Accept-Ranges": "none"})
+        return app.response_class(generate(), mimetype="audio/mpeg")
     except Exception:
         return "Stream error", 502
 

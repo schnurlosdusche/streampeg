@@ -131,7 +131,7 @@ main.container {
     padding: 0.35rem 0.5rem;
 }
 #streams-table th:nth-child(1),
-#streams-table td:nth-child(1) { width: 20%; }     /* Name */
+#streams-table td:nth-child(1) { width: 20%; max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }     /* Name */
 #streams-table th:nth-child(2),
 #streams-table td:nth-child(2) { width: 6%; text-align: center; }  /* Modus */
 #streams-table th:nth-child(3),
@@ -351,7 +351,7 @@ dialog, dialog::backdrop {
 .player-seek-bar {
     position: relative;
     flex: 1;
-    height: 64px;
+    height: 80px;
     cursor: pointer;
     border-radius: 4px;
     min-width: 100px;
@@ -380,6 +380,17 @@ dialog, dialog::backdrop {
     border-radius: 50%;
     transform: translate(-50%, -50%);
     box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+.seek-remaining {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.55rem;
+    color: rgba(255,255,255,0.8);
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
 }
 .player-seek-time {
     font-size: 0.6rem;
@@ -448,7 +459,7 @@ dialog, dialog::backdrop {
 }
 .player-lib-top {
     display: grid;
-    grid-template-columns: 250px 1fr;
+    grid-template-columns: 250px 1fr auto;
     align-items: center;
     height: 32px;
     width: 100%;
@@ -468,7 +479,10 @@ dialog, dialog::backdrop {
     overflow: hidden;
 }
 .player-lib-top .player-right {
-    display: none;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-left: auto;
 }
 /* Cue point markers in waveform */
 .cue-marker {
@@ -586,6 +600,7 @@ dialog, dialog::backdrop {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 36ch;
 }
 .player-btn {
     background: none;
@@ -865,10 +880,14 @@ dialog, dialog::backdrop {
     text-overflow: ellipsis;
 }
 .player-bitrate {
-    font-size: 0.6rem;
+    font-size: 0.5rem;
     color: #888;
     white-space: nowrap;
     font-family: monospace;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 0 4px;
+    line-height: 1.5;
 }
 #version-info {
     position: fixed;
@@ -1001,24 +1020,30 @@ dialog, dialog::backdrop {
     overflow-y: auto;
     max-height: 75vh;
 }
+/* Track table — single source of truth (no duplicates in library.html) */
 #lib-table {
     width: 100%;
     font-size: 13px;
     border-collapse: collapse;
-    table-layout: fixed;
 }
 #lib-table th {
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
-    padding: 0.4rem 0.5rem;
-    border-bottom: 1px solid #3a3a4a;
-    font-size: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--pico-background-color, #13111a);
+    padding: 0.25rem 0.4rem;
+    border-bottom: 1px solid var(--pico-muted-border-color, #444);
+    font-size: 0.72rem;
     text-transform: uppercase;
-    color: #888;
+    letter-spacing: 0.03em;
+    color: var(--pico-muted-color, #999);
 }
 #lib-table th:hover { color: #ccc; }
-#lib-table th .sort-arrow { margin-left: 4px; font-size: 10px; }
+#lib-table th .sort-arrow { margin-left: 2px; font-size: 0.65rem; opacity: 0.5; }
+#lib-table th.sorted .sort-arrow { opacity: 1; color: #64b5f6; }
 #lib-table td {
     padding: 0 0.5rem;
     height: 28px;
@@ -1029,9 +1054,45 @@ dialog, dialog::backdrop {
     text-overflow: ellipsis;
     border-bottom: 1px solid #2a2a3a;
 }
-#lib-table tr:hover td { background: #252535; }
-/* Column widths via colgroup in HTML */
+#lib-table tbody tr:hover td { background: #252535; }
+#lib-table tbody tr.selected td { background: rgba(100,181,246,0.1); }
+#lib-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+#lib-table tbody tr.lib-playing td,
+#lib-table tbody tr.lib-playing-row td { background: rgba(66,165,245,0.1) !important; }
+#lib-table tbody tr.lib-playing,
+#lib-table tbody tr.lib-playing-row { outline: 1px solid #fff; outline-offset: -1px; }
 
+/* Column widths */
+#lib-table th:nth-child(1),
+#lib-table td:nth-child(1) { width: auto; }                                              /* title */
+#lib-table th:nth-child(2),
+#lib-table td:nth-child(2) { width: 20%; }                                               /* artist */
+#lib-table th:nth-child(3),
+#lib-table td:nth-child(3) { width: 50px; text-align: right; font-family: monospace; }   /* bitrate */
+#lib-table th:nth-child(4),
+#lib-table td:nth-child(4) { width: 60px; text-align: right; font-family: monospace; }   /* bpm */
+#lib-table th:nth-child(5),
+#lib-table td:nth-child(5) { width: 75px; text-align: center; font-family: monospace; }  /* key */
+#lib-table th:nth-child(6),
+#lib-table td:nth-child(6) { width: 120px; text-align: right; font-family: monospace; }  /* duration */
+#lib-table th:nth-child(7),
+#lib-table td:nth-child(7) { width: 36px; text-align: center; }                          /* heart */
+#lib-table th:nth-child(8),
+#lib-table td:nth-child(8) { width: 90px; text-align: center; overflow: visible; }       /* rating */
+#lib-table th:nth-child(9),
+#lib-table td:nth-child(9) { width: 28px; text-align: center; }                          /* add */
+#lib-table th:nth-child(10),
+#lib-table td:nth-child(10) { width: 120px; overflow: hidden; }                          /* playlists */
+#lib-table th:nth-child(11),
+#lib-table td:nth-child(11) { width: 40px; text-align: center; }                         /* trash */
+
+/* Table cell classes */
+.col-trash { text-align: center; padding-left: 0 !important; padding-right: 0 !important; }
+.col-heart { text-align: center; }
+.col-playlists { overflow: hidden !important; }
+.col-date { font-size: 11px; color: var(--pico-muted-color, #888); }
+
+/* Buttons in table */
 .lib-play-btn, .lib-add-btn, .lib-trash-btn {
     background: none;
     border: none;
@@ -1044,15 +1105,15 @@ dialog, dialog::backdrop {
 .lib-play-btn:hover { color: #4caf50; }
 .lib-add-btn:hover { color: #64b5f6; }
 .lib-trash-btn:hover { color: #f44336; }
-.col-trash { width: 28px; text-align: center; padding-left: 0 !important; padding-right: 0 !important; }
 .player-trash-btn { color: #888; font-size: 16px; }
 .player-trash-btn:hover { color: #f44336 !important; }
-.col-heart { width: 30px; text-align: center; }
-.col-date { font-size: 11px; color: var(--pico-muted-color, #888); white-space: nowrap; }
+
+/* Heart / favorite */
 .lib-heart, .player-heart { cursor: pointer; font-size: 16px; color: #555; transition: color 0.15s; user-select: none; }
 .lib-heart:hover, .player-heart:hover { color: #e91e63; }
 .lib-heart.heart-active, .player-heart.heart-active { color: #e91e63; }
-.col-playlists { width: 120px; overflow: hidden !important; }
+
+/* Playlist tags */
 .lib-pl-tag {
     display: inline-block;
     background: #2a2a4a;
@@ -1067,13 +1128,20 @@ dialog, dialog::backdrop {
     text-overflow: ellipsis;
     vertical-align: middle;
 }
+
+/* Row states */
 .lib-row-selected td { background: #2a2a4a !important; }
-#lib-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
-#lib-table tbody tr.lib-playing td, #lib-table tbody tr.lib-playing-row td { background: rgba(66,165,245,0.1) !important; }
-#lib-table tbody tr.lib-playing, #lib-table tbody tr.lib-playing-row { outline: 1px solid #fff; outline-offset: -1px; }
 .lib-clickable { cursor: pointer; }
 .lib-clickable:hover { color: #64b5f6; }
 .lib-now-playing { color: #42a5f5; font-size: 10px; margin-right: 4px; }
+.lib-bitrate {
+    font-family: monospace;
+    font-size: 0.55rem;
+    font-weight: normal;
+    border: 1px solid;
+    border-radius: 3px;
+    padding: 0 3px;
+}
 
 /* Library filters bar */
 .lib-filters {

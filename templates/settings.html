@@ -289,6 +289,41 @@
     <button type="submit" style="width:auto;">{{ t('settings.save') }}</button>
 </form>
 
+<hr>
+
+<h4>Database Backups</h4>
+<p><small style="color:var(--pico-muted-color,#888);">Automatisches Backup vor jedem Library-Scan. Lokal und auf dem NAS (max. 10 Backups).</small></p>
+<button id="btn-create-backup" class="outline" onclick="createBackup()" style="font-size:13px;padding:4px 12px;margin-bottom:1rem;">Backup jetzt erstellen</button>
+
+{% if backups %}
+<table style="font-size:0.8rem;">
+    <thead>
+        <tr>
+            <th>Datum</th>
+            <th>Tracks</th>
+            <th>Playlists</th>
+            <th>Größe</th>
+            <th>Ort</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for b in backups %}
+        <tr>
+            <td>{{ b.date }}</td>
+            <td>{{ b.tracks }}</td>
+            <td>{{ b.playlists }}</td>
+            <td>{{ b.size_mb }} MB</td>
+            <td><small>{{ 'Lokal' if b.location == 'local' else 'NAS' }}</small></td>
+            <td><button class="outline" onclick="restoreBackup('{{ b.filename }}', '{{ b.location }}')" style="font-size:11px;padding:2px 8px;">Wiederherstellen</button></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p style="color:var(--pico-muted-color,#888);font-style:italic;">Keine Backups vorhanden.</p>
+{% endif %}
+
 <script>
 function changeLanguage(lang) {
     fetch('/settings/language', {
@@ -526,5 +561,45 @@ function pollBpmStatus() {
         });
 }
 pollBpmStatus();
+
+// --- Database Backups ---
+function createBackup() {
+    var btn = document.getElementById('btn-create-backup');
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    fetch('/api/backup/create', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+            if (data.ok) { location.reload(); }
+            else { alert('Backup failed: ' + (data.error || 'unknown')); }
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+            alert('Backup failed');
+        });
+}
+
+function restoreBackup(filename, location) {
+    if (!confirm('Die aktuelle Datenbank wird durch das Backup ersetzt.\nFortfahren?')) return;
+    fetch('/settings/backup/restore', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: filename, location: location})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok) {
+            alert('Datenbank wiederhergestellt. Seite wird neu geladen.');
+            location.reload();
+        } else {
+            alert('Restore fehlgeschlagen: ' + (data.error || 'unknown'));
+        }
+    })
+    .catch(function() { alert('Restore fehlgeschlagen'); });
+}
 </script>
 {% endblock %}
