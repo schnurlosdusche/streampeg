@@ -451,6 +451,7 @@ dialog, dialog::backdrop {
     font-weight: 600;
     text-align: center;
     padding: 3px 4px;
+    pointer-events: none;
     letter-spacing: 0.3px;
     font-family: monospace;
 }

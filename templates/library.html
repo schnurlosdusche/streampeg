@@ -375,6 +375,7 @@
         </optgroup>
     </select>
     <button class="lib-scan-btn outline" onclick="startScan()">{{ t('library.scan') }}</button>
+    <button class="lib-scan-btn outline" id="lib-autodj-btn" onclick="if(typeof AutoDJ!=='undefined')AutoDJ.toggle()" style="margin-left:4px;color:#666;border-color:#666;">AUTO DJ</button>
     <span class="lib-scan-progress" id="lib-scan-progress">
         <div class="lib-scan-progress-bar"><div class="lib-scan-progress-fill" id="lib-scan-fill"></div></div>
         <span id="lib-scan-text">{{ t('library.scanning') }}</span>
@@ -652,9 +653,11 @@ function _renderTrackRow(tr, idx) {
     var isSelected = !!_selectedTrackIds[tr.id];
     var isPlaying = _libPlayingTrackId === tr.id;
     var dur = tr.duration_sec ? formatDuration(tr.duration_sec) : '-';
+    var isPlayed = (typeof AutoDJ !== 'undefined' && AutoDJ.enabled && AutoDJ._history.indexOf(tr.id) >= 0);
     var cls = isSelected ? ' class="selected"' : '';
     if (isPlaying) cls = ' class="' + (isSelected ? 'selected lib-playing-row' : 'lib-playing-row') + '"';
-    var h = '<tr data-track-id="' + tr.id + '"' + cls + ' style="height:' + _ROW_HEIGHT + 'px;">';
+    var rowStyle = 'height:' + _ROW_HEIGHT + 'px;' + (isPlayed && !isPlaying ? 'color:#555;' : '');
+    var h = '<tr data-track-id="' + tr.id + '"' + cls + ' style="' + rowStyle + '">';
     h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.title || '') + '">' + (isPlaying ? '<svg class="lib-now-playing" width="12" height="12" viewBox="0 0 12 12" style="vertical-align:middle;margin-right:4px;"><polygon points="2,0 12,6 2,12" fill="#4a9eff"/></svg>&nbsp;' : '') + escHtml(tr.title || '') + '</td>';
     h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
     h += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
@@ -1877,6 +1880,7 @@ function _resetGlobalSearch() {
 }
 
 function openFolder(subdir) {
+    sessionStorage.removeItem('_selectedPlaylistId');
     _currentFolder = subdir;
     _libFilters.stream = subdir;
     _libPage = 1;
@@ -1943,6 +1947,7 @@ function loadPlaylistOverview() {
 }
 
 function openPlaylist(id) {
+    sessionStorage.setItem('_selectedPlaylistId', id);
     document.getElementById('lib-playlist-overview').style.display = 'none';
     document.getElementById('lib-folder-view').style.display = 'none';
     document.getElementById('lib-track-view').style.display = 'flex';

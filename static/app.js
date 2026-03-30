@@ -170,14 +170,29 @@ var _cuePoints = {}; // {trackId: {1: timeInSec, 2: timeInSec, ...}}
 var _CUE_COLORS = ['#42a5f5','#ff9800','#4caf50','#e91e63','#9c27b0','#00bcd4','#ffeb3b','#ff5722'];
 var _trackRatings = {}; // {trackId: 0-5}
 
+function _onPlayerError() {
+    // Don't stop if AutoDJ just swapped the audio
+    if (typeof AutoDJ !== 'undefined' && AutoDJ._crossfadeComplete) return;
+    stopListen();
+}
+
 function _initBrowserAudio() {
     if (!_playerAudio) {
         _playerAudio = new Audio();
         _playerAudio.crossOrigin = 'anonymous';
         _playerAudio.volume = _browserVolume;
-        _playerAudio.addEventListener('error', function() { stopListen(); });
+        _playerAudio.addEventListener('error', _onPlayerError);
         _playerAudio.addEventListener('timeupdate', _onSeekUpdate);
-        _playerAudio.addEventListener('ended', function() {
+        _playerAudio.addEventListener('ended', _onPlayerEnded);
+    }
+}
+
+function _onPlayerEnded() {
+            // If Auto-DJ crossfade just completed, ignore all ended events
+            if (typeof AutoDJ !== 'undefined' && AutoDJ._crossfadeComplete) {
+                AutoDJ._log('ENDED: ignored (crossfadeComplete, early check)');
+                return;
+            }
             // Guard against premature 'ended' from defective MP3s
             // Skip guard if repeat-one is active (always honor ended)
             if (_isLibraryTrack && _libRepeatMode !== 'one') {
@@ -185,6 +200,7 @@ function _initBrowserAudio() {
                 if (_edDur > 0) {
                     var remaining = _edDur - _playerAudio.currentTime;
                     if (remaining > 5) {
+                        if (typeof AutoDJ !== 'undefined' && AutoDJ._debug) AutoDJ._log('ENDED BLOCKED by premature guard: remaining=' + remaining.toFixed(1) + ' cur=' + _playerAudio.currentTime.toFixed(1) + ' dur=' + _edDur.toFixed(1));
                         console.warn('Premature ended event at', _playerAudio.currentTime, '/', _playerAudio.duration);
                         return;
                     }
@@ -197,7 +213,20 @@ function _initBrowserAudio() {
                 return;
             }
             if (_isLibraryTrack && typeof AutoDJ !== 'undefined' && AutoDJ.enabled) {
-                AutoDJ._resetFade();
+                AutoDJ._log('ENDED event: _fading=' + AutoDJ._fading + ' _fadeAudio=' + (AutoDJ._fadeAudio ? 'yes' : 'no') + ' _crossfadeComplete=' + AutoDJ._crossfadeComplete + ' _playerAudio.paused=' + (_playerAudio ? _playerAudio.paused : '?'));
+                // Crossfade already completed — ignore this ended event
+                if (AutoDJ._crossfadeComplete) {
+                    AutoDJ._log('ENDED: ignored (crossfadeComplete)');
+                    return;
+                }
+                // Crossfade in progress — finalize it
+                if (AutoDJ._fading || AutoDJ._fadeAudio) {
+                    AutoDJ._log('ENDED: calling _finishCrossfade');
+                    AutoDJ._finishCrossfade();
+                    return;
+                }
+                // No crossfade happened — just pick next
+                AutoDJ._log('ENDED: no crossfade, calling playNext');
                 AutoDJ.playNext();
                 return;
             }
@@ -217,8 +246,6 @@ function _initBrowserAudio() {
             if (typeof _libPlayingTrackId !== 'undefined') _libPlayingTrackId = null;
             stopListen();
             if (wasLibrary && typeof updatePlayButtons === 'function') updatePlayButtons();
-        });
-    }
 }
 
 function toggleListen(streamId, url) {
@@ -245,6 +272,9 @@ function toggleListen(streamId, url) {
 }
 
 function stopListen() {
+    if (typeof AutoDJ !== 'undefined' && AutoDJ._debug) {
+        AutoDJ._log('*** stopListen() CALLED *** stack: ' + new Error().stack.split('\n').slice(1,4).join(' | '));
+    }
     _waveformData = null;
     // Stop all cast devices if library track was casting
     if (_libCastDeviceIds && _libCastDeviceIds.length > 0) {
@@ -870,7 +900,7 @@ function _renderBrowserPlayerHTML() {
                 + '</svg></div>';
         }
         // Grid layout: cover left spanning rows, top = stream + track + controls + volume
-        html += '<div class="player-cover-wrap">' + coverHtml + _bpmKeyOverlay + _radarOverlay + '</div>'
+        html += '<div class="player-cover-wrap" onclick="_navigateToSource()" style="cursor:pointer;" title="Library/Playlist anzeigen">' + coverHtml + _bpmKeyOverlay + _radarOverlay + '</div>'
             + '<div class="player-lib-top">'
             + '<div class="player-info">'
             + (_browserLibStream ? '<div class="player-stream">' + _escHtmlPlayer(_browserLibStream) + '</div>' : '')
@@ -879,7 +909,7 @@ function _renderBrowserPlayerHTML() {
             + '<div class="player-volume">';
     } else {
         html += '<div class="player-bar-inner">'
-            + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+            + '<div class="player-cover-wrap" onclick="_navigateToSource()" style="cursor:pointer;" title="Library/Playlist anzeigen">' + coverHtml + '</div>'
             + '<div class="player-info">'
             + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
             + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
@@ -987,7 +1017,7 @@ function _renderRepeatButton() {
     }
     return '<button class="player-btn repeat-btn' + cls + '" onclick="toggleRepeatMode()" title="' + title + '" style="margin-left:20px;">' + icon + '</button>'
         + '<button class="player-btn shuffle-btn' + (_libShuffleMode ? ' repeat-active' : '') + '" onclick="toggleShuffleMode()" title="Shuffle: ' + (_libShuffleMode ? 'On' : 'Off') + '" style="margin-left:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"' + (_libShuffleMode ? '' : ' opacity="0.4"') + '><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>'
-        + (typeof AutoDJ !== 'undefined' ? '<button class="player-btn autodj-btn' + (AutoDJ.enabled ? ' repeat-active' : '') + '" onclick="AutoDJ.toggle()" title="Auto-DJ: ' + (AutoDJ.enabled ? 'On' : 'Off') + '" style="margin-left:8px;font-size:9px;padding:2px 5px;' + (AutoDJ.enabled ? 'color:#42a5f5;border-color:#42a5f5;' : '') + '">DJ</button>' : '');
+        ;
 }
 
 function toggleShuffleMode() {
@@ -2163,6 +2193,21 @@ function _refreshPlayerBar() {
 
 function _updateVersionPosition(playerCount) {
     // No-op: flex layout handles spacing automatically
+}
+
+function _navigateToSource() {
+    var plId = sessionStorage.getItem('_selectedPlaylistId');
+    if (plId) {
+        if (typeof openPlaylist === 'function') { openPlaylist(parseInt(plId)); return; }
+        location.href = '/library?view=playlists';
+        return;
+    }
+    if (_browserLibStream) {
+        if (typeof openFolder === 'function') { openFolder(_browserLibStream); return; }
+        location.href = '/library';
+        return;
+    }
+    location.href = '/library';
 }
 
 function _escHtmlPlayer(s) {

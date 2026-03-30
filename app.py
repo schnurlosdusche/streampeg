@@ -568,7 +568,21 @@ def settings():
                            essentia_available=essentia_available,
                            mb_enrichment_enabled=mb_enrichment_enabled,
                            languages=i18n.LANGUAGES,
-                           backups=backup.list_backups())
+                           backups=backup.list_backups(),
+                           crossfade_sec=int(db.get_setting("autodj_crossfade") or 10))
+
+
+@app.route("/api/settings/autodj")
+def api_settings_autodj():
+    return jsonify({"crossfade_sec": int(db.get_setting("autodj_crossfade") or 10)})
+
+
+@app.route("/settings/autodj/fade", methods=["POST"])
+def settings_autodj_fade():
+    data = request.get_json() or {}
+    sec = max(3, min(30, int(data.get("seconds", 10))))
+    db.set_setting("autodj_crossfade", str(sec))
+    return jsonify({"ok": True, "seconds": sec})
 
 
 @app.route("/api/backups")
@@ -1833,6 +1847,20 @@ def api_autodj_next():
     if not result:
         return jsonify({"error": "no compatible track"}), 404
     return jsonify(result)
+
+
+import logging
+_autodj_log = logging.getLogger("autodj")
+
+@app.route("/api/autodj/log", methods=["POST"])
+def api_autodj_log():
+    data = request.get_json() or {}
+    msg = data.get("msg", "")
+    if msg:
+        _autodj_log.info(msg)
+        with open("/tmp/autodj_debug.log", "a") as f:
+            f.write(msg + "\n")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/library/track/<int:track_id>/play")

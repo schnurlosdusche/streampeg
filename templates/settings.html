@@ -291,6 +291,13 @@
 
 <hr>
 
+<h4>Auto-DJ</h4>
+<p><small style="color:var(--pico-muted-color,#888);">Crossfade-Dauer beim automatischen Übergang zwischen Tracks.</small></p>
+<label for="autodj-fade" style="font-size:0.85rem;">Crossfade: <span id="autodj-fade-val">{{ crossfade_sec }}s</span></label>
+<input type="range" id="autodj-fade" min="3" max="30" step="1" value="{{ crossfade_sec }}" oninput="document.getElementById('autodj-fade-val').textContent=this.value+'s'" onchange="saveAutoDJFade(this.value)" style="max-width:300px;">
+
+<hr>
+
 <h4>Database Backups</h4>
 <p><small style="color:var(--pico-muted-color,#888);">Automatisches Backup vor jedem Library-Scan. Lokal und auf dem NAS (max. 10 Backups).</small></p>
 <button id="btn-create-backup" class="outline" onclick="createBackup()" style="font-size:13px;padding:4px 12px;margin-bottom:1rem;">Backup jetzt erstellen</button>
@@ -300,8 +307,6 @@
     <thead>
         <tr>
             <th>Datum</th>
-            <th>Tracks</th>
-            <th>Playlists</th>
             <th>Größe</th>
             <th>Ort</th>
             <th></th>
@@ -311,8 +316,6 @@
     {% for b in backups %}
         <tr>
             <td>{{ b.date }}</td>
-            <td>{{ b.tracks }}</td>
-            <td>{{ b.playlists }}</td>
             <td>{{ b.size_mb }} MB</td>
             <td><small>{{ 'Lokal' if b.location == 'local' else 'NAS' }}</small></td>
             <td><button class="outline" onclick="restoreBackup('{{ b.filename }}', '{{ b.location }}')" style="font-size:11px;padding:2px 8px;">Wiederherstellen</button></td>
@@ -561,6 +564,15 @@ function pollBpmStatus() {
         });
 }
 pollBpmStatus();
+
+// --- Auto-DJ ---
+function saveAutoDJFade(val) {
+    fetch('/settings/autodj/fade', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({seconds: parseInt(val)})
+    });
+}
 
 // --- Database Backups ---
 function createBackup() {

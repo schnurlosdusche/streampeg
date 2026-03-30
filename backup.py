@@ -60,33 +60,18 @@ def _rotate_backups(backup_dir):
 
 
 def _get_backup_info(filepath):
-    """Extract info from a backup file."""
+    """Extract info from a backup file (fast, no DB access)."""
     filename = os.path.basename(filepath)
-    # Parse date from filename: streamripper-ui_YYYYMMDD_HHMMSS.db
     m = re.match(r"streamripper-ui_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.db", filename)
     if not m:
         return None
     date_str = f"{m.group(3)}.{m.group(2)}.{m.group(1)} {m.group(4)}:{m.group(5)}:{m.group(6)}"
     size = os.path.getsize(filepath)
-
-    # Read track count from backup DB
-    tracks = 0
-    playlists = 0
-    try:
-        conn = sqlite3.connect(filepath)
-        tracks = conn.execute("SELECT COUNT(*) FROM library_tracks").fetchone()[0]
-        playlists = conn.execute("SELECT COUNT(*) FROM playlists").fetchone()[0]
-        conn.close()
-    except Exception:
-        pass
-
     return {
         "filename": filename,
         "date": date_str,
         "size_bytes": size,
         "size_mb": round(size / 1024 / 1024, 1),
-        "tracks": tracks,
-        "playlists": playlists,
         "path": filepath,
     }
 
