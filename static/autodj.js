@@ -14,7 +14,7 @@ var AutoDJ = {
     _fadeAudio: null,
     _nextTrackId: null,
     _crossfadeComplete: false,
-    _debug: true,
+    _debug: false,
     _debugLog: [],
 
     _log: function(msg) {

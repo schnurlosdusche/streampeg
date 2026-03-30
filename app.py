@@ -47,7 +47,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.139a"
+VERSION = "0.0.141a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY

@@ -214,11 +214,6 @@ function _onPlayerEnded() {
             }
             if (_isLibraryTrack && typeof AutoDJ !== 'undefined' && AutoDJ.enabled) {
                 AutoDJ._log('ENDED event: _fading=' + AutoDJ._fading + ' _fadeAudio=' + (AutoDJ._fadeAudio ? 'yes' : 'no') + ' _crossfadeComplete=' + AutoDJ._crossfadeComplete + ' _playerAudio.paused=' + (_playerAudio ? _playerAudio.paused : '?'));
-                // Crossfade already completed — ignore this ended event
-                if (AutoDJ._crossfadeComplete) {
-                    AutoDJ._log('ENDED: ignored (crossfadeComplete)');
-                    return;
-                }
                 // Crossfade in progress — finalize it
                 if (AutoDJ._fading || AutoDJ._fadeAudio) {
                     AutoDJ._log('ENDED: calling _finishCrossfade');
@@ -272,9 +267,6 @@ function toggleListen(streamId, url) {
 }
 
 function stopListen() {
-    if (typeof AutoDJ !== 'undefined' && AutoDJ._debug) {
-        AutoDJ._log('*** stopListen() CALLED *** stack: ' + new Error().stack.split('\n').slice(1,4).join(' | '));
-    }
     _waveformData = null;
     // Stop all cast devices if library track was casting
     if (_libCastDeviceIds && _libCastDeviceIds.length > 0) {
@@ -900,7 +892,7 @@ function _renderBrowserPlayerHTML() {
                 + '</svg></div>';
         }
         // Grid layout: cover left spanning rows, top = stream + track + controls + volume
-        html += '<div class="player-cover-wrap" onclick="_navigateToSource()" style="cursor:pointer;" title="Library/Playlist anzeigen">' + coverHtml + _bpmKeyOverlay + _radarOverlay + '</div>'
+        html += '<div class="player-cover-wrap player-cover-link" style="cursor:pointer;" title="Library/Playlist anzeigen">' + coverHtml + _bpmKeyOverlay + _radarOverlay + '</div>'
             + '<div class="player-lib-top">'
             + '<div class="player-info">'
             + (_browserLibStream ? '<div class="player-stream">' + _escHtmlPlayer(_browserLibStream) + '</div>' : '')
@@ -909,7 +901,7 @@ function _renderBrowserPlayerHTML() {
             + '<div class="player-volume">';
     } else {
         html += '<div class="player-bar-inner">'
-            + '<div class="player-cover-wrap" onclick="_navigateToSource()" style="cursor:pointer;" title="Library/Playlist anzeigen">' + coverHtml + '</div>'
+            + '<div class="player-cover-wrap player-cover-link" style="cursor:pointer;" title="Library/Playlist anzeigen">' + coverHtml + '</div>'
             + '<div class="player-info">'
             + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
             + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
@@ -2092,7 +2084,15 @@ function _scheduleWaveformRedraw() {
 
 var _lastPlayerKey = '';
 
+var _refreshPlayerBarTimer = null;
 function _refreshPlayerBar() {
+    if (_refreshPlayerBarTimer) return;
+    _refreshPlayerBarTimer = setTimeout(function() {
+        _refreshPlayerBarTimer = null;
+        _refreshPlayerBarNow();
+    }, 50);
+}
+function _refreshPlayerBarNow() {
     var container = document.getElementById('player-container');
     if (!container) return;
 
@@ -2615,6 +2615,12 @@ function _pollBrowserIcy() {
         })
         .catch(function() {});
 }
+
+// Cover click navigation — event delegation (works after innerHTML replacement)
+document.addEventListener('click', function(e) {
+    var cover = e.target.closest('.player-cover-link');
+    if (cover) _navigateToSource();
+});
 
 // Restore browser listen state from localStorage (persists across page navigation)
 _restoreListenState();
