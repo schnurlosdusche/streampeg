@@ -9,6 +9,17 @@ import subprocess
 import threading
 import logging
 
+def _normalize_for_match(text):
+    """Normalize a string for fuzzy duplicate matching."""
+    if not text:
+        return ""
+    s = text.lower()
+    s = re.sub(r"['\u2019\u2018`_\-]", "", s)
+    s = re.sub(r"[^a-z0-9 ]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 try:
     from mutagen.mp3 import MP3
     from mutagen.id3 import ID3, ID3NoHeaderError
@@ -552,6 +563,14 @@ def _scan_files(files):
     for path in removed:
         db.delete_library_track_by_path(path)
 
+    # Phase 1.5: Deduplicate by Artist+Title
+    try:
+        deduped = _deduplicate_library()
+        if deduped > 0:
+            log.info("Deduplicated %d tracks", deduped)
+    except Exception as e:
+        log.error("Dedup error: %s", e)
+
     # Phase 2: Read ID3 tags only for tracks that actually need data
     # - new files (no tags yet)
     # - tracks missing bitrate, duration, bpm, key, or tag_status
@@ -784,6 +803,36 @@ def _generate_missing_waveforms():
                      (json.dumps(peaks) if peaks else "[]", row["id"]))
         conn.commit()
         conn.close()
+
+
+def _deduplicate_library():
+    """Find duplicate tracks by normalized Artist+Title within same stream_subdir.
+    Keep the one with higher bitrate (then longer duration). Trash the rest."""
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT id, filepath, artist, title, stream_subdir, bitrate, duration_sec, size_bytes "
+        "FROM library_tracks WHERE trashed = 0 AND artist != '' AND title != ''"
+    ).fetchall()
+    conn.close()
+
+    groups = {}
+    for r in rows:
+        key = (r["stream_subdir"] or "") + "|" + _normalize_for_match(r["artist"]) + "|" + _normalize_for_match(r["title"])
+        groups.setdefault(key, []).append(dict(r))
+
+    trashed_count = 0
+    for key, tracks in groups.items():
+        if len(tracks) < 2:
+            continue
+        tracks.sort(key=lambda t: (t["bitrate"] or 0, t["duration_sec"] or 0, t["size_bytes"] or 0), reverse=True)
+        keeper = tracks[0]
+        for dup in tracks[1:]:
+            db.trash_library_track(dup["id"])
+            log.info("Dedup: trashed '%s - %s' (id=%d, %dkbps), keeping id=%d (%dkbps)",
+                     dup["artist"], dup["title"], dup["id"], dup["bitrate"] or 0,
+                     keeper["id"], keeper["bitrate"] or 0)
+            trashed_count += 1
+    return trashed_count
 
 
 def scan_library():

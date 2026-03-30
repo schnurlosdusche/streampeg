@@ -196,6 +196,11 @@ function _initBrowserAudio() {
                 _playerAudio.play().catch(function() {});
                 return;
             }
+            if (_isLibraryTrack && typeof AutoDJ !== 'undefined' && AutoDJ.enabled) {
+                AutoDJ._resetFade();
+                AutoDJ.playNext();
+                return;
+            }
             if (_isLibraryTrack && _libShuffleMode) {
                 // Shuffle: play random next
                 _playRandomTrack();
@@ -981,7 +986,8 @@ function _renderRepeatButton() {
         title = 'Repeat: Off';
     }
     return '<button class="player-btn repeat-btn' + cls + '" onclick="toggleRepeatMode()" title="' + title + '" style="margin-left:20px;">' + icon + '</button>'
-        + '<button class="player-btn shuffle-btn' + (_libShuffleMode ? ' repeat-active' : '') + '" onclick="toggleShuffleMode()" title="Shuffle: ' + (_libShuffleMode ? 'On' : 'Off') + '" style="margin-left:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"' + (_libShuffleMode ? '' : ' opacity="0.4"') + '><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>';
+        + '<button class="player-btn shuffle-btn' + (_libShuffleMode ? ' repeat-active' : '') + '" onclick="toggleShuffleMode()" title="Shuffle: ' + (_libShuffleMode ? 'On' : 'Off') + '" style="margin-left:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"' + (_libShuffleMode ? '' : ' opacity="0.4"') + '><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>'
+        + (typeof AutoDJ !== 'undefined' ? '<button class="player-btn autodj-btn' + (AutoDJ.enabled ? ' repeat-active' : '') + '" onclick="AutoDJ.toggle()" title="Auto-DJ: ' + (AutoDJ.enabled ? 'On' : 'Off') + '" style="margin-left:8px;font-size:9px;padding:2px 5px;' + (AutoDJ.enabled ? 'color:#42a5f5;border-color:#42a5f5;' : '') + '">DJ</button>' : '');
 }
 
 function toggleShuffleMode() {
@@ -1137,6 +1143,17 @@ function _saveCuePoints(trackId) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({cues: cues}),
     }).catch(function() {});
+    // Update cue indicator in track list
+    var nums = Object.keys(cues).filter(function(k) { return cues[k] != null; }).join(',');
+    if (typeof _libTrackCache !== 'undefined' && _libTrackCache[trackId]) {
+        _libTrackCache[trackId].cue_nums = nums || null;
+    }
+    if (typeof _libTracks !== 'undefined') {
+        for (var i = 0; i < _libTracks.length; i++) {
+            if (_libTracks[i].id === trackId) { _libTracks[i].cue_nums = nums || null; break; }
+        }
+    }
+    if (typeof _vsRenderedStart !== 'undefined') { _vsRenderedStart = -1; _vsRenderVisible(); }
 }
 
 function _loadCuePoints(trackId) {
@@ -1872,6 +1889,7 @@ function _onSeekUpdate() {
     if (remEl) remEl.textContent = '-' + _fmtTime(dur - cur);
     _updateCueMarkers(dur);
     _scheduleWaveformRedraw();
+    if (typeof AutoDJ !== 'undefined' && AutoDJ.enabled) AutoDJ._checkFade();
 }
 
 function _updateCueMarkers(dur) {
@@ -2026,7 +2044,7 @@ function _drawWaveform() {
         if (pct < progress) {
             ctx.fillStyle = '#42a5f5';
         } else {
-            ctx.fillStyle = 'rgba(66,165,245,0.15)';
+            ctx.fillStyle = 'rgba(66,165,245,0.3)';
         }
         ctx.fillRect(x, (h - barH) / 2, Math.max(1, barW - 1), barH);
     }
@@ -2058,7 +2076,7 @@ function _refreshPlayerBar() {
         _playerStreamId, _isLibraryTrack,
         (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : '',
         _browserPaused, _browserIcyTrack, _browserIcyCover, _browserLibStream,
-        _libRepeatMode, Math.round(_browserVolume * 100), _seekStep,
+        _libRepeatMode, Math.round(_browserVolume * 100), _seekStep, (typeof AutoDJ !== 'undefined' ? AutoDJ.enabled : ''),
         JSON.stringify(_trackRatings[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || 0),
         JSON.stringify(_trackPlaylists[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || []),
         JSON.stringify(_cuePoints[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || {}),

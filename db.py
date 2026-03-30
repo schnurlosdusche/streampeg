@@ -476,7 +476,7 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
 
     offset = (page - 1) * per_page
     rows = conn.execute(
-        f"SELECT * FROM library_tracks{where_sql} {order_sql} LIMIT ? OFFSET ?",
+        f"SELECT lt.*, (SELECT GROUP_CONCAT(cue_number) FROM cue_points WHERE track_id = lt.id) as cue_nums FROM library_tracks lt{where_sql} {order_sql} LIMIT ? OFFSET ?",
         params + [per_page, offset],
     ).fetchall()
     conn.close()
@@ -557,7 +557,8 @@ def get_playlist_tracks(playlist_id):
     """Tracks in playlist ordered by position, JOINed with library_tracks."""
     conn = get_db()
     rows = conn.execute(
-        "SELECT lt.*, pt.position, pt.id as playlist_track_id "
+        "SELECT lt.*, pt.position, pt.id as playlist_track_id, "
+        "(SELECT GROUP_CONCAT(cue_number) FROM cue_points WHERE track_id = lt.id) as cue_nums "
         "FROM playlist_tracks pt "
         "JOIN library_tracks lt ON pt.track_id = lt.id "
         "WHERE pt.playlist_id = ? AND lt.trashed = 0 ORDER BY pt.position",

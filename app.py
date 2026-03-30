@@ -31,11 +31,14 @@ import backup
 _last_client_active = 0.0  # timestamp of last active (visible tab) request
 _client_audio_playing = False  # whether browser is playing audio
 _stream_test_active = False  # whether a stream test is running
+_scan_override = False  # user override: run despite active client
 _CLIENT_IDLE_THRESHOLD = 60  # seconds before considering no active client
 
 
 def is_client_active():
     """Check if any browser client is actively viewing the page or playing audio."""
+    if _scan_override:
+        return False
     if _stream_test_active:
         return True
     if _client_audio_playing:
@@ -44,7 +47,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.134a"
+VERSION = "0.0.139a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -676,13 +679,13 @@ def settings_musicbrainz_toggle():
 
 @app.route("/settings/bpm-analyzer/toggle", methods=["POST"])
 def settings_bpm_toggle():
+    global _scan_override
     currently = db.get_setting("bpm_analyzer_enabled") == "1"
     db.set_setting("bpm_analyzer_enabled", "0" if currently else "1")
+    _scan_override = False  # reset override when toggling
     if currently:
-        # Daemon keeps running but skips BPM analysis when disabled
         pass
     else:
-        # Ensure daemon is running to pick up BPM analysis
         lib_module.start_daemon()
     return jsonify({"ok": True, "enabled": not currently})
 
@@ -718,10 +721,11 @@ def api_bpm_status():
     bpm_status = bpm_analyzer.get_status()
     paused = bpm_status.get("paused", False) or is_client_active()
     scan_status = lib_module.get_scan_status()
+    scan_active = scan_status.get("running", False)
     return jsonify({
         "enabled": enabled,
         "running": daemon.get("running", False),
-        "paused": paused,
+        "paused": paused and not scan_active,
         "phase": daemon.get("phase", ""),
         "current_subdir": daemon.get("current_subdir", ""),
         "rescan_running": rescan.get("running", False),
@@ -731,6 +735,7 @@ def api_bpm_status():
         "scan_phase": scan_status.get("phase", ""),
         "scan_scanned": scan_status.get("files_scanned", 0),
         "scan_total": scan_status.get("files_total", 0),
+        "scan_running": scan_active,
     })
 
 
@@ -788,6 +793,14 @@ def api_heartbeat():
     """Called by browser when tab is visible. Pauses background workers."""
     global _last_client_active
     _last_client_active = time.time()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/scan-override", methods=["POST"])
+def api_scan_override():
+    """Override pause: let daemon run despite active client."""
+    global _scan_override
+    _scan_override = True
     return jsonify({"ok": True})
 
 
@@ -1520,6 +1533,44 @@ def api_library_playlist_export_zip(playlist_id):
                 if os.path.isfile(filepath):
                     filename = os.path.basename(filepath)
                     zf.write(filepath, f"{safe_name}/{filename}")
+
+            # Generate Mixxx XML with cue points
+            xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            xml += '<Playlist name="{}" tracks="{}">\n'.format(
+                pl["name"].replace("&", "&amp;").replace("<", "&lt;"), len(tracks))
+            for t in tracks:
+                cues = db.get_cue_points(t["id"])
+                fname = os.path.basename(t.get("filepath", ""))
+                xml += '  <Track>\n'
+                xml += '    <Location>{}</Location>\n'.format(fname.replace("&", "&amp;"))
+                if t.get("title"):
+                    xml += '    <Title>{}</Title>\n'.format(t["title"].replace("&", "&amp;").replace("<", "&lt;"))
+                if t.get("artist"):
+                    xml += '    <Artist>{}</Artist>\n'.format(t["artist"].replace("&", "&amp;").replace("<", "&lt;"))
+                if t.get("bpm") and t["bpm"] > 0:
+                    xml += '    <BPM>{}</BPM>\n'.format(t["bpm"])
+                if t.get("key"):
+                    xml += '    <Key>{}</Key>\n'.format(t["key"])
+                if t.get("duration_sec"):
+                    xml += '    <Duration>{}</Duration>\n'.format(t["duration_sec"])
+                if cues:
+                    xml += '    <CuePoints>\n'
+                    for num, pos in sorted(cues.items(), key=lambda x: int(x[0])):
+                        xml += '      <Cue number="{}" position="{}"/>\n'.format(num, pos)
+                    xml += '    </CuePoints>\n'
+                xml += '  </Track>\n'
+            xml += '</Playlist>\n'
+            zf.writestr(f"{safe_name}/{safe_name}.xml", xml)
+
+            # Add import script
+            script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "import_cues_to_mixxx.py")
+            if os.path.isfile(script_path):
+                zf.write(script_path, f"{safe_name}/import_cues_to_mixxx.py")
+
+            # Add .command launcher for macOS
+            cmd = '#!/bin/bash\ncd "$(dirname "$0")"\npython3 import_cues_to_mixxx.py "{}.xml"\nread -p "Press Enter to close..."\n'.format(safe_name)
+            zf.writestr(f"{safe_name}/Import Cues to Mixxx.command", cmd)
+
         buf.seek(0)
         yield buf.read()
 
@@ -1550,6 +1601,31 @@ def api_library_track_cues_set(track_id):
     cues = data.get("cues", {})
     db.set_cue_points(track_id, cues)
     return jsonify({"success": True})
+
+
+@app.route("/api/library/track/<int:track_id>/rescan-bpmkey", methods=["POST"])
+def api_library_track_rescan_bpmkey(track_id):
+    """Re-run BPM/Key detection for a single track."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return jsonify({"error": "file not found"}), 404
+    try:
+        bpm = autotag.detect_bpm(filepath)
+        key = autotag.detect_key(filepath)
+        conn = db.get_db()
+        if bpm and bpm > 0:
+            conn.execute("UPDATE library_tracks SET bpm = ? WHERE id = ?", (bpm, track_id))
+        if key:
+            conn.execute("UPDATE library_tracks SET key = ? WHERE id = ?", (key, track_id))
+        conn.commit()
+        conn.close()
+        updated = db.get_library_track(track_id)
+        return jsonify({"success": True, "bpm": updated.get("bpm"), "key": updated.get("key")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/library/track/<int:track_id>/playlists")
@@ -1744,6 +1820,19 @@ def api_library_random():
     if not row:
         return jsonify({"error": "no tracks"}), 404
     return jsonify({"id": row["id"], "title": row["title"], "artist": row["artist"], "stream_subdir": row["stream_subdir"]})
+
+
+@app.route("/api/autodj/next")
+def api_autodj_next():
+    """Auto-DJ: find the best next track by BPM/Key compatibility."""
+    import autodj as _autodj
+    track_id = request.args.get("track_id", 0, type=int)
+    playlist_id = request.args.get("playlist_id", None, type=int)
+    stream = request.args.get("stream", None)
+    result = _autodj.get_next_track(track_id, playlist_id=playlist_id, stream=stream)
+    if not result:
+        return jsonify({"error": "no compatible track"}), 404
+    return jsonify(result)
 
 
 @app.route("/api/library/track/<int:track_id>/play")

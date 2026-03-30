@@ -39,9 +39,12 @@ def _extract_stream_title(meta):
 
 
 def _sanitize_filename(name):
-    """Create a safe filename from a track title."""
-    s = re.sub(r'[<>:"/\\|?*\'\u2019]', '', name).strip()
-    s = re.sub(r'\s+', ' ', s)
+    """Create a safe, normalized filename from a track title.
+    Strips special chars, normalizes underscores/whitespace so variants
+    like Giants' Nest, Giants'_Nest, Giants Nest produce the same name."""
+    s = re.sub(r'[<>:"/\\|?*\'\u2019\u2018`]', '', name)
+    s = s.replace('_', ' ')
+    s = re.sub(r'\s+', ' ', s).strip()
     return s[:200] or "unknown"
 
 

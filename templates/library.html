@@ -401,24 +401,28 @@
             <colgroup>
                 <col style="width:20%">    <!-- title -->
                 <col style="width:281px">  <!-- artist -->
-                <col style="width:50px">   <!-- bitrate -->
                 <col style="width:60px">   <!-- bpm -->
+                <col style="width:10px">   <!-- cue indicator -->
                 <col style="width:75px">   <!-- key -->
-                <col style="width:120px">  <!-- duration -->
+                <col style="width:20px">   <!-- rescan bpm/key -->
+                <col style="width:77px">   <!-- duration -->
+                <col style="width:50px">   <!-- bitrate -->
                 <col style="width:36px">   <!-- heart -->
                 <col style="width:80px">   <!-- rating -->
                 <col style="width:28px">   <!-- + -->
-                <col style="width:220px">  <!-- playlists -->
+                <col style="width:239px">  <!-- playlists -->
                 <col style="width:60px">   <!-- trash -->
             </colgroup>
             <thead>
                 <tr>
                     <th data-sort="title" onclick="sortBy('title')">{{ t('library.title_col') }} <span class="sort-arrow"></span></th>
                     <th data-sort="artist" onclick="sortBy('artist')">{{ t('library.artist_col') }} <span class="sort-arrow"></span></th>
-                    <th data-sort="bitrate" onclick="sortBy('bitrate')">BIT <span class="sort-arrow"></span></th>
                     <th data-sort="bpm" onclick="sortBy('bpm')">{{ t('library.bpm') }} <span class="sort-arrow"></span></th>
+                    <th>C</th>
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
+                    <th title="Rescan BPM/Key">&#8635;</th>
                     <th data-sort="duration" onclick="sortBy('duration')">&#9201; <span class="sort-arrow"></span></th>
+                    <th data-sort="bitrate" onclick="sortBy('bitrate')">BIT <span class="sort-arrow"></span></th>
                     <th data-sort="favorited" onclick="sortBy('favorited')">&#9825; <span class="sort-arrow"></span></th>
                     <th data-sort="rating" onclick="sortBy('rating')">&#9733; <span class="sort-arrow"></span></th>
                     <th></th>
@@ -447,10 +451,25 @@
 /* --- Camelot wheel mapping --- */
 var _CAMELOT = {"Abm":"1A","G#m":"1A","Ebm":"2A","D#m":"2A","Bbm":"3A","A#m":"3A","Fm":"4A","Cm":"5A","Gm":"6A","Dm":"7A","Am":"8A","Em":"9A","Bm":"10A","F#m":"11A","Gbm":"11A","C#m":"12A","Dbm":"12A","B":"1B","Cb":"1B","F#":"2B","Gb":"2B","C#":"3B","Db":"3B","Ab":"4B","G#":"4B","Eb":"5B","D#":"5B","Bb":"6B","A#":"6B","F":"7B","C":"8B","G":"9B","D":"10B","A":"11B","E":"12B"};
 
+var _CAMELOT_COLORS = {
+    "1A":"#ff4444","1B":"#ff6666",
+    "2A":"#ff8800","2B":"#ffaa33",
+    "3A":"#ddaa00","3B":"#eebb33",
+    "4A":"#aacc00","4B":"#bbdd33",
+    "5A":"#44bb44","5B":"#66dd66",
+    "6A":"#00bbaa","6B":"#33ddcc",
+    "7A":"#0099cc","7B":"#33bbee",
+    "8A":"#4488ee","8B":"#66aaff",
+    "9A":"#6655dd","9B":"#8877ff",
+    "10A":"#9944cc","10B":"#bb66ee",
+    "11A":"#cc44aa","11B":"#ee66cc",
+    "12A":"#ee4477","12B":"#ff6699"
+};
 function fmtKey(key) {
     if (!key) return '-';
     var cam = _CAMELOT[key] || '';
-    return escHtml(key) + (cam ? ' <span style="color:#888;font-size:11px;">' + cam + '</span>' : '');
+    var color = _CAMELOT_COLORS[cam] || '#888';
+    return '<span style="color:' + color + ';">' + escHtml(key) + '</span>' + (cam ? ' <span style="color:' + color + ';font-size:11px;">' + cam + '</span>' : '');
 }
 
 /* --- Library state --- */
@@ -601,17 +620,32 @@ function _vsRenderVisible() {
     var topH = startIdx * _ROW_HEIGHT;
     var botH = Math.max(0, (_libTracks.length - endIdx) * _ROW_HEIGHT);
 
-    var html = '<tr><td colspan="12" style="padding:0;border:none;height:' + topH + 'px;"></td></tr>';
+    var html = '<tr><td colspan="14" style="padding:0;border:none;height:' + topH + 'px;"></td></tr>';
     for (var i = startIdx; i < endIdx; i++) {
         html += _renderTrackRow(_libTracks[i], i);
     }
-    html += '<tr><td colspan="12" style="padding:0;border:none;height:' + botH + 'px;"></td></tr>';
+    html += '<tr><td colspan="14" style="padding:0;border:none;height:' + botH + 'px;"></td></tr>';
 
     // Swap tbody to avoid scroll jitter from in-place innerHTML
     var newTbody = _vsTbody.cloneNode(false);
     newTbody.innerHTML = html;
     _vsTbody.parentNode.replaceChild(newTbody, _vsTbody);
     _vsTbody = newTbody;
+}
+
+var _CUE_COLORS_LIST = ['#42a5f5','#ff9800','#4caf50','#e91e63'];
+function _renderCueIndicator(cueNums) {
+    if (!cueNums) return '';
+    var nums = cueNums.split(',').map(Number).filter(function(n) { return n >= 1 && n <= 4; });
+    if (!nums.length) return '';
+    var h = '<span style="display:inline-flex;gap:1px;">';
+    for (var i = 1; i <= 4; i++) {
+        if (nums.indexOf(i) >= 0) {
+            h += '<span style="display:inline-block;width:2px;height:10px;background:' + _CUE_COLORS_LIST[i-1] + ';border-radius:1px;"></span>';
+        }
+    }
+    h += '</span>';
+    return h;
 }
 
 function _renderTrackRow(tr, idx) {
@@ -623,10 +657,12 @@ function _renderTrackRow(tr, idx) {
     var h = '<tr data-track-id="' + tr.id + '"' + cls + ' style="height:' + _ROW_HEIGHT + 'px;">';
     h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.title || '') + '">' + (isPlaying ? '<svg class="lib-now-playing" width="12" height="12" viewBox="0 0 12 12" style="vertical-align:middle;margin-right:4px;"><polygon points="2,0 12,6 2,12" fill="#4a9eff"/></svg>&nbsp;' : '') + escHtml(tr.title || '') + '</td>';
     h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.artist || '') + '">' + escHtml(tr.artist || '') + '</td>';
-    h += '<td>' + (tr.bitrate ? '<span class="lib-bitrate" style="color:' + (tr.bitrate >= 128 ? '#4caf50' : '#ff9800') + ';border-color:' + (tr.bitrate >= 128 ? '#4caf50' : '#ff9800') + ';">' + tr.bitrate + '</span>' : '-') + '</td>';
     h += '<td>' + (tr.bpm ? tr.bpm : '-') + '</td>';
+    h += '<td>' + _renderCueIndicator(tr.cue_nums) + '</td>';
     h += '<td>' + fmtKey(tr.key) + '</td>';
+    h += '<td><button class="lib-rescan-btn" onclick="rescanBpmKey(' + tr.id + ', this)" title="Rescan BPM/Key">&#8635;</button></td>';
     h += '<td>' + dur + '</td>';
+    h += '<td>' + (tr.bitrate ? '<span class="lib-bitrate" style="color:' + (tr.bitrate >= 128 ? '#4caf50' : '#ff9800') + ';border-color:' + (tr.bitrate >= 128 ? '#4caf50' : '#ff9800') + ';">' + tr.bitrate + '</span>' : '-') + '</td>';
     h += '<td class="col-heart"><span class="lib-heart' + (tr.favorited ? ' heart-active' : '') + '" onclick="toggleListFavorite(' + tr.id + ', this)" title="Favorite"><svg width="14" height="14" viewBox="0 0 24 24" style="vertical-align:middle;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="' + (tr.favorited ? '#e91e63' : 'none') + '" stroke="' + (tr.favorited ? '#e91e63' : '#555') + '" stroke-width="1.5"/></svg></span></td>';
     h += '<td class="col-rating">' + _renderListStars(tr.id, tr.rating || 0) + '</td>';
     h += '<td><button class="lib-add-btn" onclick="showAddToPlaylistMenu(this, ' + tr.id + ')" title="' + t('library.add_to_playlist') + '">+</button></td>';
@@ -1702,6 +1738,39 @@ function globalSearchPlay(trackId) {
 }
 
 /* --- Re-scan tags for current folder --- */
+function rescanBpmKey(trackId, btn) {
+    btn.disabled = true;
+    btn.style.opacity = '0.4';
+    btn.innerHTML = '&#8987;';
+    fetch('/api/library/track/' + trackId + '/rescan-bpmkey', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerHTML = '&#8635;';
+            if (data.success) {
+                for (var i = 0; i < _libTracks.length; i++) {
+                    if (_libTracks[i].id === trackId) {
+                        _libTracks[i].bpm = data.bpm;
+                        _libTracks[i].key = data.key;
+                        break;
+                    }
+                }
+                if (_libTrackCache[trackId]) {
+                    _libTrackCache[trackId].bpm = data.bpm;
+                    _libTrackCache[trackId].key = data.key;
+                }
+                _vsRenderedStart = -1;
+                _vsRenderVisible();
+            }
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerHTML = '&#8635;';
+        });
+}
+
 var _rescanPollTimer = null;
 
 function rescanFolderTags() {

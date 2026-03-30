@@ -162,27 +162,27 @@
                     text.textContent = 'Off';
                     text.style.color = '#666';
                     btn.title = 'BPM/Key Analyzer (disabled)\nClick to enable';
-                } else if (data.paused) {
-                    icon.style.color = '#ff9800';
-                    icon.style.animation = 'none';
-                    text.textContent = 'Paused';
-                    text.style.color = '#ff9800';
-                    btn.title = 'Background tasks paused (browser active)\nResumes when tab is hidden or closed\nClick to disable';
-                } else if (data.phase === 'scan' && data.scan_phase === 'tag') {
+                } else if (data.scan_running && data.scan_phase === 'tag') {
                     var sPct = data.scan_total > 0 ? Math.round(data.scan_scanned / data.scan_total * 100) : 0;
                     icon.style.color = '#ff9800';
                     icon.style.animation = 'spin 2s linear infinite';
                     text.textContent = 'TAG ' + sPct + '%';
                     text.style.color = '#ff9800';
                     btn.title = 'Auto-tagging tracks (AcoustID/MusicBrainz)\n' + data.scan_scanned + ' / ' + data.scan_total + ' (' + sPct + '%)\nClick to disable';
-                } else if (data.phase === 'scan') {
+                } else if (data.scan_running) {
                     var sPct = data.scan_total > 0 ? Math.round(data.scan_scanned / data.scan_total * 100) : 0;
                     var sLabel = data.scan_phase === 'new' ? 'NEW' : 'SCAN';
                     icon.style.color = '#ff9800';
                     icon.style.animation = 'spin 2s linear infinite';
                     text.textContent = sLabel + ' ' + sPct + '%';
                     text.style.color = '#ff9800';
-                    btn.title = sLabel + '\n' + (subdir ? 'Folder: ' + subdir + '\n' : '') + data.scan_scanned + ' / ' + data.scan_total + ' (' + sPct + '%)\nClick to disable';
+                    btn.title = sLabel + '\n' + data.scan_scanned + ' / ' + data.scan_total + ' (' + sPct + '%)\nClick to disable';
+                } else if (data.paused) {
+                    icon.style.color = '#ff9800';
+                    icon.style.animation = 'none';
+                    text.textContent = 'Paused';
+                    text.style.color = '#ff9800';
+                    btn.title = 'Background tasks paused (browser active)\nResumes when tab is hidden or closed\nClick to override pause';
                 } else if (data.phase === 'waveform') {
                     icon.style.color = '#42a5f5';
                     icon.style.animation = 'spin 2s linear infinite';
@@ -210,7 +210,7 @@
                     btn.title = 'BPM/Key Analyzer (stopped)\nClick to enable';
                 }
 
-                _scanPollTimer = setTimeout(pollScanIndicator, 15000);
+                _scanPollTimer = setTimeout(pollScanIndicator, data.scan_running ? 3000 : 15000);
             })
             .catch(function() {
                 _scanPollTimer = setTimeout(pollScanIndicator, 10000);
@@ -218,11 +218,21 @@
     }
     function toggleScanDaemon(e) {
         e.preventDefault();
-        fetch('/settings/bpm-analyzer/toggle', {method: 'POST', credentials: 'include'})
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                pollScanIndicator();
-            });
+        var text = document.getElementById('scan-indicator-text');
+        var currentState = text ? text.textContent.split(' ')[0] : '';
+        if (currentState === 'Paused') {
+            // Paused -> Active (override pause)
+            fetch('/api/scan-override', {method: 'POST', credentials: 'include'})
+                .then(function() { pollScanIndicator(); });
+        } else if (currentState === 'Off') {
+            // Off -> Standby (enable daemon, will pause because client active)
+            fetch('/settings/bpm-analyzer/toggle', {method: 'POST', credentials: 'include'})
+                .then(function() { pollScanIndicator(); });
+        } else {
+            // Active/Idle/Scan/Tag/BPM-KEY/WAVE -> Off
+            fetch('/settings/bpm-analyzer/toggle', {method: 'POST', credentials: 'include'})
+                .then(function() { pollScanIndicator(); });
+        }
     }
     pollScanIndicator();
 
@@ -259,6 +269,7 @@
     pollLoudnessIndicator();
     </script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ url_for('static', filename='autodj.js') }}"></script>
     <script>
     // --- PJAX: swap <main> content without full page reload to keep audio alive ---
     (function() {
