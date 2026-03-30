@@ -1325,6 +1325,8 @@ def api_library_tracks():
             "mtime": t_row.get("mtime", 0),
             "bitrate": t_row.get("bitrate", 0),
             "size_bytes": t_row.get("size_bytes", 0),
+            "stream_subdir": t_row.get("stream_subdir", ""),
+            "cue_nums": t_row.get("cue_nums", ""),
         })
     return jsonify({
         "tracks": slim, "total": total,

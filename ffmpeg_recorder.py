@@ -318,6 +318,14 @@ class IcyStreamSplitter:
                         log_event(self.stream_id, "track",
                                   f"Aktueller Track: {title} — warte auf nächsten")
                         continue
+                    # Still waiting & previous title was station name (no " - "):
+                    # update current track but keep waiting for a real track change
+                    if self._waiting_for_new_track and " - " not in (self._current_track or ""):
+                        if title != self._current_track:
+                            self._current_track = title
+                            log_event(self.stream_id, "track",
+                                      f"Aktueller Track: {title} — warte auf nächsten")
+                        continue
                     pending_title = self._pending_split["title"] if self._pending_split else None
                     if title != self._current_track and title != pending_title and " - " in title:
                         if self.split_offset > 0:
@@ -778,8 +786,16 @@ class FfmpegRecorder:
         with self._lock:
             old_track = self._current_track
             was_waiting = self._waiting_for_new_track
-            self._waiting_for_new_track = False
             self._current_track = new_track
+
+            # Still waiting & previous title was station name (no " - "):
+            # update current track but keep waiting for a real track change
+            if was_waiting and " - " not in (old_track or ""):
+                log_event(self.stream_id, "track",
+                          f"Aktueller Track: {new_track} — warte auf nächsten")
+                return
+
+            self._waiting_for_new_track = False
 
             # Stop old ffmpeg and finalize (skip if was waiting)
             if not was_waiting:

@@ -150,7 +150,7 @@ var _browserPaused = false;
 var _browserIcyTrack = '';
 var _browserIcyCover = null;
 var _isLibraryTrack = false;
-var _browserLibStream = '';
+var _browserLibStream = sessionStorage.getItem('_browserLibStream') || '';
 var _libCastDeviceId = null;  // primary cast device for library player (volume control)
 var _libCastDeviceName = '';  // display name of primary cast device
 var _libCastDeviceIds = [];   // all active cast device IDs
@@ -1548,6 +1548,8 @@ function stopAllLibCasts() {
     _libPlayingTrackId = null;
     sessionStorage.removeItem('_libPlayingTrackId');
     sessionStorage.removeItem('_browserLibStream');
+    localStorage.removeItem('_playbackOriginFolder');
+    localStorage.removeItem('_playbackOriginPlaylist');
     _refreshPlayerBar();
     if (typeof updatePlayButtons === 'function') updatePlayButtons();
 }
@@ -2196,15 +2198,19 @@ function _updateVersionPosition(playerCount) {
 }
 
 function _navigateToSource() {
-    var plId = sessionStorage.getItem('_selectedPlaylistId');
-    if (plId) {
-        if (typeof openPlaylist === 'function') { openPlaylist(parseInt(plId)); return; }
-        location.href = '/library?view=playlists';
-        return;
-    }
-    if (_browserLibStream) {
-        if (typeof openFolder === 'function') { openFolder(_browserLibStream); return; }
-        location.href = '/library';
+    var folder = localStorage.getItem('_playbackOriginFolder') || '';
+    var plId = localStorage.getItem('_playbackOriginPlaylist') || '';
+
+    // If already on library page, use JS navigation (no page reload)
+    if (plId && typeof openPlaylist === 'function') { openPlaylist(parseInt(plId)); return; }
+    if (folder && typeof openFolder === 'function') { openFolder(folder); return; }
+
+    // From other pages: use PJAX link click (keeps audio alive)
+    sessionStorage.setItem('_navigateToStream', folder);
+    sessionStorage.setItem('_navigateToPlaylist', plId);
+    var libLink = document.querySelector('a[href="/library"]');
+    if (libLink) {
+        libLink.click();
         return;
     }
     location.href = '/library';
@@ -2619,7 +2625,9 @@ function _pollBrowserIcy() {
 // Cover click navigation — event delegation (works after innerHTML replacement)
 document.addEventListener('click', function(e) {
     var cover = e.target.closest('.player-cover-link');
-    if (cover) _navigateToSource();
+    if (cover) {
+        _navigateToSource();
+    }
 });
 
 // Restore browser listen state from localStorage (persists across page navigation)

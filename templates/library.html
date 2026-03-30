@@ -1013,6 +1013,8 @@ function playLibraryTrack(trackId, title, artist, streamSubdir) {
         _libPlayingTrackId = null;
         sessionStorage.removeItem('_libPlayingTrackId');
         sessionStorage.removeItem('_browserLibStream');
+        localStorage.removeItem('_playbackOriginFolder');
+        localStorage.removeItem('_playbackOriginPlaylist');
         _refreshPlayerBar();
         updatePlayButtons();
         return;
@@ -1070,6 +1072,9 @@ function playLibraryTrack(trackId, title, artist, streamSubdir) {
     // Persist for page reload
     sessionStorage.setItem('_libPlayingTrackId', trackId);
     sessionStorage.setItem('_browserLibStream', _browserLibStream);
+    // Persist playback origin for cover-click navigation
+    localStorage.setItem('_playbackOriginFolder', _currentFolder || streamSubdir || '');
+    localStorage.setItem('_playbackOriginPlaylist', _selectedPlaylistId || '');
     _refreshPlayerBar();
     updatePlayButtons();
 
@@ -1978,6 +1983,9 @@ function initLibrary() {
     var mainEl = document.querySelector('main.container');
     if (mainEl) mainEl.classList.add('no-scroll');
 
+    // Update Auto-DJ button state
+    if (typeof AutoDJ !== 'undefined') AutoDJ._updateButton();
+
     _libPage = 1;
     _libSort = 'title';
     _libOrder = 'asc';
@@ -2017,7 +2025,28 @@ function initLibrary() {
 
     loadPlaylists();
 
-    // Always show folder overview when navigating to Library
+    // Check if we were navigated here from cover click
+    var navStream = sessionStorage.getItem('_navigateToStream');
+    var navPlaylist = sessionStorage.getItem('_navigateToPlaylist');
+    sessionStorage.removeItem('_navigateToStream');
+    sessionStorage.removeItem('_navigateToPlaylist');
+
+    if (navPlaylist) {
+        openPlaylist(parseInt(navPlaylist));
+        return;
+    }
+    if (navStream) {
+        openFolder(navStream);
+        return;
+    }
+
+    // If a library track is playing, open its folder
+    if (_libPlayingTrackId && _browserLibStream) {
+        openFolder(_browserLibStream);
+        return;
+    }
+
+    // Default: show folder overview
     document.getElementById('lib-folder-view').style.display = '';
     document.getElementById('lib-track-view').style.display = 'none';
     document.getElementById('lib-playlist-overview').style.display = 'none';

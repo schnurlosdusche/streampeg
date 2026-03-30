@@ -5,7 +5,8 @@
  */
 
 var AutoDJ = {
-    enabled: localStorage.getItem('_autoDJEnabled') === '1',
+    get enabled() { return localStorage.getItem('_autoDJEnabled') === '1'; },
+    set enabled(v) { localStorage.setItem('_autoDJEnabled', v ? '1' : '0'); },
     _history: [],
     _fadeDuration: parseInt(localStorage.getItem('_autoDJFade') || '10') * 1000,
     _fading: false,
@@ -53,9 +54,11 @@ var AutoDJ = {
         var btn = document.getElementById('lib-autodj-btn');
         if (!btn) return;
         if (AutoDJ.enabled) {
-            btn.style.color = '#42a5f5';
+            btn.style.background = '#42a5f5';
+            btn.style.color = '#fff';
             btn.style.borderColor = '#42a5f5';
         } else {
+            btn.style.background = '';
             btn.style.color = '#666';
             btn.style.borderColor = '#666';
         }
@@ -341,6 +344,9 @@ var AutoDJ = {
         // Load track-specific data
         if (typeof _loadWaveformById === 'function') _loadWaveformById(nextId);
         if (typeof _loadCuePoints === 'function') _loadCuePoints(nextId);
+        if (typeof _loadTrackRating === 'function') _loadTrackRating(nextId);
+        if (typeof _loadTrackFavorite === 'function') _loadTrackFavorite(nextId);
+        if (typeof _loadTrackPlaylists === 'function') _loadTrackPlaylists(nextId);
         if (typeof _loadLibraryCover === 'function' && cached) {
             _loadLibraryCover(nextId, cached.artist || '', cached.title || '');
         }

@@ -390,10 +390,8 @@
             // Update listen icons
             if (_playerStreamId) _updateListenIcons(_playerStreamId);
 
-            // Init library page if loaded via PJAX
-            if (document.getElementById('lib-table') && typeof initLibrary === 'function') {
-                initLibrary();
-            }
+            // Library page init is handled by its own inline script
+            // (do NOT call initLibrary here — it would run twice and reset navigation state)
 
             // Trigger a status update to refresh dashboard data
             updateStatus();
