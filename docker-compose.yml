@@ -7,13 +7,10 @@ services:
       - "5001:5000"
     environment:
       - SR_UI_SECRET=${SR_UI_SECRET:-change-me-in-production}
-      - SR_UI_PASSWORD=${SR_UI_PASSWORD:-streaming}
-      - SR_UI_DB_PATH=/data/streampeg.db
-      - RUNNING_IN_DOCKER=1
+      - SR_LIBRARY_PATH=/library
     volumes:
-      - ./data:/data                          # DB + persistent state
-      - /recording:/recording                 # temp recording dir
-      - /mnt/unraid-streams:/mnt/unraid-streams:rshared  # NAS target
+      - ./data:/data                # DB + persistent state
+      - ./library:/library          # Music library (local storage)
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s

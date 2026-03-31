@@ -422,7 +422,7 @@
                     <th>C</th>
                     <th data-sort="key" onclick="sortBy('key')">{{ t('library.key') }} <span class="sort-arrow"></span></th>
                     <th title="Rescan BPM/Key">&#8635;</th>
-                    <th data-sort="duration" onclick="sortBy('duration')">&#9201; <span class="sort-arrow"></span></th>
+                    <th data-sort="duration_sec" onclick="sortBy('duration_sec')">&#9201; <span class="sort-arrow"></span></th>
                     <th data-sort="bitrate" onclick="sortBy('bitrate')">BIT <span class="sort-arrow"></span></th>
                     <th data-sort="favorited" onclick="sortBy('favorited')">&#9825; <span class="sort-arrow"></span></th>
                     <th data-sort="rating" onclick="sortBy('rating')">&#9733; <span class="sort-arrow"></span></th>
@@ -1061,7 +1061,10 @@ function playLibraryTrack(trackId, title, artist, streamSubdir) {
         _initBrowserAudio();
         var url = '/api/library/track/' + trackId + '/play';
         _playerAudio.src = url;
-        _playerAudio.play().catch(function() {});
+        _playerAudio.play().catch(function() {
+            // Retry after short delay (browser may block play in background tab)
+            setTimeout(function() { if (_playerAudio) _playerAudio.play().catch(function() {}); }, 500);
+        });
     }
 
     // Update player bar info
@@ -1867,6 +1870,7 @@ function renderFolders(stats) {
 
     for (var i = 0; i < subdirs.length; i++) {
         var name = subdirs[i];
+        if (name === '_playlists') continue;
         var count = _folderStats[name] || 0;
         html += '<div class="lib-folder" onclick="openFolder(\'' + escAttr(name) + '\')">';
         html += '<div class="lib-folder-icon">&#128193;</div>';
@@ -2037,12 +2041,6 @@ function initLibrary() {
     }
     if (navStream) {
         openFolder(navStream);
-        return;
-    }
-
-    // If a library track is playing, open its folder
-    if (_libPlayingTrackId && _browserLibStream) {
-        openFolder(_browserLibStream);
         return;
     }
 

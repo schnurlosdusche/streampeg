@@ -9,13 +9,11 @@ services:
       - "5001:5000"
     environment:
       - SR_UI_SECRET=${SR_UI_SECRET:-change-me-in-production}
-      - SR_UI_PASSWORD=${SR_UI_PASSWORD:-streaming}
-      - SR_UI_DB_PATH=/data/streampeg.db
-      - RUNNING_IN_DOCKER=1
+      - SR_LIBRARY_PATH=/library
     volumes:
       - /mnt/user/appdata/streampeg:/data           # DB auf Unraid appdata
       - /tmp/streampeg-recording:/recording          # temp Aufnahmen
-      - /mnt/user/streams:/mnt/unraid-streams        # Ziel-Share fuer Songs
+      - /mnt/user/streams:/library                   # Ziel-Share fuer Songs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s

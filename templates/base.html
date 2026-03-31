@@ -307,6 +307,10 @@
                     var newTitle = doc.querySelector('title');
 
                     if (newMain) {
+                        // Update URL BEFORE executing scripts (so they see the correct URL)
+                        if (newTitle) document.title = newTitle.textContent;
+                        if (pushState) history.pushState({pjax: true}, '', url);
+
                         mainEl.innerHTML = newMain.innerHTML;
                         // Execute inline scripts from new page
                         newMain.querySelectorAll('script').forEach(function(oldScript) {
@@ -324,9 +328,6 @@
                         location.href = url;
                         return;
                     }
-
-                    if (newTitle) document.title = newTitle.textContent;
-                    if (pushState) history.pushState({pjax: true}, '', url);
 
                     // Update translations if present in new page
                     var scripts = doc.querySelectorAll('script');
