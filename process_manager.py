@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import threading
 import time
@@ -554,10 +555,18 @@ class _FileWatcher:
         return self._current_track
 
     def _track_file_exists(self, filepath):
-        """Check if this track already exists on NAS."""
+        """Check if this track already exists on NAS (checks both original
+        and normalized filename variants for cross-mode compatibility)."""
         basename = os.path.basename(filepath)
+        # Normalized variant: underscores → spaces, strip quotes
+        norm = re.sub(r'[\'\u2019\u2018`]', '', basename)
+        norm = norm.replace('_', ' ')
+        norm = re.sub(r'\s+', ' ', norm).strip()
         nas_dest = os.path.join(get_sync_target(), self.stream["dest_subdir"])
-        return os.path.exists(os.path.join(nas_dest, basename))
+        for fn in (basename, norm):
+            if os.path.exists(os.path.join(nas_dest, fn)):
+                return True
+        return False
 
     def _watch_loop(self):
         while not self._stop_event.is_set():

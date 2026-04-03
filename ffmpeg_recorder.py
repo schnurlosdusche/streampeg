@@ -352,14 +352,18 @@ class IcyStreamSplitter:
         """Check if a file for this track already exists in dest or NAS."""
         track_name = _sanitize_filename(title)
         filename = f"{track_name}.mp3"
-        if os.path.exists(os.path.join(self.dest, filename)):
-            return True
+        # Also check underscore variant (legacy YT-mode filenames)
+        filename_us = filename.replace(' ', '_')
+        for fn in (filename, filename_us):
+            if os.path.exists(os.path.join(self.dest, fn)):
+                return True
         # Check NAS via stream config
         if self.stream:
             from sync import get_sync_target
             nas_dest = os.path.join(get_sync_target(), self.stream["dest_subdir"])
-            if os.path.exists(os.path.join(nas_dest, filename)):
-                return True
+            for fn in (filename, filename_us):
+                if os.path.exists(os.path.join(nas_dest, fn)):
+                    return True
         return False
 
     def _do_split(self, new_title, input_fmt):
@@ -745,12 +749,16 @@ class FfmpegRecorder:
         """Check if a file for this track already exists in dest or NAS."""
         track_name = _sanitize_filename(title)
         filename = f"{track_name}.mp3"
-        if os.path.exists(os.path.join(self.dest, filename)):
-            return True
+        # Also check underscore variant (legacy YT-mode filenames)
+        filename_us = filename.replace(' ', '_')
+        for fn in (filename, filename_us):
+            if os.path.exists(os.path.join(self.dest, fn)):
+                return True
         from sync import get_sync_target
         nas_dest = os.path.join(get_sync_target(), self.stream["dest_subdir"])
-        if os.path.exists(os.path.join(nas_dest, filename)):
-            return True
+        for fn in (filename, filename_us):
+            if os.path.exists(os.path.join(nas_dest, fn)):
+                return True
         return False
 
     def _poll_loop(self):

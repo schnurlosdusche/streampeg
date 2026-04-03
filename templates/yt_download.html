@@ -2,13 +2,38 @@
 {% block title %}YT Download - Streampeg{% endblock %}
 
 {% block content %}
+<style>
+.search-wrap {
+    position: relative;
+    flex: 1;
+}
+.search-wrap .search-clear {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    display: none;
+    margin: 0;
+}
+.search-wrap .search-clear:hover { color: #ccc; }
+</style>
 <h3>{{ t('yt.title') }}</h3>
 
 <!-- YouTube Search -->
-<form id="yt-search-form" onsubmit="return ytSearch(event)" style="margin-bottom:1rem;">
-    <fieldset role="group">
-        <input type="text" id="yt-search-input" placeholder="Search YouTube..." autocomplete="off">
-        <button type="submit" id="btn-search">Search</button>
+<form id="yt-search-form" onsubmit="ytSearch(event);return false;" style="margin-bottom:1rem;">
+    <fieldset role="group" style="display:flex;gap:0;">
+        <div class="search-wrap" style="flex:1;min-width:0;">
+            <input type="text" id="yt-search-input" name="q" placeholder="Search YouTube..." autocomplete="off" style="padding-right:2rem;width:100%;">
+            <button type="button" class="search-clear" onclick="document.getElementById('yt-search-input').value='';this.style.display='none';document.getElementById('yt-search-input').focus();" title="Clear">&times;</button>
+        </div>
+        <button type="submit" id="btn-search" style="width:auto;max-width:10%;white-space:nowrap;">Search</button>
     </fieldset>
 </form>
 <div id="yt-search-results" style="display:none; margin-bottom:1.5rem;">
@@ -297,6 +322,17 @@ function escHtml(s) {
 function show(id) { document.getElementById(id).style.display = ''; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
 
+// --- Clear button visibility ---
+(function() {
+    var ytInput = document.getElementById('yt-search-input');
+    if (ytInput) {
+        ytInput.addEventListener('input', function() {
+            var btn = this.parentElement.querySelector('.search-clear');
+            if (btn) btn.style.display = this.value.length > 0 ? 'block' : 'none';
+        });
+    }
+})();
+
 // --- YouTube Search ---
 var _ytPreviewId = null;
 var _ytPreviewBtn = null;
@@ -360,7 +396,7 @@ function ytSearch(e) {
 
 function ytPreview(videoId, btn) {
     // Toggle off if already playing this
-    if (_ytPreviewId === videoId && _playerStreamId === 'yt-preview') {
+    if (_ytPreviewId === videoId && _playerStreamId === 'browse') {
         stopBrowseStream();
         btn.innerHTML = '&#9654;';
         _ytPreviewId = null;
@@ -387,7 +423,7 @@ function ytPreview(videoId, btn) {
 
 function ytSearchDownload(url) {
     // Stop preview if playing
-    if (_playerStreamId === 'yt-preview') { stopBrowseStream(); }
+    if (_playerStreamId === 'browse' && _ytPreviewId) { stopBrowseStream(); }
     if (_ytPreviewBtn) { _ytPreviewBtn.innerHTML = '&#9654;'; _ytPreviewBtn = null; }
     _ytPreviewId = null;
     // Fill URL field and trigger check

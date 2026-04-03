@@ -23,6 +23,27 @@
     0% { height: 4px; }
     100% { height: 14px; }
 }
+.search-wrap {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+}
+.search-wrap .search-clear {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    display: none;
+    margin: 0;
+}
+.search-wrap .search-clear:hover { color: #ccc; }
 </style>
 <div style="display:flex;align-items:center;gap:12px;">
     <h2 style="margin:0;">{{ t('browse.title') }}</h2>
@@ -31,7 +52,10 @@
 
 <div class="grid">
     <div>
-        <input type="text" id="search-name" placeholder="{{ t('browse.search_placeholder') }}" autocomplete="off">
+        <div class="search-wrap">
+            <input type="text" id="search-name" placeholder="{{ t('browse.search_placeholder') }}" autocomplete="off" style="padding-right:2rem;">
+            <button class="search-clear" onclick="document.getElementById('search-name').value='';document.getElementById('search-name').dispatchEvent(new Event('input'));this.style.display='none';" title="Clear">&times;</button>
+        </div>
     </div>
     <div>
         <select id="genre-select">
@@ -95,6 +119,8 @@ genreSelect.addEventListener('change', function() {
 // Name search with debounce
 searchInput.addEventListener('input', function() {
     clearTimeout(searchTimeout);
+    var btn = this.parentElement.querySelector('.search-clear');
+    if (btn) btn.style.display = this.value.length > 0 ? 'block' : 'none';
     const val = this.value.trim();
     if (val.length >= 2) {
         genreSelect.value = '';

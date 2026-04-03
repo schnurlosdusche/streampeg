@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import subprocess
 import time
 import atexit
 import signal
@@ -47,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.143a"
+VERSION = "0.0.151a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -553,6 +554,7 @@ def settings():
     bpm_backend = db.get_setting("bpm_backend") or "aubio"
     essentia_available = "essentia" in bpm_analyzer.get_available_backends()
     mb_enrichment_enabled = db.get_setting("musicbrainz_enrichment") != "0"
+    skip_unusable = db.get_setting("skip_unusable") == "1"
     return render_template("settings.html", modules=all_modules, enabled=enabled,
                            builtin_modes=sorted(module_manager.BUILTIN_MODES),
                            sync_enabled=sync_enabled, sync_target=sync_target,
@@ -567,6 +569,7 @@ def settings():
                            bpm_backend=bpm_backend,
                            essentia_available=essentia_available,
                            mb_enrichment_enabled=mb_enrichment_enabled,
+                           skip_unusable=skip_unusable,
                            languages=i18n.LANGUAGES,
                            backups=backup.list_backups(),
                            crossfade_sec=int(db.get_setting("autodj_crossfade") or 10))
@@ -575,6 +578,13 @@ def settings():
 @app.route("/api/settings/autodj")
 def api_settings_autodj():
     return jsonify({"crossfade_sec": int(db.get_setting("autodj_crossfade") or 10)})
+
+
+@app.route("/settings/skip-unusable/toggle", methods=["POST"])
+def settings_skip_unusable_toggle():
+    current = db.get_setting("skip_unusable") == "1"
+    db.set_setting("skip_unusable", "0" if current else "1")
+    return jsonify({"ok": True, "enabled": not current})
 
 
 @app.route("/settings/autodj/fade", methods=["POST"])
@@ -1014,6 +1024,18 @@ def api_cast_stop():
     return jsonify({"success": True, "message": f"Cast gestoppt"})
 
 
+@app.route("/api/cast/seek", methods=["POST"])
+def api_cast_seek():
+    """Seek a cast device to a specific position in seconds."""
+    data = request.get_json() or {}
+    device_id = data.get("device_id")
+    position = data.get("position", 0)
+    if not device_id:
+        return jsonify({"success": False, "error": "device_id required"}), 400
+    ok, msg = cast.seek_device(device_id, float(position))
+    return jsonify({"success": ok, "message": msg})
+
+
 @app.route("/api/cast/pause", methods=["POST"])
 def api_cast_pause():
     """Toggle pause on a cast stream."""
@@ -1327,6 +1349,7 @@ def api_library_tracks():
             "size_bytes": t_row.get("size_bytes", 0),
             "stream_subdir": t_row.get("stream_subdir", ""),
             "cue_nums": t_row.get("cue_nums", ""),
+            "unusable": t_row.get("unusable", 0),
         })
     return jsonify({
         "tracks": slim, "total": total,
@@ -1418,6 +1441,17 @@ def api_library_rename_playlist(playlist_id):
         lib_module.rename_playlist_dir(old["name"], name)
     db.rename_playlist(playlist_id, name)
     lib_module.generate_m3u(playlist_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/playlists/<int:playlist_id>/color", methods=["POST"])
+def api_library_playlist_color(playlist_id):
+    data = request.get_json() or {}
+    color = data.get("color", "")
+    conn = db.get_db()
+    conn.execute("UPDATE playlists SET color = ? WHERE id = ?", (color, playlist_id))
+    conn.commit()
+    conn.close()
     return jsonify({"success": True})
 
 
@@ -1648,14 +1682,14 @@ def api_library_track_rescan_bpmkey(track_id):
 def api_library_track_playlists(track_id):
     conn = db.get_db()
     rows = conn.execute(
-        """SELECT p.id, p.name FROM playlists p
+        """SELECT p.id, p.name, p.color FROM playlists p
            JOIN playlist_tracks pt ON pt.playlist_id = p.id
            WHERE pt.track_id = ?
            ORDER BY p.name""",
         (track_id,),
     ).fetchall()
     conn.close()
-    return jsonify({"playlists": [{"id": r["id"], "name": r["name"]} for r in rows]})
+    return jsonify({"playlists": [{"id": r["id"], "name": r["name"], "color": r["color"] or ""} for r in rows]})
 
 
 @app.route("/api/library/tracks/playlists", methods=["POST"])
@@ -1668,7 +1702,7 @@ def api_library_tracks_playlists_batch():
     conn = db.get_db()
     placeholders = ",".join("?" * len(track_ids))
     rows = conn.execute(
-        f"""SELECT pt.track_id, p.id, p.name FROM playlists p
+        f"""SELECT pt.track_id, p.id, p.name, p.color FROM playlists p
             JOIN playlist_tracks pt ON pt.playlist_id = p.id
             WHERE pt.track_id IN ({placeholders})
             ORDER BY p.name""",
@@ -1680,7 +1714,7 @@ def api_library_tracks_playlists_batch():
         tid = str(r["track_id"])
         if tid not in result:
             result[tid] = []
-        result[tid].append({"id": r["id"], "name": r["name"]})
+        result[tid].append({"id": r["id"], "name": r["name"], "color": r["color"] or ""})
     return jsonify(result)
 
 
@@ -1696,6 +1730,12 @@ def api_library_track_rating(track_id):
 def api_library_track_favorite(track_id):
     new_val = db.toggle_favorite(track_id)
     return jsonify({"success": True, "favorited": new_val})
+
+
+@app.route("/api/library/track/<int:track_id>/unusable", methods=["POST"])
+def api_library_track_unusable(track_id):
+    new_val = db.toggle_unusable(track_id)
+    return jsonify({"success": True, "unusable": new_val})
 
 
 @app.route("/api/stream-favorites", methods=["GET"])
@@ -1912,6 +1952,119 @@ def api_library_track_waveform(track_id):
         return jsonify({"peaks": []})
     except Exception as e:
         return jsonify({"peaks": [], "error": str(e)})
+
+
+@app.route("/api/library/track/<int:track_id>/waveform-hd")
+def api_library_track_waveform_hd(track_id):
+    """Return high-resolution waveform for the track editor."""
+    bars = request.args.get("bars", 2048, type=int)
+    bars = max(512, min(8192, bars))
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"peaks": []}), 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return jsonify({"peaks": []}), 404
+    try:
+        peaks = lib_module.generate_waveform(filepath, num_bars=bars)
+        return jsonify({"peaks": peaks or []})
+    except Exception as e:
+        return jsonify({"peaks": [], "error": str(e)})
+
+
+@app.route("/api/library/track/<int:track_id>/metadata", methods=["POST"])
+def api_library_track_metadata(track_id):
+    """Update artist and title for a track (DB + ID3 tags)."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    data = request.get_json() or {}
+    artist = data.get("artist", "").strip()
+    title = data.get("title", "").strip()
+    conn = db.get_db()
+    conn.execute("UPDATE library_tracks SET artist = ?, title = ? WHERE id = ?",
+                 (artist, title, track_id))
+    conn.commit()
+    conn.close()
+    # Write ID3 tags to file
+    filepath = track["filepath"]
+    if os.path.isfile(filepath):
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3, TIT2, TPE1
+            try:
+                tags = ID3(filepath)
+            except Exception:
+                tags = ID3()
+            tags["TIT2"] = TIT2(encoding=3, text=[title])
+            tags["TPE1"] = TPE1(encoding=3, text=[artist])
+            tags.save(filepath, v2_version=4)
+        except Exception:
+            pass
+    return jsonify({"success": True})
+
+
+@app.route("/api/library/track/<int:track_id>/trim", methods=["POST"])
+def api_library_track_trim(track_id):
+    """Trim audio file: keep only the region between start and end (seconds)."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    filepath = track["filepath"]
+    if not os.path.isfile(filepath):
+        return jsonify({"error": "file not found"}), 404
+
+    data = request.get_json() or {}
+    start = float(data.get("start", 0))
+    end = float(data.get("end", 0))
+    if start >= end or end <= 0:
+        return jsonify({"error": "invalid range"}), 400
+
+    try:
+        # Backup original (only first time)
+        bak = filepath + ".bak"
+        if not os.path.exists(bak):
+            shutil.copy2(filepath, bak)
+
+        # Trim with ffmpeg (decode-seek for frame accuracy)
+        tmpfile = os.path.join("/tmp", "streampeg_trim_" + str(track_id) + ".mp3")
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", filepath, "-ss", str(start), "-to", str(end),
+             "-c", "copy", "-map_metadata", "0", tmpfile],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            if os.path.exists(tmpfile):
+                os.remove(tmpfile)
+            return jsonify({"error": "ffmpeg failed: " + result.stderr[-200:]}), 500
+
+        # Replace original with trimmed version
+        shutil.move(tmpfile, filepath)
+
+        # Get new duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", filepath],
+            capture_output=True, text=True, timeout=10
+        )
+        new_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0
+        new_size = os.path.getsize(filepath)
+
+        # Regenerate waveform
+        peaks = lib_module.generate_waveform(filepath)
+
+        # Update DB
+        conn = db.get_db()
+        conn.execute(
+            "UPDATE library_tracks SET duration_sec = ?, size_bytes = ?, waveform = ? WHERE id = ?",
+            (int(new_duration), new_size, json.dumps(peaks) if peaks else "[]", track_id)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "new_duration": new_duration, "peaks": peaks})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/library/track/<int:track_id>/cover")

@@ -56,9 +56,12 @@ def _extract_stream_title(meta):
 
 
 def _sanitize_filename(name):
-    s = re.sub(r'[<>:"/\\|?*\'\u2019]', '_', name).strip()
-    s = re.sub(r'[_\s]+', ' ', s)
-    return s.strip('. ')[:200] or "unknown"
+    """Create a safe, normalized filename from a track title.
+    Matches ffmpeg_recorder._sanitize_filename for cross-mode compatibility."""
+    s = re.sub(r'[<>:"/\\|?*\'\u2019\u2018`]', '', name)
+    s = s.replace('_', ' ')
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s[:200] or "unknown"
 
 
 def _title_case(s):
@@ -390,10 +393,10 @@ class YouTubeRecorder:
         self._download_thread.start()
 
     def _download_song(self, artist, title, artist_raw, title_raw, icy_title):
-        safe_artist = re.sub(r'[<>:"/\\|?*]', '_', artist).strip('._')[:80]
-        safe_title = re.sub(r'[<>:"/\\|?*]', '_', title).strip('._')[:80]
-        safe_artist = re.sub(r'[_\s]+', '_', safe_artist)
-        safe_title = re.sub(r'[_\s]+', '_', safe_title)
+        safe_artist = re.sub(r'[<>:"/\\|?*\'\u2019\u2018`]', '', artist).strip()[:80]
+        safe_title = re.sub(r'[<>:"/\\|?*\'\u2019\u2018`]', '', title).strip()[:80]
+        safe_artist = re.sub(r'[_\s]+', ' ', safe_artist).strip()
+        safe_title = re.sub(r'[_\s]+', ' ', safe_title).strip()
         output_template = os.path.join(self.dest, f"{safe_artist} - {safe_title}.%(ext)s")
 
         # Determine sources based on record_mode + dl_fallback
@@ -459,7 +462,6 @@ class YouTubeRecorder:
                     "--print", "thumbnail",
                     "--print", "after_move:filepath",
                     "--no-overwrites",
-                    "--restrict-filenames",
                     "--match-filter", "duration < 600",
                 ]
                 if not is_soundcloud:

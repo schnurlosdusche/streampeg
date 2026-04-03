@@ -172,6 +172,16 @@ def init_db():
     if "waveform" not in lib_columns2:
         conn.execute("ALTER TABLE library_tracks ADD COLUMN waveform TEXT DEFAULT NULL")
         conn.commit()
+    if "unusable" not in lib_columns2:
+        conn.execute("ALTER TABLE library_tracks ADD COLUMN unusable INTEGER DEFAULT 0")
+        conn.commit()
+
+    # Migrate playlists: add color column
+    cursor = conn.execute("PRAGMA table_info(playlists)")
+    pl_columns = [row[1] for row in cursor.fetchall()]
+    if "color" not in pl_columns:
+        conn.execute("ALTER TABLE playlists ADD COLUMN color TEXT DEFAULT NULL")
+        conn.commit()
 
     # Migrate split_delay -> offset_end for existing streams
     if migrate_offsets:
@@ -469,7 +479,7 @@ def get_library_tracks(page=1, per_page=200, sort="title", order="asc",
         order_sql = f"ORDER BY {camelot_case} {order}, bpm {order}"
     elif sort in ("title", "artist", "album", "genre", "filename", "stream_subdir"):
         order_sql = f"ORDER BY LOWER({sort}) {order}"
-    elif sort in ("bpm", "key", "duration_sec", "size_bytes", "mtime", "rating", "favorited", "bitrate"):
+    elif sort in ("bpm", "key", "duration_sec", "size_bytes", "mtime", "rating", "favorited", "bitrate", "unusable"):
         order_sql = f"ORDER BY {sort} {order}"
     else:
         order_sql = f"ORDER BY LOWER(title) {order}"
@@ -680,6 +690,20 @@ def set_track_rating(track_id, rating):
     conn.execute("UPDATE library_tracks SET rating = ? WHERE id = ?", (max(0, min(5, rating)), track_id))
     conn.commit()
     conn.close()
+
+
+def toggle_unusable(track_id):
+    """Toggle unusable status. Returns new state (0 or 1)."""
+    conn = get_db()
+    row = conn.execute("SELECT unusable FROM library_tracks WHERE id = ?", (track_id,)).fetchone()
+    if not row:
+        conn.close()
+        return 0
+    new_val = 0 if row["unusable"] else 1
+    conn.execute("UPDATE library_tracks SET unusable = ? WHERE id = ?", (new_val, track_id))
+    conn.commit()
+    conn.close()
+    return new_val
 
 
 def toggle_favorite(track_id):

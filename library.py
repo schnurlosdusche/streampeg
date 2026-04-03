@@ -735,8 +735,8 @@ def _scan_files(files):
         log.error("Phase 3 autotag error: %s", e)
 
 
-def generate_waveform(filepath):
-    """Generate 256-bar waveform peaks for a single file. Returns list of floats or None."""
+def generate_waveform(filepath, num_bars=512):
+    """Generate waveform peaks for a single file. Returns list of floats or None."""
     import struct
     try:
         result = subprocess.run(
@@ -750,7 +750,7 @@ def generate_waveform(filepath):
         num_samples = len(raw) // 2
         if num_samples == 0:
             return None
-        bars = 512
+        bars = num_bars
         block_size = max(1, num_samples // bars)
         peaks = []
         for i in range(bars):

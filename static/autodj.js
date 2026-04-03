@@ -42,8 +42,11 @@ var AutoDJ = {
             _libShuffleMode = false;
             localStorage.setItem('_libShuffleMode', '0');
         }
-        if (!AutoDJ.enabled) {
+        if (AutoDJ.enabled) {
+            AutoDJ._startBgTimer();
+        } else {
             AutoDJ._resetFade();
+            AutoDJ._stopBgTimer();
             AutoDJ._history = [];
         }
         AutoDJ._updateButton();
@@ -98,6 +101,8 @@ var AutoDJ = {
             var t = availableTracks[i];
             if (t.id === currentTrackId) continue;
             if (AutoDJ._history.indexOf(t.id) >= 0) continue;
+            // Skip unusable tracks if setting enabled
+            if (typeof _isTrackUnusable === 'function' && _isTrackUnusable(t)) continue;
             // Skip duplicates by normalized title
             var tkey = ((t.artist || '') + '|' + (t.title || '')).toLowerCase().replace(/[^a-z0-9]/g, '');
             if (playedTitles[tkey]) continue;
@@ -251,37 +256,38 @@ var AutoDJ = {
             AutoDJ._fadeAudio.addEventListener('error', function(e) { AutoDJ._log('fadeAudio ERROR event: ' + (e.target.error ? e.target.error.message : 'unknown')); });
             AutoDJ._fadeAudio.play().catch(function(e) { AutoDJ._log('fadeAudio play ERROR: ' + e.message); });
 
-            // Crossfade: fade out current, fade in next
+            // Crossfade: fade out current, fade in next (time-based for background tab support)
             var fadeDurationMs = remaining * 1000;
-            var steps = fadeDurationMs / 50;
-            var outStep = AutoDJ._originalVolume / steps;
-            var inStep = AutoDJ._originalVolume / steps;
+            var fadeStartTime = Date.now();
 
             AutoDJ._fadeInterval = setInterval(function() {
                 if (!_playerAudio || !AutoDJ._fadeAudio) {
                     AutoDJ._resetFade();
                     return;
                 }
+                var elapsed = Date.now() - fadeStartTime;
+                var progress = Math.min(1, elapsed / fadeDurationMs);
                 // Fade out current
-                _playerAudio.volume = Math.max(0, _playerAudio.volume - outStep);
+                _playerAudio.volume = Math.max(0, AutoDJ._originalVolume * (1 - progress));
                 // Fade in next
-                AutoDJ._fadeAudio.volume = Math.min(AutoDJ._originalVolume, AutoDJ._fadeAudio.volume + inStep);
+                AutoDJ._fadeAudio.volume = Math.min(AutoDJ._originalVolume, AutoDJ._originalVolume * progress);
 
-                if (_playerAudio.volume <= 0.01) {
-                    AutoDJ._log('Fade complete (volume=0), calling _finishCrossfade');
+                if (progress >= 1) {
+                    AutoDJ._log('Fade complete (time-based), calling _finishCrossfade');
                     clearInterval(AutoDJ._fadeInterval);
                     AutoDJ._fadeInterval = null;
                     AutoDJ._finishCrossfade();
                 }
             }, 50);
         } else {
-            // No next track — just fade out
-            var steps = (remaining * 1000) / 50;
-            var outStep = AutoDJ._originalVolume / steps;
+            // No next track — just fade out (time-based for background tab support)
+            var fadeOutMs = remaining * 1000;
+            var fadeOutStart = Date.now();
             AutoDJ._fadeInterval = setInterval(function() {
                 if (!_playerAudio) { AutoDJ._resetFade(); return; }
-                _playerAudio.volume = Math.max(0, _playerAudio.volume - outStep);
-                if (_playerAudio.volume <= 0.01) { AutoDJ._resetFade(); }
+                var progress = Math.min(1, (Date.now() - fadeOutStart) / fadeOutMs);
+                _playerAudio.volume = Math.max(0, AutoDJ._originalVolume * (1 - progress));
+                if (progress >= 1) { AutoDJ._resetFade(); }
             }, 50);
         }
     },
@@ -377,6 +383,22 @@ var AutoDJ = {
                 AutoDJ._crossfadeComplete = false;
             }
         }, 200);
+    },
+
+    // Background tab fallback: check fade independently of timeupdate events
+    // Browsers throttle timeupdate in background tabs, so _checkFade() may
+    // never be called.  This 1s timer ensures crossfade still triggers.
+    _bgTimer: null,
+    _startBgTimer: function() {
+        if (AutoDJ._bgTimer) return;
+        AutoDJ._bgTimer = setInterval(function() {
+            if (!AutoDJ.enabled || !_playerAudio || !_isLibraryTrack) return;
+            if (_playerAudio.paused) return;
+            AutoDJ._checkFade();
+        }, 1000);
+    },
+    _stopBgTimer: function() {
+        if (AutoDJ._bgTimer) { clearInterval(AutoDJ._bgTimer); AutoDJ._bgTimer = null; }
     },
 
     _resetFade: function() {

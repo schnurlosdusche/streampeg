@@ -296,6 +296,24 @@
 <label for="autodj-fade" style="font-size:0.85rem;">Crossfade: <span id="autodj-fade-val">{{ crossfade_sec }}s</span></label>
 <input type="range" id="autodj-fade" min="3" max="30" step="1" value="{{ crossfade_sec }}" oninput="document.getElementById('autodj-fade-val').textContent=this.value+'s'" onchange="saveAutoDJFade(this.value)" style="max-width:300px;">
 
+<table>
+    <tbody>
+        <tr>
+            <td>
+                <strong>Unusable Tracks überspringen</strong>
+                <br><small style="color:var(--pico-muted-color,#888);">Als &#9785; markierte Tracks bei automatischer Wiedergabe (Library, Playlist, Auto-DJ) überspringen.</small>
+            </td>
+            <td>
+                <button class="outline btn-icon" id="skip-unusable-toggle"
+                        onclick="toggleSkipUnusable()"
+                        style="font-size:12px;padding:4px 12px;{{ 'color:var(--pico-color-green-500,green);border-color:var(--pico-color-green-500,green);' if skip_unusable else 'color:var(--pico-color-red-500,red);border-color:var(--pico-color-red-500,red);' }}">
+                    {{ t('settings.enabled') if skip_unusable else t('settings.disabled') }}
+                </button>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
 <hr>
 
 <h4>Database Backups</h4>
@@ -328,6 +346,9 @@
 {% endif %}
 
 <script>
+// Sync skip_unusable setting to localStorage for player JS
+localStorage.setItem('_skipUnusable', '{{ "1" if skip_unusable else "0" }}');
+
 function changeLanguage(lang) {
     fetch('/settings/language', {
         method: 'POST', credentials: 'include',
@@ -572,6 +593,24 @@ function saveAutoDJFade(val) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({seconds: parseInt(val)})
     });
+}
+
+function toggleSkipUnusable() {
+    fetch('/settings/skip-unusable/toggle', {method: 'POST', credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var btn = document.getElementById('skip-unusable-toggle');
+            localStorage.setItem('_skipUnusable', data.enabled ? '1' : '0');
+            if (data.enabled) {
+                btn.textContent = '{{ t("settings.enabled") }}';
+                btn.style.color = 'var(--pico-color-green-500,green)';
+                btn.style.borderColor = 'var(--pico-color-green-500,green)';
+            } else {
+                btn.textContent = '{{ t("settings.disabled") }}';
+                btn.style.color = 'var(--pico-color-red-500,red)';
+                btn.style.borderColor = 'var(--pico-color-red-500,red)';
+            }
+        });
 }
 
 // --- Database Backups ---
