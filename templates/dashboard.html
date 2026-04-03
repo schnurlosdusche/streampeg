@@ -106,25 +106,7 @@
         </tr>
         {% endfor %}
     </tbody>
-    <tfoot>
-        {% set ns = namespace(total_files=0, total_mb=0) %}
-        {% for st in statuses.values() %}
-            {% if st.file_count is number %}
-                {% set ns.total_files = ns.total_files + st.file_count %}
-            {% endif %}
-            {% if st.disk_usage_mb is number and st.disk_usage_mb > 0 %}
-                {% set ns.total_mb = ns.total_mb + st.disk_usage_mb %}
-            {% endif %}
-        {% endfor %}
-        <tr style="border-top: 2px solid #3a3a4a; font-weight: bold;">
-            <td colspan="4" style="text-align: right; color: #888;">{{ t('dash.total') }}:</td>
-            <td class="files-cell">{% if ns.total_files > 0 %}{{ ns.total_files }}{% else %}-{% endif %}</td>
-            <td class="size-cell">
-                {% if ns.total_mb > 0 %}{{ "%.1f"|format(ns.total_mb / 1024) }} <small style="opacity:0.6">GB</small>{% else %}-{% endif %}
-            </td>
-            <td></td>
-        </tr>
-    </tfoot>
+    <tfoot></tfoot>
 </table>
 {% endif %}
 {% endblock %}

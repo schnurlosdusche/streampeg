@@ -158,7 +158,8 @@ function loadStations(type, value) {
                     '<td class="br-cell">' + bitrateHtml + '</td>' +
                     '<td><small>' + escHtml(tagsShort) + '</small></td>' +
                     '<td class="action-cell" style="white-space:nowrap;">' +
-                        '<button class="outline btn-small test-btn" data-url="' + escAttr(s.url) + '">Test</button> ' +
+                        '<button class="outline btn-small test-btn" data-url="' + escAttr(s.url) + '">test</button> ' +
+                        '<button class="outline btn-small" onclick="addBookmark(\'' + escAttr(s.name).replace(/'/g, "\\'") + '\',\'' + escAttr(s.url).replace(/'/g, "\\'") + '\',\'' + escAttr(tagsShort).replace(/'/g, "\\'") + '\',\'' + escAttr(s.favicon || '').replace(/'/g, "\\'") + '\',\'' + escAttr(s.codec).replace(/'/g, "\\'") + '\',' + (s.bitrate || 0) + ',\'' + escAttr(s.country).replace(/'/g, "\\'") + '\',this)" title="bookmark">&#9733;</button> ' +
                         '<a href="/stream/new?name=' + encodeURIComponent(s.name) +
                         '&url=' + encodeURIComponent(s.url) +
                         '" role="button" class="outline btn-small add-btn" style="display:none' + t('browse.add') + '</a>' +
@@ -359,6 +360,21 @@ function _restoreBrowseListenBtn() {
     }
 }
 _restoreBrowseListenBtn();
+
+function addBookmark(name, url, tags, favicon, codec, bitrate, country, btn) {
+    fetch('/api/stream-bookmarks/add', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name, url: url, tags: tags, favicon: favicon, codec: codec, bitrate: bitrate, country: country})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            btn.textContent = '\u2713';
+            btn.disabled = true;
+            btn.style.color = '#4caf50';
+        }
+    }).catch(function() {});
+}
 
 </script>
 

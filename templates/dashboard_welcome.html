@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}dashboard - streampeg{% endblock %}
+{% block content %}
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:50vh;text-align:center;">
+    <img src="{{ url_for('static', filename='streampeg.svg') }}" alt="streampeg" style="height:120px;margin-bottom:1.5rem;opacity:0.8;">
+    <h2 style="margin:0;font-size:1.4rem;color:#ccc;">welcome to streampeg</h2>
+    <p style="color:#888;font-size:0.9rem;margin-top:0.5rem;">v{{ version }}</p>
+</div>
+{% endblock %}

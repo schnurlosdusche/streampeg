@@ -221,6 +221,8 @@ var AutoDJ = {
     _checkFade: function() {
         if (!AutoDJ.enabled || AutoDJ._fading) return;
         if (!_playerAudio || !_isLibraryTrack) return;
+        // Don't trigger fade right after a seek (user may have seeked into a quiet section)
+        if (typeof _lastSeekTime !== 'undefined' && _lastSeekTime && (Date.now() - _lastSeekTime) < 3000) return;
         var dur = (_playerAudio.duration && isFinite(_playerAudio.duration))
             ? _playerAudio.duration : (typeof _libTrackDuration !== 'undefined' ? _libTrackDuration : 0);
         if (!dur || dur <= 0) return;

@@ -112,6 +112,18 @@ def init_db():
             cover_url TEXT DEFAULT '',
             favorited_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS stream_bookmarks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            tags TEXT DEFAULT '',
+            favicon TEXT DEFAULT '',
+            codec TEXT DEFAULT '',
+            bitrate INTEGER DEFAULT 0,
+            country TEXT DEFAULT '',
+            added_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     # Migrate: add columns if missing
     cursor = conn.execute("PRAGMA table_info(streams)")
@@ -718,6 +730,29 @@ def toggle_favorite(track_id):
     conn.commit()
     conn.close()
     return new_val
+
+
+def get_stream_bookmarks():
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM stream_bookmarks ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_stream_bookmark(name, url, tags="", favicon="", codec="", bitrate=0, country=""):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO stream_bookmarks (name, url, tags, favicon, codec, bitrate, country) VALUES (?,?,?,?,?,?,?)",
+        (name, url, tags, favicon, codec, bitrate, country))
+    conn.commit()
+    conn.close()
+
+
+def delete_stream_bookmark(bookmark_id):
+    conn = get_db()
+    conn.execute("DELETE FROM stream_bookmarks WHERE id = ?", (bookmark_id,))
+    conn.commit()
+    conn.close()
 
 
 def get_cue_points(track_id):

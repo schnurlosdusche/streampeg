@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.151a"
+VERSION = "0.0.155a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -77,13 +77,52 @@ def _sanitize_subdir(name):
 
 @app.route("/")
 def dashboard():
+    return render_template("dashboard_welcome.html")
+
+
+@app.route("/recordings")
+def recordings():
     streams = db.get_all_streams()
-    # Only pass lightweight in-memory status (no NAS glob, no DB stats)
     statuses = {}
     for s in streams:
         statuses[s["id"]] = process_manager.get_status_fast(s)
     return render_template("dashboard.html", streams=streams, statuses=statuses,
                            module_icons=module_manager.get_module_icons())
+
+
+@app.route("/streams-home")
+def streams_home():
+    bookmarks = db.get_stream_bookmarks()
+    return render_template("streams_home.html", bookmarks=bookmarks)
+
+
+@app.route("/api/stream-bookmarks", methods=["GET"])
+def api_stream_bookmarks():
+    return jsonify({"bookmarks": db.get_stream_bookmarks()})
+
+
+@app.route("/api/stream-bookmarks/add", methods=["POST"])
+def api_stream_bookmark_add():
+    data = request.get_json() or {}
+    name = data.get("name", "").strip()
+    url = data.get("url", "").strip()
+    if not name or not url:
+        return jsonify({"success": False, "error": "name and url required"}), 400
+    db.add_stream_bookmark(
+        name, url,
+        tags=data.get("tags", ""),
+        favicon=data.get("favicon", ""),
+        codec=data.get("codec", ""),
+        bitrate=data.get("bitrate", 0),
+        country=data.get("country", ""),
+    )
+    return jsonify({"success": True})
+
+
+@app.route("/api/stream-bookmarks/<int:bookmark_id>/delete", methods=["POST"])
+def api_stream_bookmark_delete(bookmark_id):
+    db.delete_stream_bookmark(bookmark_id)
+    return jsonify({"success": True})
 
 
 # --- Stream CRUD ---
@@ -109,7 +148,7 @@ def stream_new():
         dl_fallback = 1 if request.form.get("dl_fallback") else 0
         db.create_stream(name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
                          trim_start, trim_end, skip_words, dl_fallback)
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("recordings"))
     prefill = {
         "name": request.args.get("name", ""),
         "url": request.args.get("url", ""),
@@ -125,7 +164,7 @@ def stream_new():
 def stream_edit(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("recordings"))
     if request.method == "POST":
         name = request.form["name"].strip()
         url = request.form["url"].strip()
@@ -147,7 +186,7 @@ def stream_edit(stream_id):
         process_manager.stop_stream(stream_id)
         db.update_stream(stream_id, name, url, dest, min_size, user_agent, record_mode, metadata_url, split_offset,
                          trim_start, trim_end, skip_words, dl_fallback)
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("recordings"))
     return render_template("stream_form.html", stream=stream, user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT,
                            module_options=module_manager.get_module_form_options(),
                            module_hints=module_manager.get_module_form_hints(),
@@ -158,7 +197,7 @@ def stream_edit(stream_id):
 def stream_delete(stream_id):
     process_manager.stop_stream(stream_id)
     db.delete_stream(stream_id)
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("recordings"))
 
 
 # --- Stream Control ---
@@ -172,10 +211,10 @@ def stream_start(stream_id):
         except process_manager.BitrateError as e:
             if request.headers.get("X-Requested-With") == "XMLHttpRequest":
                 return jsonify({"ok": False, "error": str(e)}), 400
-            return redirect(url_for("dashboard"))
+            return redirect(url_for("recordings"))
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify({"ok": True})
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("recordings"))
 
 
 @app.route("/stream/<int:stream_id>/stop", methods=["POST"])
@@ -183,7 +222,7 @@ def stream_stop(stream_id):
     process_manager.stop_stream(stream_id)
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify({"ok": True})
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("recordings"))
 
 
 @app.route("/api/start-all", methods=["POST"])
@@ -289,7 +328,7 @@ def api_listen_proxy():
 def stream_detail(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("recordings"))
     status = process_manager.get_status(stream)
     tracks = sync.get_track_history(stream)
     events = db.get_events(stream_id, limit=30)
@@ -940,6 +979,22 @@ def api_cast_play():
     return jsonify({"success": ok, "message": msg})
 
 
+@app.route("/api/cast/play-url", methods=["POST"])
+def api_cast_play_url():
+    """Cast a URL directly to a device (for bookmarks)."""
+    data = request.get_json() or {}
+    url = data.get("url", "").strip()
+    device_id = data.get("device_id")
+    if not url or not device_id:
+        return jsonify({"success": False, "error": "url and device_id required"}), 400
+    active = cast.get_active_casts()
+    if device_id in active:
+        cast.stop_cast(device_id)
+        cast.remove_active_cast_by_device(device_id)
+    ok, msg = cast.cast_stream(url, device_id)
+    return jsonify({"success": ok, "message": msg})
+
+
 @app.route("/api/cast/play-library", methods=["POST"])
 def api_cast_play_library():
     """Cast a library track to a device."""
@@ -999,7 +1054,12 @@ def _get_server_ip():
 @app.route("/api/cast/stop", methods=["POST"])
 def api_cast_stop():
     """Stop casting a stream. Accepts stream_id (stops all devices) or device_id (stops one)."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
+    if not data and request.data:
+        try:
+            data = json.loads(request.data)
+        except Exception:
+            data = {}
     stream_id = data.get("stream_id")
     device_id = data.get("device_id")
 

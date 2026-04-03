@@ -1,4 +1,5 @@
 html {
+    text-transform: lowercase;
     margin: 0 !important;
     padding: 0 !important;
     height: 100vh !important;
@@ -581,16 +582,17 @@ dialog, dialog::backdrop {
 .player-info {
     flex: 0 1 auto;
     min-width: 0;
-    max-width: calc(50% - 280px);
+    max-width: min(300px, calc(50% - 280px));
     overflow: hidden;
+}
+.player-track, .track-text, .lib-clickable, #lib-table td {
+    text-transform: none;
 }
 .player-track {
     font-size: 0.65rem;
     font-weight: 600;
     line-height: 1.2;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     color: #e0e0e0;

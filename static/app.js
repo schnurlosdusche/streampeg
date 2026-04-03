@@ -8,6 +8,17 @@ document.addEventListener('visibilitychange', function() {
     }
 });
 
+// Stop cast when browser/tab closes
+window.addEventListener('beforeunload', function() {
+    if (_libCastDeviceIds && _libCastDeviceIds.length > 0) {
+        _libCastDeviceIds.forEach(function(did) {
+            navigator.sendBeacon('/api/cast/stop', JSON.stringify({device_id: did}));
+        });
+        sessionStorage.removeItem('_libCastDeviceIds');
+        sessionStorage.removeItem('_castPlayStart');
+    }
+});
+
 // Poll status every 5 seconds
 function updateStatus() {
     var _isPlaying = _playerAudio && !_playerAudio.paused && !_playerAudio.ended ? '1' : '0';
@@ -158,6 +169,7 @@ var _castPlayStart = 0;       // timestamp when cast started current track
 var _castTrackDuration = 0;   // duration of currently casting track (seconds)
 var _libTrackDuration = 0;    // DB duration for current library track (fallback for broken headers)
 var _seekDragging = false;
+var _lastSeekTime = 0;          // timestamp of last seek action (to suppress premature ended)
 var _loopMode = false; // arrow key micro-loop active
 var _loopStart = 0;
 var _loopLength = 2; // 2 seconds default loop length
@@ -180,6 +192,12 @@ function _isTrackUnusable(trackOrId) {
 function _onPlayerError() {
     // Don't stop if AutoDJ just swapped the audio
     if (typeof AutoDJ !== 'undefined' && AutoDJ._crossfadeComplete) return;
+    // Ignore errors shortly after seeking (browser may fail to decode at seek point)
+    if (_lastSeekTime && (Date.now() - _lastSeekTime) < 3000) {
+        console.warn('Player error suppressed after seek, retrying playback');
+        _playerAudio.play().catch(function() {});
+        return;
+    }
     stopListen();
 }
 
@@ -206,15 +224,22 @@ function _onPlayerEnded() {
                 AutoDJ._log('ENDED: ignored (crossfadeComplete, early check)');
                 return;
             }
-            // Guard against premature 'ended' from defective MP3s
+            // Guard against premature 'ended' from defective MP3s or seek artifacts
             // Skip guard if repeat-one is active (always honor ended)
             if (_isLibraryTrack && _libRepeatMode !== 'one') {
+                // Block ended events for 2s after seeking (browsers fire false ended on seek)
+                if (_lastSeekTime && (Date.now() - _lastSeekTime) < 2000) {
+                    console.warn('Ended event suppressed: too close to seek (' + (Date.now() - _lastSeekTime) + 'ms)');
+                    _playerAudio.play().catch(function() {});
+                    return;
+                }
                 var _edDur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
                 if (_edDur > 0) {
                     var remaining = _edDur - _playerAudio.currentTime;
                     if (remaining > 5) {
                         if (typeof AutoDJ !== 'undefined' && AutoDJ._debug) AutoDJ._log('ENDED BLOCKED by premature guard: remaining=' + remaining.toFixed(1) + ' cur=' + _playerAudio.currentTime.toFixed(1) + ' dur=' + _edDur.toFixed(1));
                         console.warn('Premature ended event at', _playerAudio.currentTime, '/', _playerAudio.duration);
+                        _playerAudio.play().catch(function() {});
                         return;
                     }
                 }
@@ -2060,6 +2085,7 @@ function _seekFromEvent(e) {
     var pct = Math.max(0, Math.min(1, x / rect.width));
     var _isCastSeek = _libCastDeviceIds && _libCastDeviceIds.length > 0;
     if (_isCastSeek && _castTrackDuration > 0) {
+        _lastSeekTime = Date.now();
         var pos = pct * _castTrackDuration;
         // Seek on cast device
         fetch('/api/cast/seek', {
@@ -2073,6 +2099,7 @@ function _seekFromEvent(e) {
     } else if (_playerAudio) {
         var dur = (_playerAudio.duration && isFinite(_playerAudio.duration)) ? _playerAudio.duration : _libTrackDuration;
         if (dur > 0) {
+            _lastSeekTime = Date.now();
             _playerAudio.currentTime = pct * dur;
         }
     }

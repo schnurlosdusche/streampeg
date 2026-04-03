@@ -1015,29 +1015,28 @@ function _listStarClear(container) {
 }
 
 function _loadLibraryCover(trackId, artist, title) {
-    // Try embedded cover first
-    var img = new Image();
-    img.onload = function() {
-        if (_libPlayingTrackId === trackId) {
-            _browserIcyCover = '/api/library/track/' + trackId + '/cover';
-            _refreshPlayerBar();
-        }
-    };
-    img.onerror = function() {
-        // No embedded cover — try iTunes search
-        var q = (artist ? artist + ' ' : '') + (title || '');
-        if (!q.trim()) return;
-        fetch('/api/cover-search?q=' + encodeURIComponent(q.trim()), {credentials: 'include'})
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.url && _libPlayingTrackId === trackId) {
-                    _browserIcyCover = data.url;
-                    _refreshPlayerBar();
-                }
-            })
-            .catch(function() {});
-    };
-    img.src = '/api/library/track/' + trackId + '/cover';
+    // Try embedded cover first (use fetch to avoid console 404 errors)
+    fetch('/api/library/track/' + trackId + '/cover', {credentials: 'include'})
+        .then(function(r) {
+            if (r.ok && _libPlayingTrackId === trackId) {
+                _browserIcyCover = '/api/library/track/' + trackId + '/cover';
+                _refreshPlayerBar();
+            } else if (!r.ok) {
+                // No embedded cover — try iTunes search
+                var q = (artist ? artist + ' ' : '') + (title || '');
+                if (!q.trim()) return;
+                fetch('/api/cover-search?q=' + encodeURIComponent(q.trim()), {credentials: 'include'})
+                    .then(function(r2) { return r2.json(); })
+                    .then(function(data) {
+                        if (data.url && _libPlayingTrackId === trackId) {
+                            _browserIcyCover = data.url;
+                            _refreshPlayerBar();
+                        }
+                    })
+                    .catch(function() {});
+            }
+        })
+        .catch(function() {});
 }
 
 function playLibraryTrackById(trackId) {
@@ -1216,6 +1215,8 @@ function _startCastPoll() {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.mode === 'stop') {
+                // Ignore 'stop' shortly after a seek (Sonos briefly stops to seek)
+                if (typeof _lastSeekTime !== 'undefined' && _lastSeekTime && (Date.now() - _lastSeekTime) < 5000) return;
                 _stopCastPoll();
                 // Track ended on cast device — play next
                 if (_libRepeatMode === 'one') {

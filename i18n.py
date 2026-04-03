@@ -52,13 +52,15 @@ def get_all_translations(lang=None):
 TRANSLATIONS = {
     "en": {
         # Navigation
-        "nav.dashboard": "Dashboard",
-        "nav.radio_browser": "Radio Browser",
-        "nav.logs": "Logs",
-        "nav.yt_download": "YT",
-        "nav.add_stream": "+ Stream",
-        "nav.settings": "Settings",
-        "nav.restart": "Restart",
+        "nav.dashboard": "dashboard",
+        "nav.recordings": "recordings",
+        "nav.streams_home": "streams home",
+        "nav.radio_browser": "radio browser",
+        "nav.logs": "logs",
+        "nav.yt_download": "yt",
+        "nav.add_stream": "+ stream",
+        "nav.settings": "settings",
+        "nav.restart": "restart",
         "nav.restart_title": "Restart service",
         "nav.restart_confirm": "Really restart the service?",
         "nav.restart_modal": "Service is restarting...",
@@ -84,8 +86,8 @@ TRANSLATIONS = {
         "player.browser": "Browser",
 
         # Library
-        "nav.library": "Library",
-        "nav.playlists": "Playlists",
+        "nav.library": "library",
+        "nav.playlists": "playlists",
         "library.title": "Music Library",
         "library.search_placeholder": "Search title or artist...",
         "library.search_all": "Search all tracks...",

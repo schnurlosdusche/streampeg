@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}streams home - streampeg{% endblock %}
+{% block content %}
+
+{% if not bookmarks %}
+<p style="color:#888;font-size:0.85rem;">no bookmarks yet. add streams from the <a href="{{ url_for('browse') }}">radio browser</a>.</p>
+{% else %}
+<table id="streams-table">
+    <thead>
+        <tr>
+            <th>name</th>
+            <th>codec</th>
+            <th>bitrate</th>
+            <th>tags</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for bm in bookmarks %}
+        <tr data-bookmark-id="{{ bm.id }}">
+            <td>
+                <button type="button" class="btn-icon btn-listen outline" title="listen" onclick="toggleListen(-{{ bm.id }}, '{{ bm.url }}')"><svg width="10" height="12" viewBox="0 0 490 480" fill="currentColor" style="display:block;"><path d="M278.9 10.2c-5.5 2.6-135.1 113.7-140.1 120.1L136 134H32c-17.7 0-32 14.3-32 32v148c0 17.7 14.3 32 32 32h104l2.8 3.7c5 6.4 134.6 117.5 140.1 120.1 6.7 3.2 15.1 1.5 20-4.1 3.3-3.7 5.1-8.5 5.1-13.7V28c0-5.2-1.8-10-5.1-13.7-4.9-5.6-13.3-7.3-20-4.1z"/><path class="listen-waves" d="M365.4 105.7c-7.9-5.2-18.5-3-23.7 4.9s-3 18.5 4.9 23.7C384.5 159.3 408 199 408 240s-23.5 80.7-61.4 105.7c-7.9 5.2-10.1 15.8-4.9 23.7 5.2 7.9 15.8 10.1 23.7 4.9C411.5 343.6 442 294.7 442 240s-30.5-103.6-76.6-134.3z"/><path class="listen-waves" d="M440 38.3c-7.7-5.5-18.4-3.6-23.8 4.1-5.5 7.7-3.6 18.4 4.1 23.8C468.5 99.8 490 167.2 490 240s-21.5 140.2-69.7 173.8c-7.7 5.5-9.6 16.1-4.1 23.8 5.5 7.7 16.1 9.6 23.8 4.1C492 402.4 524 325 524 240S492 77.6 440 38.3z" transform="translate(-44 0)"/></svg></button>
+                <button type="button" class="btn-icon btn-cast outline" title="cast" onclick="castBookmark(this, '{{ bm.url }}', '{{ bm.name }}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="display:block;"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg></button>
+                {% if bm.favicon %}<img src="{{ bm.favicon }}" style="height:16px;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}
+                {{ bm.name }}
+            </td>
+            <td style="text-align:center;">{{ bm.codec or '-' }}</td>
+            <td style="text-align:right;">{% if bm.bitrate %}{{ bm.bitrate }}{% else %}-{% endif %}</td>
+            <td style="font-size:0.75rem;color:#888;">{{ bm.tags }}</td>
+            <td>
+                <button class="outline btn-icon btn-delete" title="remove" onclick="if(confirm('remove bookmark?')) fetch('/api/stream-bookmarks/{{ bm.id }}/delete',{method:'POST',credentials:'include'}).then(function(){location.reload();})">&#10005;</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<script>
+function castBookmark(btn, url, name) {
+    // Fetch devices and show a simple menu
+    fetch('/api/cast/devices', {credentials: 'include'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var devices = (data.devices || []).filter(function(d) { return d.enabled; });
+            if (!devices.length) { alert('no cast devices found'); return; }
+            // Remove old menu
+            var old = document.querySelector('.bm-cast-menu');
+            if (old) old.remove();
+            var menu = document.createElement('div');
+            menu.className = 'bm-cast-menu cast-menu';
+            devices.forEach(function(d) {
+                var item = document.createElement('button');
+                item.className = 'cast-menu-item';
+                item.textContent = d.name;
+                item.onclick = function() {
+                    menu.remove();
+                    fetch('/api/cast/play-url', {
+                        method: 'POST', credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url: url, device_id: d.id})
+                    }).then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (!res.success) alert(res.message || res.error);
+                    }).catch(function() {});
+                };
+                menu.appendChild(item);
+            });
+            btn.parentElement.style.position = 'relative';
+            menu.style.position = 'absolute';
+            menu.style.top = '100%';
+            menu.style.left = '0';
+            menu.style.zIndex = '100';
+            btn.parentElement.appendChild(menu);
+            setTimeout(function() {
+                document.addEventListener('click', function once() {
+                    menu.remove();
+                    document.removeEventListener('click', once);
+                });
+            }, 10);
+        });
+}
+</script>
+{% endblock %}
