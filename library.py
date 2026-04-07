@@ -39,6 +39,25 @@ def _ffprobe_duration(filepath):
     except Exception:
         return 0
 
+
+def _ffprobe_bitrate(filepath):
+    """Get the *actual* audio bitrate of a file in kbps using ffprobe.
+    Reads both stream and format bit_rate, picks the higher non-zero value.
+    Returns 0 on failure. More reliable than mutagen for VBR / weird headers."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=bit_rate",
+             "-show_entries", "format=bit_rate",
+             "-of", "default=nw=1:nk=1", filepath],
+            capture_output=True, text=True, timeout=15)
+        vals = [int(x) for x in r.stdout.split() if x.strip().isdigit()]
+        if not vals:
+            return 0
+        return round(max(vals) / 1000)
+    except Exception:
+        return 0
+
 import json as _json
 import tempfile
 import shutil
@@ -184,6 +203,12 @@ def _read_id3(filepath):
             result["bitrate"] = int(audio.info.bitrate / 1000)  # kbit/s
     except Exception:
         result["duration_sec"] = _ffprobe_duration(filepath)
+    # Always cross-check bitrate with ffprobe — mutagen can be wrong on VBR
+    # files or recordings with weird/missing frame headers, leading to bogus
+    # values like 64k for what is really a 320k stream.
+    real_br = _ffprobe_bitrate(filepath)
+    if real_br > 0:
+        result["bitrate"] = real_br
     try:
         tags = ID3(filepath)
     except (ID3NoHeaderError, Exception):

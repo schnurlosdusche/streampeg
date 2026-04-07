@@ -22,6 +22,30 @@
         {% if status.bitrate %}
         <p>{% if stream.record_mode in ('youtube', 'soundcloud') %}{{ t('detail.track_bitrate') }}{% else %}{{ t('detail.stream_bitrate') }}{% endif %}: <strong>{{ status.bitrate }} kbps</strong></p>
         {% endif %}
+        {% if stream.record_mode not in ('youtube', 'soundcloud') %}
+        <p>
+            <button type="button" class="outline btn-small" onclick="probeStreamBitrate({{ stream.id }}, this)">probe live bitrate</button>
+            <span id="probe-result" style="margin-left:0.6rem;"></span>
+        </p>
+        <script>
+        function probeStreamBitrate(sid, btn) {
+            var out = document.getElementById('probe-result');
+            btn.disabled = true; out.textContent = '...';
+            fetch('/api/streams/' + sid + '/probe-bitrate', {credentials: 'include'})
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    btn.disabled = false;
+                    if (d.success) {
+                        out.innerHTML = '<strong style="color:#4caf50;">' + d.bitrate + ' kbps</strong> ' +
+                            '<span style="color:#888;">(' + d.codec + ', ' + d.sample_rate + ' Hz, ' + d.channels + ' ch)</span>';
+                    } else {
+                        out.innerHTML = '<span style="color:#f44;">' + (d.error || 'failed') + '</span>';
+                    }
+                })
+                .catch(function() { btn.disabled = false; out.innerHTML = '<span style="color:#f44;">network error</span>'; });
+        }
+        </script>
+        {% endif %}
         <p>{{ t('detail.files_on_worker') }} {{ status.file_count }} ({{ status.disk_usage_mb }} MB)</p>
         {% if status.yt_stats %}
         <p>{{ t('detail.youtube') }} <strong>{{ status.yt_stats.downloaded }}</strong> {{ t('detail.downloaded') }}, <strong>{{ status.yt_stats.not_found }}</strong> {{ t('detail.not_found') }}, {{ status.yt_stats.total }} {{ t('detail.total') }}</p>

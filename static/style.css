@@ -455,6 +455,7 @@ dialog, dialog::backdrop {
     pointer-events: none;
     letter-spacing: 0.3px;
     font-family: monospace;
+    text-transform: none;
 }
 .player-bar-library .player-cover-wrap {
     position: relative;
@@ -728,6 +729,8 @@ tr:hover .list-unusable:hover { color: #e53935; }
     font-size: 13px;
 }
 .player-pl-menu-item:hover { background: #353545; }
+.player-pl-menu-item.active { background: #2c3a2c; color: #fff; font-weight: 600; }
+.player-pl-menu-item.active:hover { background: #3a4d3a; }
 .player-volume {
     position: absolute;
     left: 50%;
@@ -1096,7 +1099,7 @@ tr:hover .list-unusable:hover { color: #e53935; }
 #lib-table th:nth-child(4),
 #lib-table td:nth-child(4) { width: 10px; text-align: center; padding: 0; }              /* cue indicator */
 #lib-table th:nth-child(5),
-#lib-table td:nth-child(5) { width: 75px; text-align: center; font-family: monospace; }  /* key */
+#lib-table td:nth-child(5) { width: 75px; text-align: center; font-family: monospace; text-transform: none; }  /* key */
 #lib-table th:nth-child(6),
 #lib-table td:nth-child(6) { width: 20px; text-align: center; padding: 0; }              /* rescan */
 #lib-table th:nth-child(7),

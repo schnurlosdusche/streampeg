@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.155a"
+VERSION = "0.0.157c"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -924,6 +924,30 @@ def api_stream_icy(stream_id):
     return jsonify({"current_track": ct, "cover_url": cover})
 
 
+@app.route("/api/icy")
+def api_icy_generic():
+    """Get ICY metadata for any stream URL."""
+    url = request.args.get("url", "")
+    if not url:
+        return jsonify({"current_track": "", "cover_url": None})
+    ct = ""
+    try:
+        r = req_lib.get(url, headers={"Icy-MetaData": "1"}, stream=True, timeout=5)
+        icy_interval = int(r.headers.get("icy-metaint", 0))
+        if icy_interval > 0:
+            r.raw.read(icy_interval)
+            meta_len = struct.unpack("B", r.raw.read(1))[0] * 16
+            if meta_len > 0:
+                meta = r.raw.read(meta_len).decode("utf-8", errors="ignore").rstrip("\0")
+                m = re.search(r"StreamTitle='([^']*)'", meta)
+                if m and m.group(1).strip():
+                    ct = m.group(1).strip()
+        r.close()
+    except Exception:
+        pass
+    return jsonify({"current_track": ct, "cover_url": None})
+
+
 @app.route("/api/disk")
 def api_disk():
     return jsonify(_get_disk_info())
@@ -951,16 +975,28 @@ def api_cast_devices():
 
 @app.route("/api/cast/play", methods=["POST"])
 def api_cast_play():
-    """Cast a stream to a device."""
+    """Cast a stream to a device. Accepts stream_id (recordings) or url (bookmarks)."""
     data = request.get_json() or {}
     stream_id = data.get("stream_id")
     device_id = data.get("device_id")
-    if not stream_id or not device_id:
-        return jsonify({"success": False, "error": "stream_id und device_id erforderlich"}), 400
+    if not device_id:
+        return jsonify({"success": False, "error": "device_id required"}), 400
 
-    stream = db.get_stream(int(stream_id))
-    if not stream:
-        return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
+    # Bookmarks: negative stream_id = bookmark, look up URL from DB
+    if stream_id and int(stream_id) < 0:
+        bm_id = abs(int(stream_id))
+        bms = db.get_stream_bookmarks()
+        bm = next((b for b in bms if b["id"] == bm_id), None)
+        if not bm:
+            return jsonify({"success": False, "error": "Bookmark not found"}), 404
+        stream_url = bm["url"]
+    elif stream_id:
+        stream = db.get_stream(int(stream_id))
+        if not stream:
+            return jsonify({"success": False, "error": "Stream nicht gefunden"}), 404
+        stream_url = stream["url"]
+    else:
+        return jsonify({"success": False, "error": "stream_id required"}), 400
 
     # If this device is already casting something, stop it first
     active = cast.get_active_casts()
@@ -973,7 +1009,7 @@ def api_cast_play():
     if len(active) >= 4:
         return jsonify({"success": False, "message": i18n.t("cast.max_reached")}), 400
 
-    ok, msg = cast.cast_stream(stream["url"], device_id)
+    ok, msg = cast.cast_stream(stream_url, device_id)
     if ok:
         cast.set_active_cast(int(stream_id), device_id)
     return jsonify({"success": ok, "message": msg})
@@ -991,7 +1027,11 @@ def api_cast_play_url():
     if device_id in active:
         cast.stop_cast(device_id)
         cast.remove_active_cast_by_device(device_id)
+    bookmark_id = data.get("bookmark_id", 0)
     ok, msg = cast.cast_stream(url, device_id)
+    if ok:
+        # Register as active cast with negative bookmark ID
+        cast.set_active_cast(-int(bookmark_id) if bookmark_id else -99999, device_id)
     return jsonify({"success": ok, "message": msg})
 
 
@@ -1139,30 +1179,72 @@ def api_cast_player():
             # Use fallback so cast player still renders
             device = {"id": device_id, "name": device_id, "type": "unknown"}
 
-        # Library track cast (negative stream_id)
+        # Library track cast (negative stream_id, track exists in library)
         if stream_id < 0:
-            track_id = -stream_id
-            track = db.get_library_track(track_id)
-            track_name = ""
-            cover_url = f"/api/library/track/{track_id}/cover"
+            abs_id = abs(stream_id)
+            track = db.get_library_track(abs_id)
             if track:
                 artist = track.get("artist", "") or ""
                 title = track.get("title", "") or ""
                 track_name = (artist + " - " + title) if artist else title
-            vol = cast.get_volume(device_id)
-            players.append({
-                "stream_id": stream_id,
-                "stream_name": "Library",
-                "device_id": device_id,
-                "device_name": device.get("name", device_id),
-                "device_type": device.get("type", ""),
-                "current_track": track_name,
-                "cover_url": cover_url,
-                "volume": vol,
-                "running": True,
-                "is_library": True,
-            })
-            continue
+                vol = cast.get_volume(device_id)
+                players.append({
+                    "stream_id": stream_id,
+                    "stream_name": "library",
+                    "device_id": device_id,
+                    "device_name": device.get("name", device_id),
+                    "device_type": device.get("type", ""),
+                    "current_track": track_name,
+                    "cover_url": f"/api/library/track/{abs_id}/cover",
+                    "volume": vol,
+                    "running": True,
+                    "is_library": True,
+                })
+                continue
+
+            # Bookmark cast (negative stream_id, not a library track)
+            bms = db.get_stream_bookmarks()
+            bm = next((b for b in bms if b["id"] == abs_id), None)
+            if bm:
+                # Get ICY track info
+                icy_track = ""
+                try:
+                    r = req_lib.get(bm["url"], headers={"Icy-MetaData": "1"}, stream=True, timeout=5)
+                    icy_interval = int(r.headers.get("icy-metaint", 0))
+                    if icy_interval > 0:
+                        r.raw.read(icy_interval)
+                        meta_len = struct.unpack("B", r.raw.read(1))[0] * 16
+                        if meta_len > 0:
+                            meta = r.raw.read(meta_len).decode("utf-8", errors="ignore").rstrip("\0")
+                            m = re.search(r"StreamTitle='([^']*)'", meta)
+                            if m and m.group(1).strip():
+                                icy_track = m.group(1).strip()
+                    r.close()
+                except Exception:
+                    pass
+                # Get cover art from iTunes for current track
+                cover_url = bm.get("favicon") or None
+                if icy_track:
+                    try:
+                        itunes_cover = cover_art._itunes_search(icy_track)
+                        if itunes_cover:
+                            cover_url = itunes_cover
+                    except Exception:
+                        pass
+                vol = cast.get_volume(device_id)
+                players.append({
+                    "stream_id": stream_id,
+                    "stream_name": bm["name"],
+                    "device_id": device_id,
+                    "device_name": device.get("name", device_id),
+                    "device_type": device.get("type", ""),
+                    "current_track": icy_track,
+                    "cover_url": cover_url,
+                    "volume": vol,
+                    "running": True,
+                    "is_library": False,
+                })
+                continue
 
         stream = stream_map.get(stream_id)
         if not stream:
@@ -1521,6 +1603,16 @@ def api_library_playlist_tracks(playlist_id):
     return jsonify({"tracks": tracks})
 
 
+def _bg_sync_playlist(playlist_id):
+    import threading as _th
+    def _run():
+        try:
+            lib_module.generate_m3u(playlist_id)
+        except Exception as e:
+            log.error("bg sync playlist %s failed: %s", playlist_id, e)
+    _th.Thread(target=_run, daemon=True).start()
+
+
 @app.route("/api/library/playlists/<int:playlist_id>/add", methods=["POST"])
 @app.route("/api/library/playlists/<int:playlist_id>/tracks", methods=["POST"])
 def api_library_playlist_add(playlist_id):
@@ -1529,18 +1621,22 @@ def api_library_playlist_add(playlist_id):
     if not track_ids:
         return jsonify({"error": "No tracks"}), 400
     db.add_to_playlist(playlist_id, track_ids)
-    # Copy tracks to playlist folder
-    for tid in track_ids:
-        lib_module.copy_track_to_playlist(playlist_id, tid)
-    lib_module.generate_m3u(playlist_id)
+    # File copy + m3u generation runs in background to keep UI responsive.
+    _bg_sync_playlist(playlist_id)
     return jsonify({"success": True})
 
 
 @app.route("/api/library/playlists/<int:playlist_id>/tracks/<int:track_id>", methods=["DELETE"])
 def api_library_playlist_remove(playlist_id, track_id):
-    lib_module.remove_track_from_playlist_dir(playlist_id, track_id)
     db.remove_from_playlist(playlist_id, track_id)
-    lib_module.generate_m3u(playlist_id)
+    # File removal + m3u regen runs in background to keep UI responsive.
+    def _run():
+        try:
+            lib_module.remove_track_from_playlist_dir(playlist_id, track_id)
+            lib_module.generate_m3u(playlist_id)
+        except Exception as e:
+            log.error("bg remove from playlist %s failed: %s", playlist_id, e)
+    threading.Thread(target=_run, daemon=True).start()
     return jsonify({"success": True})
 
 
@@ -1711,6 +1807,116 @@ def api_library_track_cues_set(track_id):
     cues = data.get("cues", {})
     db.set_cue_points(track_id, cues)
     return jsonify({"success": True})
+
+
+@app.route("/api/library/track/<int:track_id>/rescan-bitrate", methods=["POST"])
+def api_library_track_rescan_bitrate(track_id):
+    """Re-probe the actual bitrate of a single track via ffprobe and persist it."""
+    track = db.get_library_track(track_id)
+    if not track:
+        return jsonify({"error": "not found"}), 404
+    fp = track["filepath"]
+    if not fp or not os.path.isfile(fp):
+        return jsonify({"error": "file not found"}), 404
+    real = lib_module._ffprobe_bitrate(fp)
+    if real <= 0:
+        return jsonify({"error": "ffprobe failed"}), 500
+    conn = db.get_db()
+    conn.execute("UPDATE library_tracks SET bitrate = ? WHERE id = ?", (real, track_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "bitrate": real})
+
+
+@app.route("/api/library/rescan-bitrate-bulk", methods=["POST"])
+def api_library_rescan_bitrate_bulk():
+    """Re-probe the bitrate of many tracks via ffprobe.
+    Body: {"subdir": "..."} (LIKE match) OR {"track_ids": [...]}.
+    Runs in a background thread so the request returns immediately."""
+    data = request.get_json() or {}
+    subdir = (data.get("subdir") or "").strip()
+    track_ids = data.get("track_ids") or []
+    conn = db.get_db()
+    if track_ids:
+        placeholders = ",".join("?" * len(track_ids))
+        rows = conn.execute(
+            f"SELECT id, filepath FROM library_tracks WHERE id IN ({placeholders})",
+            track_ids,
+        ).fetchall()
+    elif subdir:
+        like = f"%{subdir}%"
+        rows = conn.execute(
+            "SELECT id, filepath FROM library_tracks WHERE LOWER(stream_subdir) LIKE LOWER(?) OR LOWER(filepath) LIKE LOWER(?)",
+            (like, like),
+        ).fetchall()
+    else:
+        conn.close()
+        return jsonify({"error": "need subdir or track_ids"}), 400
+    rows = [dict(r) for r in rows]
+    conn.close()
+
+    def _run():
+        c = db.get_db()
+        updated = 0
+        for r in rows:
+            fp = r.get("filepath")
+            if not fp or not os.path.isfile(fp):
+                continue
+            real = lib_module._ffprobe_bitrate(fp)
+            if real > 0:
+                c.execute("UPDATE library_tracks SET bitrate = ? WHERE id = ?", (real, r["id"]))
+                updated += 1
+        c.commit()
+        c.close()
+        log.info("rescan-bitrate-bulk: updated %d/%d tracks", updated, len(rows))
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"success": True, "queued": len(rows)})
+
+
+@app.route("/api/streams/<int:stream_id>/probe-bitrate")
+def api_stream_probe_bitrate(stream_id):
+    """Probe the LIVE stream URL with ffprobe to find out what bitrate the
+    server is actually delivering right now (independent of any claim in the
+    stream's metadata)."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        return jsonify({"error": "not found"}), 404
+    url = stream.get("url") or ""
+    if not url:
+        return jsonify({"error": "no url"}), 400
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "stream=codec_name,bit_rate,sample_rate,channels",
+             "-show_entries", "format=bit_rate",
+             "-of", "default=nw=1", url],
+            capture_output=True, text=True, timeout=15)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    info = {"codec": "", "sample_rate": 0, "channels": 0, "stream_bitrate": 0, "format_bitrate": 0}
+    seen_stream_br = False
+    for line in r.stdout.splitlines():
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.strip()
+        if k == "codec_name":
+            info["codec"] = v
+        elif k == "sample_rate" and v.isdigit():
+            info["sample_rate"] = int(v)
+        elif k == "channels" and v.isdigit():
+            info["channels"] = int(v)
+        elif k == "bit_rate" and v.isdigit():
+            if not seen_stream_br:
+                info["stream_bitrate"] = int(v)
+                seen_stream_br = True
+            else:
+                info["format_bitrate"] = int(v)
+    real_kbps = round(max(info["stream_bitrate"], info["format_bitrate"]) / 1000) if (info["stream_bitrate"] or info["format_bitrate"]) else 0
+    if not real_kbps:
+        return jsonify({"error": "ffprobe returned no bitrate", "stderr": r.stderr[-300:]}), 500
+    return jsonify({"success": True, "bitrate": real_kbps, "codec": info["codec"],
+                    "sample_rate": info["sample_rate"], "channels": info["channels"]})
 
 
 @app.route("/api/library/track/<int:track_id>/rescan-bpmkey", methods=["POST"])

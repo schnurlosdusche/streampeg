@@ -500,7 +500,7 @@ function fmtKey(key) {
     if (!key) return '-';
     var cam = _CAMELOT[key] || '';
     var color = _CAMELOT_COLORS[cam] || '#888';
-    return '<span style="color:' + color + ';">' + escHtml(key) + '</span>' + (cam ? ' <span style="color:' + color + ';font-size:11px;">' + cam + '</span>' : '');
+    return '<span style="color:' + color + ';text-transform:none;">' + escHtml(key) + '</span>' + (cam ? ' <span style="color:' + color + ';font-size:11px;text-transform:none;">' + cam + '</span>' : '');
 }
 
 /* --- Library state --- */
@@ -1180,6 +1180,8 @@ function _startCastPoll() {
     _stopCastPoll();
     // Update seek position every second during cast
     _castSeekTimer = setInterval(function() {
+        // Bail out if no cast devices active (timer may fire once after clearInterval)
+        if (!_libCastDeviceIds || !_libCastDeviceIds.length) return;
         // Auto-init cast timing if not set (e.g. after page reload during cast)
         if (!_castPlayStart || !_castTrackDuration) {
             if (_libPlayingTrackId && _libTrackCache) {
@@ -1306,13 +1308,41 @@ function showAddToPlaylistMenu(btn, trackId) {
     if (!_playlists.length) {
         menu.innerHTML = '<div style="padding:0.4rem 0.7rem;color:#888;font-style:italic;">' + t('library.no_tracks') + '</div>';
     } else {
+        // Determine which playlists each track is currently in (from cache).
+        // For single-track: mark a playlist active if the track is in it.
+        // For bulk: mark active only if ALL selected tracks are in that playlist.
+        function _isActive(plId) {
+            for (var k = 0; k < ids.length; k++) {
+                var pls = _trackPlaylistCache[String(ids[k])] || [];
+                var found = false;
+                for (var j = 0; j < pls.length; j++) {
+                    if (pls[j].id === plId) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+            return true;
+        }
         for (var i = 0; i < _playlists.length; i++) {
             var item = document.createElement('button');
             item.className = 'player-pl-menu-item';
-            item.textContent = _playlists[i].name;
-            (function(plId) {
-                item.onclick = function() { addToPlaylist(plId, ids); closePlaylistMenu(); };
-            })(_playlists[i].id);
+            var pl = _playlists[i];
+            var active = _isActive(pl.id);
+            if (active) {
+                item.classList.add('active');
+                item.innerHTML = '<span style="color:#4caf50;margin-right:0.4rem;">&#10003;</span>' + escHtml(pl.name);
+            } else {
+                item.textContent = pl.name;
+            }
+            (function(plId, isActive) {
+                item.onclick = function() {
+                    if (isActive) {
+                        for (var k = 0; k < ids.length; k++) removeFromPlaylist(plId, ids[k]);
+                    } else {
+                        addToPlaylist(plId, ids);
+                    }
+                    closePlaylistMenu();
+                };
+            })(pl.id, active);
             menu.appendChild(item);
         }
     }
@@ -1435,6 +1465,32 @@ document.addEventListener('click', function(e) {
 
 function addToPlaylist(playlistId, trackIds) {
     closePlaylistMenu();
+    // --- Optimistic UI update: patch cache + badge counts immediately ---
+    var pl = null;
+    for (var i = 0; i < _playlists.length; i++) {
+        if (_playlists[i].id === playlistId) { pl = _playlists[i]; break; }
+    }
+    var added = 0;
+    for (var k = 0; k < trackIds.length; k++) {
+        var key = String(trackIds[k]);
+        var arr = _trackPlaylistCache[key] || [];
+        var already = false;
+        for (var j = 0; j < arr.length; j++) {
+            if (arr[j].id === playlistId) { already = true; break; }
+        }
+        if (!already && pl) {
+            arr.push({id: pl.id, name: pl.name, color: pl.color || ''});
+            _trackPlaylistCache[key] = arr;
+            added++;
+        }
+    }
+    if (pl && added) {
+        pl.track_count = (pl.track_count || 0) + added;
+        renderPlaylists();
+    }
+    _vsRenderedStart = -1;
+    _vsRenderVisible();
+
     fetch('/api/library/playlists/' + playlistId + '/tracks', {
         method: 'POST',
         credentials: 'include',
@@ -1443,10 +1499,6 @@ function addToPlaylist(playlistId, trackIds) {
     })
     .then(function(r) { return r.json(); })
     .then(function() {
-        loadPlaylists();
-        if (_selectedPlaylistId === playlistId) selectPlaylist(playlistId);
-        // Update playlist tags in list for affected tracks
-        _updateListPlaylistTags(trackIds);
         // Update player playlist info if current track was added
         if (typeof _libPlayingTrackId !== 'undefined' && trackIds.indexOf(_libPlayingTrackId) !== -1) {
             _loadTrackPlaylists(_libPlayingTrackId);
@@ -1561,14 +1613,45 @@ function selectPlaylist(id) {
 
 
 function removeFromPlaylist(playlistId, trackId) {
+    // --- Optimistic UI update: patch cache + badge count immediately ---
+    var key = String(trackId);
+    var arr = _trackPlaylistCache[key] || [];
+    var newArr = [];
+    var wasIn = false;
+    for (var j = 0; j < arr.length; j++) {
+        if (arr[j].id === playlistId) { wasIn = true; continue; }
+        newArr.push(arr[j]);
+    }
+    _trackPlaylistCache[key] = newArr;
+    if (wasIn) {
+        for (var i = 0; i < _playlists.length; i++) {
+            if (_playlists[i].id === playlistId) {
+                _playlists[i].track_count = Math.max(0, (_playlists[i].track_count || 0) - 1);
+                break;
+            }
+        }
+        renderPlaylists();
+    }
+    // If currently viewing this playlist, drop the row from the table immediately.
+    if (_selectedPlaylistId === playlistId) {
+        _libTracks = _libTracks.filter(function(t) { return t.id !== trackId; });
+        _playlistTracksRaw = _playlistTracksRaw.filter(function(t) { return t.id !== trackId; });
+        _libTotalTracks = _libTracks.length;
+        var countEl = document.getElementById('lib-track-count');
+        if (countEl) countEl.textContent = _libTotalTracks + ' ' + t('library.tracks_count');
+    }
+    _vsRenderedStart = -1;
+    _vsRenderVisible();
+
     fetch('/api/library/playlists/' + playlistId + '/tracks/' + trackId, {
         method: 'DELETE',
         credentials: 'include'
     })
     .then(function(r) { return r.json(); })
     .then(function() {
-        loadPlaylists();
-        if (_selectedPlaylistId === playlistId) selectPlaylist(playlistId);
+        if (typeof _libPlayingTrackId !== 'undefined' && _libPlayingTrackId === trackId) {
+            _loadTrackPlaylists(trackId);
+        }
     })
     .catch(function() {});
 }

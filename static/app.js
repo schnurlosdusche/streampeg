@@ -373,6 +373,8 @@ function _restoreListenState() {
         if (savedId === 'browse') {
             _playerStreamId = 'browse';
             _browseStreamName = localStorage.getItem('_browseStreamName') || '';
+        } else if (savedId.indexOf('bm-') === 0) {
+            _playerStreamId = savedId;
         } else {
             _playerStreamId = parseInt(savedId);
         }
@@ -414,8 +416,14 @@ function toggleBrowserPause() {
 
 function _updateListenIcons(activeId) {
     document.querySelectorAll('.btn-listen').forEach(function(el) {
-        var sid = parseInt(el.getAttribute('data-stream-id'));
-        if (sid === activeId) {
+        var sid = el.getAttribute('data-stream-id');
+        if (sid) sid = parseInt(sid);
+        // Also check bookmark buttons (data-bookmark-id on parent tr)
+        if (!sid) {
+            var tr = el.closest('tr[data-bookmark-id]');
+            if (tr) sid = 'bm-' + tr.dataset.bookmarkId;
+        }
+        if (sid == activeId) {
             el.classList.add('listening');
         } else {
             el.classList.remove('listening');
@@ -1516,6 +1524,13 @@ function castLibraryTrack(deviceId) {
 
     // If selecting "browser", stop all casts and resume browser playback
     if (deviceId === 'browser') {
+        // Calculate current cast position before clearing state
+        var castPosition = 0;
+        if (_castPlayStart && _castTrackDuration > 0) {
+            castPosition = (Date.now() / 1000) - _castPlayStart;
+            if (castPosition > _castTrackDuration) castPosition = _castTrackDuration;
+            if (castPosition < 0) castPosition = 0;
+        }
         _libCastDeviceIds.forEach(function(did) {
             fetch('/api/cast/stop', {
                 method: 'POST', credentials: 'include',
@@ -1527,10 +1542,18 @@ function castLibraryTrack(deviceId) {
         _libCastDeviceName = '';
         _libCastDeviceIds = [];
         _stopCastPoll();
+        _castPlayStart = 0;
+        _castTrackDuration = 0;
         sessionStorage.removeItem('_libCastDeviceIds');
         sessionStorage.removeItem('_castPlayStart');
-        // Resume browser audio
-        if (_playerAudio && _playerAudio.paused) {
+        // Resume browser audio at the cast position
+        if (_playerAudio && _libPlayingTrackId) {
+            var trackUrl = '/api/library/track/' + _libPlayingTrackId + '/play';
+            if (!_playerAudio.src || !_playerAudio.src.includes('/play')) {
+                _initBrowserAudio();
+                _playerAudio.src = trackUrl;
+            }
+            _playerAudio.currentTime = castPosition;
             _playerAudio.play().catch(function() {});
             _browserPaused = false;
         }
@@ -1643,6 +1666,8 @@ function castLibraryTrackStop(deviceId) {
         _stopCastPoll();
         _castPlayStart = 0;
         _castTrackDuration = 0;
+        sessionStorage.removeItem('_libCastDeviceIds');
+        sessionStorage.removeItem('_castPlayStart');
         // Resume in browser at the cast position
         if (_playerAudio && _libPlayingTrackId) {
             var trackUrl = '/api/library/track/' + _libPlayingTrackId + '/play';
@@ -1764,19 +1789,39 @@ function _showPlayerPlaylistMenu(btn) {
         .then(function(data) {
             var pls = data.playlists || [];
             if (!pls.length) return;
+            var current = (_trackPlaylists && _trackPlaylists[trackId]) || [];
+            function _isIn(plId) {
+                for (var k = 0; k < current.length; k++) if (current[k].id === plId) return true;
+                return false;
+            }
             var menu = document.createElement('div');
             menu.className = 'player-pl-menu';
             for (var i = 0; i < pls.length; i++) {
                 var item = document.createElement('button');
                 item.className = 'player-pl-menu-item';
-                item.textContent = pls[i].name;
+                var active = _isIn(pls[i].id);
+                if (active) {
+                    item.classList.add('active');
+                    item.innerHTML = '<span style="color:#4caf50;margin-right:0.4rem;">&#10003;</span>' + pls[i].name.replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+                } else {
+                    item.textContent = pls[i].name;
+                }
                 item.setAttribute('data-pl-id', pls[i].id);
-                item.onclick = (function(plId) {
+                item.onclick = (function(plId, isActive) {
                     return function() {
-                        _addTrackToPlaylistFromPlayer(trackId, plId);
+                        if (isActive) {
+                            fetch('/api/library/playlists/' + plId + '/tracks/' + trackId, {method: 'DELETE', credentials: 'include'})
+                                .then(function() {
+                                    _loadTrackPlaylists(trackId);
+                                    if (typeof _updateListPlaylistTags === 'function') _updateListPlaylistTags([trackId]);
+                                    if (typeof loadPlaylists === 'function') loadPlaylists();
+                                });
+                        } else {
+                            _addTrackToPlaylistFromPlayer(trackId, plId);
+                        }
                         menu.remove();
                     };
-                })(pls[i].id);
+                })(pls[i].id, active);
                 menu.appendChild(item);
             }
             // Position above the button
@@ -2738,7 +2783,19 @@ updateStatus = function() {
 // Poll ICY metadata for browser listen (even when not recording)
 function _pollBrowserIcy() {
     if (!_playerStreamId || _isLibraryTrack || _playerStreamId === 'browse') { if (!_isLibraryTrack && _playerStreamId !== 'browse') { _browserIcyTrack = ''; _browserIcyCover = null; } return; }
-    fetch('/api/stream/' + _playerStreamId + '/icy', {credentials: 'include'})
+    // Bookmark streams use generic ICY endpoint with URL
+    var icyUrl;
+    if (String(_playerStreamId).indexOf('bm-') === 0 && _playerStreamUrl) {
+        // Extract original URL from proxy URL
+        var origUrl = _playerStreamUrl;
+        if (origUrl.indexOf('/api/listen?url=') === 0) {
+            origUrl = decodeURIComponent(origUrl.replace('/api/listen?url=', ''));
+        }
+        icyUrl = '/api/icy?url=' + encodeURIComponent(origUrl);
+    } else {
+        icyUrl = '/api/stream/' + _playerStreamId + '/icy';
+    }
+    fetch(icyUrl, {credentials: 'include'})
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.current_track) _browserIcyTrack = data.current_track;
