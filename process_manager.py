@@ -7,7 +7,7 @@ import glob
 import signal
 import urllib.request
 from config import RECORDING_BASE, STREAMRIPPER_BIN, USER_AGENTS, DEFAULT_USER_AGENT, MIN_BITRATE
-from db import log_event, get_track_stats
+from db import log_event, get_track_stats, set_setting
 from ffmpeg_recorder import FfmpegRecorder, _trim_audio_file, _title_matches_skip_words
 from module_manager import get_recorder_class
 from sync import sync_file, get_sync_target
@@ -15,6 +15,16 @@ import cover_art
 
 # In-memory process registry: stream_id -> {proc, start_time}
 _processes = {}
+
+
+def _persist_running_ids():
+    """Save currently running stream IDs to DB (survives hard kill)."""
+    import json
+    running = [sid for sid, info in _processes.items()
+               if info.get("proc") and (
+                   (hasattr(info["proc"], 'poll') and info["proc"].poll() is None) or
+                   (hasattr(info["proc"], 'is_running') and info["proc"].is_running()))]
+    set_setting("running_streams_on_shutdown", json.dumps(running))
 
 # Cache for file counts (expensive NAS glob): stream_id -> {count, size, timestamp}
 _file_count_cache = {}
@@ -64,6 +74,7 @@ def start_stream(stream):
         recorder = recorder_cls(stream, dest)
         recorder.start()
         _processes[stream_id] = {"proc": recorder, "start_time": time.time(), "mode": record_mode}
+        _persist_running_ids()
         return recorder.pid
 
     # Check stream bitrate before starting streamripper/ffmpeg recorders
@@ -79,6 +90,7 @@ def start_stream(stream):
         recorder = FfmpegRecorder(stream, dest)
         recorder.start()
         _processes[stream_id] = {"proc": recorder, "start_time": time.time(), "mode": record_mode}
+        _persist_running_ids()
         return recorder.pid
 
     # Default: streamripper
@@ -93,6 +105,7 @@ def start_stream(stream):
     watcher.start()
     _processes[stream_id] = {"proc": proc, "start_time": time.time(), "mode": "streamripper", "watcher": watcher}
     log_event(stream_id, "start", f"Gestartet (PID {proc.pid})")
+    _persist_running_ids()
     return proc.pid
 
 
@@ -130,6 +143,7 @@ def stop_stream(stream_id):
         watcher.stop()
     del _processes[stream_id]
     log_event(stream_id, "stop", "Gestoppt")
+    _persist_running_ids()
     return True
 
 
