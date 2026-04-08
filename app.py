@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.157c"
+VERSION = "0.0.160a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -2800,6 +2800,29 @@ import queue as _queue
 
 _yt_jobs = {}
 _yt_jobs_lock = threading.Lock()
+# URLs currently being downloaded — guarded by _yt_jobs_lock. Prevents two
+# parallel downloads of the same URL from racing on the same destination file
+# (which is how the corrupt Dub_Deep_Techno_Mix_Paris.mp3 came to exist).
+_yt_active_urls = set()
+
+
+def _yt_verify_mp3(filepath):
+    """Decode-test a downloaded mp3 with ffmpeg. Returns (ok, error_msg).
+    A file that ffprobe accepts but ffmpeg refuses to decode (e.g. broken
+    backstep, truncated frames) is treated as corrupt."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", filepath, "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "decode timeout"
+    except Exception as e:
+        return False, f"decode error: {e}"
+    if r.returncode != 0 or "invalid" in r.stderr.lower() or "error" in r.stderr.lower():
+        msg = r.stderr.strip().splitlines()[0] if r.stderr.strip() else f"rc={r.returncode}"
+        return False, msg[:200]
+    return True, ""
 
 
 def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
@@ -2829,6 +2852,13 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
     sync_target = sync.get_sync_target()
     nas_dest = os.path.join(sync_target, dest_subdir)
 
+    # Per-job temp dir under dest. yt-dlp writes here first; only files that
+    # pass the ffmpeg decode test are atomically moved into `dest`. This makes
+    # parallel downloads of the same URL safe (each job has its own temp dir),
+    # and crashes/interruptions can't leave half-written .mp3 files in dest.
+    tmp_dir = os.path.join(dest, ".tmp_" + job_id)
+    os.makedirs(tmp_dir, exist_ok=True)
+
     cmd = [
         yt_dlp, url,
         "--extract-audio",
@@ -2836,7 +2866,7 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
         "--audio-quality", "0",
         "--format", "bestaudio",
         "--postprocessor-args", "ffmpeg:-b:a 320k",
-        "--output", os.path.join(dest, "%(title)s.%(ext)s"),
+        "--output", os.path.join(tmp_dir, "%(title)s.%(ext)s"),
         "--no-overwrites",
         "--restrict-filenames",
         "--embed-thumbnail",
@@ -2854,7 +2884,7 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
         proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT,
                          text=True, env=env, bufsize=1)
 
-        downloaded_files = []
+        produced_in_tmp = []
 
         for line in proc.stdout:
             line = line.rstrip()
@@ -2870,19 +2900,56 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
                 log({"status": "converting", "message": "Konvertiere zu MP3..."})
             elif "[EmbedThumbnail]" in line:
                 log({"status": "converting", "message": "Thumbnail wird eingebettet..."})
-            elif line.startswith("/") and line.endswith(".mp3"):
-                downloaded_files.append(line.strip())
+            elif line.startswith(tmp_dir) and line.endswith(".mp3"):
+                produced_in_tmp.append(line.strip())
             elif "has already been downloaded" in line:
                 log({"status": "skip", "message": "Bereits vorhanden, uebersprungen"})
 
         proc.wait(timeout=10)
 
-        # Find downloaded mp3 files in dest
-        if not downloaded_files:
-            now = time.time()
-            for f in sorted(Path(dest).glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True):
-                if now - f.stat().st_mtime < 300:
-                    downloaded_files.append(str(f))
+        # Pick up everything yt-dlp left in tmp_dir, even if --print didn't catch it
+        for f in Path(tmp_dir).glob("*.mp3"):
+            sp = str(f)
+            if sp not in produced_in_tmp:
+                produced_in_tmp.append(sp)
+
+        # Verify each file with ffmpeg, then atomically move good ones to dest.
+        downloaded_files = []
+        for src in produced_in_tmp:
+            if not os.path.isfile(src):
+                continue
+            log({"status": "verifying", "message": f"Pruefe: {os.path.basename(src)}"})
+            ok, err = _yt_verify_mp3(src)
+            if not ok:
+                log({"status": "verify_fail",
+                     "message": f"Datei korrupt, verworfen ({err}): {os.path.basename(src)}"})
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+                continue
+            # Atomic move into dest, with collision-handling rename
+            base = os.path.basename(src)
+            target = os.path.join(dest, base)
+            if os.path.exists(target):
+                name, ext = os.path.splitext(base)
+                target = os.path.join(dest, f"{name}_{int(time.time())}{ext}")
+            try:
+                os.replace(src, target)
+                downloaded_files.append(target)
+            except OSError as e:
+                log({"status": "error", "message": f"Move-Fehler: {e}"})
+
+        # Clean up temp dir (now empty unless a verify_fail left orphans)
+        try:
+            for leftover in Path(tmp_dir).iterdir():
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+            os.rmdir(tmp_dir)
+        except OSError:
+            pass
 
         # Sync files to NAS
         synced = 0
@@ -2915,6 +2982,10 @@ def _yt_download_worker(job_id, url, mode, dest, dest_subdir):
     except Exception as e:
         log({"status": "error", "message": f"{i18n.t('general.error')}: {str(e)[:200]}"})
 
+    finally:
+        with _yt_jobs_lock:
+            _yt_active_urls.discard(url)
+
     job["done"] = True
 
 
@@ -2929,6 +3000,21 @@ def api_yt_download_start():
     if not url:
         return Response("data: " + json.dumps({"error": "Keine URL"}) + "\n\n",
                         mimetype="text/event-stream")
+
+    # Refuse a duplicate of the exact same URL while one is still running.
+    # Without this guard, two parallel jobs race on the same destination filename
+    # and yt-dlp + ffmpeg can produce a corrupt mp3.
+    with _yt_jobs_lock:
+        if url in _yt_active_urls:
+            return Response(
+                "data: " + json.dumps({
+                    "status": "error",
+                    "error": "already_downloading",
+                    "message": "Diese URL wird bereits heruntergeladen",
+                }) + "\n\n",
+                mimetype="text/event-stream",
+            )
+        _yt_active_urls.add(url)
 
     dest = os.path.join(RECORDING_BASE, dest_subdir)
     os.makedirs(dest, exist_ok=True)

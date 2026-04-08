@@ -482,19 +482,21 @@
 /* --- Camelot wheel mapping --- */
 var _CAMELOT = {"Abm":"1A","G#m":"1A","Ebm":"2A","D#m":"2A","Bbm":"3A","A#m":"3A","Fm":"4A","Cm":"5A","Gm":"6A","Dm":"7A","Am":"8A","Em":"9A","Bm":"10A","F#m":"11A","Gbm":"11A","C#m":"12A","Dbm":"12A","B":"1B","Cb":"1B","F#":"2B","Gb":"2B","C#":"3B","Db":"3B","Ab":"4B","G#":"4B","Eb":"5B","D#":"5B","Bb":"6B","A#":"6B","F":"7B","C":"8B","G":"9B","D":"10B","A":"11B","E":"12B"};
 
+// Camelot wheel colors — outer ring (B / major) saturated, inner ring (A / minor)
+// pastel of the same hue, matching the standard Mixed-In-Key wheel layout.
 var _CAMELOT_COLORS = {
-    "1A":"#ff4444","1B":"#ff6666",
-    "2A":"#ff8800","2B":"#ffaa33",
-    "3A":"#ddaa00","3B":"#eebb33",
-    "4A":"#aacc00","4B":"#bbdd33",
-    "5A":"#44bb44","5B":"#66dd66",
-    "6A":"#00bbaa","6B":"#33ddcc",
-    "7A":"#0099cc","7B":"#33bbee",
-    "8A":"#4488ee","8B":"#66aaff",
-    "9A":"#6655dd","9B":"#8877ff",
-    "10A":"#9944cc","10B":"#bb66ee",
-    "11A":"#cc44aa","11B":"#ee66cc",
-    "12A":"#ee4477","12B":"#ff6699"
+    "12B":"#26CFC4","12A":"#9AE5DE",
+    "1B":"#3FCFA0","1A":"#A5E5C6",
+    "2B":"#5BD175","2A":"#B6E5B5",
+    "3B":"#86D858","3A":"#C7E5A5",
+    "4B":"#BCC758","4A":"#DDDFA8",
+    "5B":"#EFA163","5A":"#F2C7A1",
+    "6B":"#EF7676","6A":"#F4ADAE",
+    "7B":"#EE7B96","7A":"#F4B0BD",
+    "8B":"#D777C0","8A":"#E8AEDB",
+    "9B":"#A875D2","9A":"#CFAEE3",
+    "10B":"#7A7DCF","10A":"#AFAFE0",
+    "11B":"#56BBE0","11A":"#A5D6E8"
 };
 function fmtKey(key) {
     if (!key) return '-';
