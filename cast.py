@@ -23,6 +23,31 @@ _last_discovery = 0
 DISCOVERY_CACHE_SECS = 15  # re-discover at most every 15s
 _lms_players_fallback = []  # last-known LMS players, used when discovery fails
 
+
+def _save_lms_fallback():
+    """Persist LMS player info to DB so it survives server restarts."""
+    try:
+        import db as _db
+        _db.set_setting("lms_players_cache", json.dumps(_lms_players_fallback))
+    except Exception:
+        pass
+
+
+def _load_lms_fallback():
+    """Restore LMS player cache from DB on startup."""
+    global _lms_players_fallback, _lms_server_cache
+    try:
+        import db as _db
+        raw = _db.get_setting("lms_players_cache")
+        if raw:
+            _lms_players_fallback = json.loads(raw)
+            # Also restore server IP cache from the first player
+            if _lms_players_fallback and _lms_players_fallback[0].get("host"):
+                _lms_server_cache["host"] = _lms_players_fallback[0]["host"]
+                _lms_server_cache["ts"] = time.time()
+    except Exception:
+        pass
+
 # Currently casting: device_id -> stream_id  (one device plays one stream,
 # but the same stream may be cast to multiple devices simultaneously)
 _active_casts = {}
@@ -403,6 +428,7 @@ def discover_devices(force=False):
     if lms_found:
         devices.extend(lms_found)
         _lms_players_fallback[:] = lms_found
+        _save_lms_fallback()
     elif _lms_players_fallback:
         # All discovery failed — keep showing last-known LMS players.
         devices.extend(_lms_players_fallback)
@@ -734,15 +760,20 @@ def set_volume(device_id, level):
 # ===== Multiroom ============================================================
 
 def lms_sync(master_device, slave_device):
-    """Sync a slave LMS player to a master (multiroom)."""
-    _lms_request(
-        master_device["host"], master_device["port"], slave_device["player_id"],
-        ["sync", master_device["player_id"]],
-    )
-    _lms_request(
-        slave_device["host"], slave_device["port"], slave_device["player_id"],
-        ["power", "1"],
-    )
+    """Sync a slave LMS player to a master (multiroom).
+    Preserves the master's current playback position — the slave joins
+    mid-song instead of restarting from the beginning."""
+    host = master_device["host"]
+    port = master_device.get("port", 9000)
+    master_pid = master_device["player_id"]
+    slave_pid = slave_device["player_id"]
+
+    # Power on slave first
+    _lms_request(host, port, slave_pid, ["power", "1"])
+    # Join slave to master's sync group — LMS handles position sync
+    # automatically when using the sync command (slave inherits master's
+    # playlist and position).
+    _lms_request(host, port, slave_pid, ["sync", master_pid])
 
 
 def lms_unsync(device):

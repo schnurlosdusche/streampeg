@@ -1093,6 +1093,8 @@ function playLibraryTrack(trackId, title, artist, streamSubdir) {
         _libPlayingTrackId = null;
         sessionStorage.removeItem('_libPlayingTrackId');
         sessionStorage.removeItem('_browserLibStream');
+        sessionStorage.removeItem('_browserPlayPosition');
+        sessionStorage.removeItem('_browserPlayPaused');
         sessionStorage.removeItem('_libCastDeviceIds');
         sessionStorage.removeItem('_castPlayStart');
         _refreshPlayerBar();
@@ -2360,6 +2362,42 @@ function initLibrary() {
                     }).catch(function() {});
             }
         } catch(e) {}
+    }
+
+    // Restore browser playback after page reload (no cast active)
+    if (savedTrackId && !(_libCastDeviceIds && _libCastDeviceIds.length > 0)) {
+        var savedPos = parseFloat(sessionStorage.getItem('_browserPlayPosition') || '0');
+        var wasPaused = sessionStorage.getItem('_browserPlayPaused') === '1';
+        _isLibraryTrack = true;
+        _libPlayingTrackId = parseInt(savedTrackId);
+        _browserLibStream = savedStream || '';
+        // Load track info from cache or API, then restore audio
+        fetch('/api/library/track/' + _libPlayingTrackId, {credentials: 'include'})
+            .then(function(r) { return r.json(); })
+            .then(function(tr) {
+                if (!tr || tr.error) return;
+                _libTrackCache[tr.id] = tr;
+                var artist = tr.artist || '';
+                var title = tr.title || '';
+                _browserIcyTrack = (artist ? artist + ' - ' : '') + title;
+                _loadLibraryCover(tr.id, artist, title);
+                _initBrowserAudio();
+                _playerAudio.src = '/api/library/track/' + tr.id + '/play';
+                _playerAudio.currentTime = savedPos;
+                if (!wasPaused) {
+                    _playerAudio.play().catch(function() {});
+                    _browserPaused = false;
+                } else {
+                    _browserPaused = true;
+                }
+                _refreshPlayerBar();
+                updatePlayButtons();
+                if (!_cuePoints[tr.id]) _loadCuePoints(tr.id);
+                if (_trackRatings[tr.id] == null) _loadTrackRating(tr.id);
+                _loadTrackFavorite(tr.id);
+                _loadTrackPlaylists(tr.id);
+                _loadWaveform(tr.id);
+            }).catch(function() {});
     }
 
     var urlParams = new URLSearchParams(window.location.search);

@@ -327,7 +327,7 @@ dialog, dialog::backdrop {
     z-index: 1000;
 }
 .player-bar {
-    height: 70px;
+    min-height: 70px;
     background: #1e1e2a;
     border-top: 1px solid #3a3a4a;
 }
@@ -345,14 +345,15 @@ dialog, dialog::backdrop {
 .player-seek-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     margin-top: 3px;
     min-width: 0;
 }
 .player-seek-bar {
     position: relative;
-    flex: 1;
-    height: 80px;
+    flex: 1 1 0;
+    max-width: 85%;
+    height: 72px;
     cursor: pointer;
     border-radius: 4px;
     min-width: 100px;
@@ -385,7 +386,8 @@ dialog, dialog::backdrop {
 .seek-remaining {
     position: absolute;
     left: 6px;
-    top: 2px;
+    top: 50%;
+    transform: translateY(-50%);
     font-size: 0.55rem;
     color: rgba(255,255,255,0.8);
     white-space: nowrap;
@@ -900,10 +902,38 @@ tr:hover .list-unusable:hover { color: #e53935; }
 .player-device-name {
     font-size: 0.65rem;
     color: #ddd;
+    white-space: normal;
+    line-height: 1.4;
+    max-width: 140px;
+    text-align: right;
+}
+.player-seek-devices {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 8vw;
+    min-width: 80px;
+    max-width: 140px;
+    flex-shrink: 0;
+    margin-left: auto;
+    padding-right: 20px;
+}
+.device-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border: 1px solid #3a3a4a;
+    border-radius: 6px;
+    font-size: 0.55rem;
+    color: #aaa;
     white-space: nowrap;
-    max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+.device-badge.device-master {
+    border-color: #ffd740;
+    color: #ddd;
 }
 .player-bitrate {
     font-size: 0.5rem;

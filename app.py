@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.168a"
+VERSION = "0.0.169a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -1264,9 +1264,10 @@ def api_cast_player():
         stream_id = int(stream_id_raw) if isinstance(stream_id_raw, str) else stream_id_raw
         device = dev_map.get(device_id)
         if not device:
-            # Device not found in discovery (may be temporarily unreachable)
-            # Use fallback so cast player still renders
-            device = {"id": device_id, "name": device_id, "type": "unknown"}
+            # Device not found in discovery (may be temporarily unreachable).
+            # Try LMS fallback cache for real name/type, else use ID as name.
+            fb = {fb["id"]: fb for fb in cast._lms_players_fallback}.get(device_id)
+            device = fb if fb else {"id": device_id, "name": device_id, "type": "unknown"}
 
         # Library track cast (negative stream_id, track exists in library)
         if stream_id < 0:
@@ -1368,17 +1369,57 @@ def api_cast_player():
     # Append external players (read-only, not tied to a streampeg cast)
     players.extend(external_players)
 
-    # All available speakers for multiroom toggle
+    # All available speakers for multiroom toggle.
+    # Include devices from discovery + any active cast devices that discovery
+    # may have missed (LMS discovery can be intermittent). Use the LMS
+    # fallback cache to resolve names when discovery fails.
+    all_device_ids = {d["id"] for d in devices}
+    augmented_devices = list(devices)
+
+    # Build a name cache from LMS fallback players (survives discovery failures)
+    _lms_name_cache = {}
+    for fb in cast._lms_players_fallback:
+        _lms_name_cache[fb["id"]] = fb
+
+    for did in active:
+        if did not in all_device_ids:
+            # Try LMS fallback cache first (has real name/type/player_id)
+            cached = _lms_name_cache.get(did)
+            if cached:
+                fallback = dict(cached)
+                fallback["enabled"] = True
+            else:
+                fallback = {"id": did, "name": did, "type": "unknown", "enabled": True}
+                for p in players:
+                    if p["device_id"] == did:
+                        fallback["name"] = p.get("device_name", did)
+                        fallback["type"] = p.get("device_type", "unknown")
+                        break
+            augmented_devices.append(fallback)
+
+    # Determine the "master" device — the first device that streampeg cast to.
+    # All other active LMS devices are sync partners and point to the master.
+    master_device_id = None
+    for p in players:
+        if not p.get("external"):
+            master_device_id = p["device_id"]
+            break
+
     all_speakers = []
-    for d in devices:
-        if not d.get("enabled", False):
+    for d in augmented_devices:
+        if not d.get("enabled", True):
             continue
-        # Check if this speaker is synced/grouped to an active device
         in_group_of = None
+        # Direct match: device is itself an active player
         for p in players:
             if d["id"] == p["device_id"]:
-                in_group_of = p["device_id"]
+                # Point to master, not to itself
+                in_group_of = master_device_id or p["device_id"]
                 break
+        # Indirect match: LMS sync-partner of an active cast
+        if not in_group_of and d.get("player_id"):
+            if d.get("player_id", "") in _lms_cast_group:
+                in_group_of = master_device_id
         all_speakers.append({
             "id": d["id"],
             "name": d["name"],
@@ -3179,6 +3220,7 @@ def _shutdown():
 
 if __name__ == "__main__":
     db.init_db()
+    cast._load_lms_fallback()
     module_manager.discover_modules()
 
     # Register shutdown handler
