@@ -757,6 +757,50 @@ function _renderPlayerHTML(p, idx) {
     return html;
 }
 
+function _renderExternalPlayerHTML(p, idx) {
+    // Player bar for Sonos/LMS devices playing something streampeg did not
+    // initiate. Shows stop button and volume control so the user can manage it.
+    var castTrack = p.current_track || '';
+    var castHasTrack = castTrack && castTrack.replace(/[\s\-]/g, '') !== '';
+    var castCover = p.cover_url || null;
+    var coverHtml = castCover
+        ? '<img src="' + castCover + '" alt="">'
+        : '<div class="player-cover-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="#555"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>';
+    var typeLabel = (p.device_type || '').toUpperCase();
+    var curVol = (_playerVolumeLocal[p.device_id] != null && _playerVolumeLocal[p.device_id] !== true)
+        ? _playerVolumeLocal[p.device_id] : (p.volume != null ? p.volume : 50);
+    return '<div class="player-bar player-bar-external" data-device-id="' + p.device_id + '">'
+        + '<div class="player-bar-inner">'
+        + '<div class="player-cover-wrap">' + coverHtml + '</div>'
+        + '<div class="player-info">'
+        + '<div class="player-track">' + (castHasTrack ? _escHtmlPlayer(castTrack) : t('player.waiting_track')) + '</div>'
+        + '<div class="player-stream">' + _escHtmlPlayer(p.device_name) + ' &middot; ' + _escHtmlPlayer(typeLabel) + ' extern</div>'
+        + '</div>'
+        + '<div class="player-volume">'
+        // Stop
+        + '<button class="player-btn" onclick="_stopExternalDevice(\'' + p.device_id + '\')" title="Stop">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
+        + '</button>'
+        // Volume
+        + '<div class="vol-slider" data-device="' + p.device_id + '">'
+        + '<div class="vol-slider-bg"></div>'
+        + '<div class="vol-slider-fill" style="width:' + curVol + '%"></div>'
+        + '<div class="vol-slider-handle" style="left:' + curVol + '%"></div>'
+        + '</div>'
+        + '<span class="player-volume-value">' + Math.round(curVol) + '</span>'
+        + '</div>'
+        + '</div></div>';
+}
+
+function _stopExternalDevice(deviceId) {
+    fetch('/api/cast/stop-external', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: deviceId})
+    }).then(function() { _updatePlayerBar(); })
+    .catch(function() {});
+}
+
 function _renderLibCastPlayerHTML(p) {
     var castTrack = p.current_track || '';
     var castHasTrack = castTrack && castTrack.replace(/[\s\-]/g, '') !== '';
@@ -1810,12 +1854,16 @@ function _showPlayerPlaylistMenu(btn) {
                 item.onclick = (function(plId, isActive) {
                     return function() {
                         if (isActive) {
-                            fetch('/api/library/playlists/' + plId + '/tracks/' + trackId, {method: 'DELETE', credentials: 'include'})
-                                .then(function() {
-                                    _loadTrackPlaylists(trackId);
-                                    if (typeof _updateListPlaylistTags === 'function') _updateListPlaylistTags([trackId]);
-                                    if (typeof loadPlaylists === 'function') loadPlaylists();
-                                });
+                            if (typeof removeFromPlaylist === 'function') {
+                                removeFromPlaylist(plId, trackId);
+                            } else {
+                                fetch('/api/library/playlists/' + plId + '/tracks/' + trackId, {method: 'DELETE', credentials: 'include'})
+                                    .then(function() {
+                                        if (typeof _updateListPlaylistTags === 'function') _updateListPlaylistTags([trackId]);
+                                        if (typeof loadPlaylists === 'function') loadPlaylists();
+                                    });
+                            }
+                            _loadTrackPlaylists(trackId);
                         } else {
                             _addTrackToPlaylistFromPlayer(trackId, plId);
                         }
@@ -1843,6 +1891,14 @@ function _removeFromPlaylistTag(playlistId, e) {
     e.preventDefault();
     var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
     if (!trackId) return;
+    // Use the shared removeFromPlaylist() if available — it handles
+    // optimistic UI updates (dropping the row from the playlist view,
+    // patching the cache, updating badge counts).
+    if (typeof removeFromPlaylist === 'function') {
+        removeFromPlaylist(playlistId, trackId);
+        _loadTrackPlaylists(trackId);
+        return;
+    }
     fetch('/api/library/playlists/' + playlistId + '/tracks/' + trackId, {
         method: 'DELETE', credentials: 'include',
     })
@@ -2301,7 +2357,7 @@ function _refreshPlayerBarNow() {
         JSON.stringify(_trackPlaylists[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || []),
         JSON.stringify(_cuePoints[(typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : 0] || {}),
         _loopMode, _libCastDeviceId || '',
-        hasCast ? JSON.stringify(_playerData.players.map(function(p){return p.device_id+':'+p.stream_id})) : '',
+        hasCast ? JSON.stringify(_playerData.players.map(function(p){return p.device_id+':'+p.stream_id+(p.external?':'+(p.current_track||''):'')})) : '',
     ].join('|');
 
     if (playerKey === _lastPlayerKey && container.innerHTML !== '') {
@@ -2324,11 +2380,19 @@ function _refreshPlayerBarNow() {
             _playerData.speakers.forEach(function(s) { if (s.active_for) _multiroomGroupCount++; });
         }
 
-        var streamPlayers = _playerData.players.filter(function(p) { return !p.is_library; }).slice(0, MAX_CASTS);
+        // Filter out is_library players (controlled via browser player bar).
+        // LMS sync-group partners are already filtered server-side.
+        var streamPlayers = _playerData.players.filter(function(p) {
+            if (p.is_library) return false;
+            return true;
+        }).slice(0, MAX_CASTS);
         streamPlayers.forEach(function(p, idx) {
-            html += _renderPlayerHTML(p, idx);
+            if (p.external) {
+                html += _renderExternalPlayerHTML(p, idx);
+            } else {
+                html += _renderPlayerHTML(p, idx);
+            }
         });
-        // Library cast players are controlled via the browser player bar — no separate bar
         totalPlayers += streamPlayers.length;
 
         // Update volume sliders from server data (only if not dragging/stepping)

@@ -95,6 +95,10 @@ def init_db():
             position INTEGER DEFAULT 0,
             added_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_playlist_track_unique
+            ON playlist_tracks (playlist_id, track_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_library_filepath
+            ON library_tracks (filepath);
 
         CREATE TABLE IF NOT EXISTS cue_points (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -366,38 +370,62 @@ def set_setting(key, value):
 # === Library / Playlist helpers ===
 
 def upsert_library_track(data_dict):
-    """INSERT OR REPLACE a track into library_tracks."""
+    """Insert a new track or revive/update an existing one (by filepath).
+    NEVER deletes-and-reinserts — the row's id is preserved so that
+    playlist memberships, cue points, ratings, and favorites survive."""
     conn = get_db()
-    cols = ["filepath", "filename", "stream_subdir", "title", "artist", "album",
-            "genre", "bpm", "key", "duration_sec", "size_bytes", "mtime"]
-    vals = [data_dict.get(c, "") for c in cols]
-    placeholders = ", ".join(["?"] * len(cols))
-    col_names = ", ".join(cols)
-
-    # Check if track already exists and preserve favorited status
     filepath = data_dict.get("filepath", "")
-    existing = conn.execute(
-        "SELECT favorited FROM library_tracks WHERE filepath = ?", (filepath,)
-    ).fetchone()
-    favorited = existing["favorited"] if existing else 0
 
-    # For new tracks, check if favorited as a stream favorite
-    if not existing:
+    existing = conn.execute(
+        "SELECT id, favorited, trashed FROM library_tracks WHERE filepath = ?",
+        (filepath,),
+    ).fetchone()
+
+    if existing:
+        # Track already in DB — revive if trashed, update mtime/size
+        updates = {
+            "stream_subdir": data_dict.get("stream_subdir", ""),
+            "size_bytes": data_dict.get("size_bytes", 0),
+            "mtime": data_dict.get("mtime", 0),
+            "trashed": 0,
+            "scanned_at": "datetime('now')",
+        }
+        conn.execute(
+            """UPDATE library_tracks SET
+                stream_subdir = ?, size_bytes = ?, mtime = ?,
+                trashed = 0, scanned_at = datetime('now')
+            WHERE id = ?""",
+            (updates["stream_subdir"], updates["size_bytes"],
+             updates["mtime"], existing["id"]),
+        )
+    else:
+        # Genuinely new file — insert with all fields
+        cols = ["filepath", "filename", "stream_subdir", "title", "artist",
+                "album", "genre", "bpm", "key", "duration_sec",
+                "size_bytes", "mtime"]
+        vals = [data_dict.get(c, "") for c in cols]
+
+        # Check if favorited as a stream favorite
+        favorited = 0
         title = data_dict.get("title", "")
         artist = data_dict.get("artist", "")
         track_name = (artist + " - " + title) if artist else title
         if track_name:
             fav = conn.execute(
-                "SELECT id FROM stream_favorites WHERE track_name = ?", (track_name,)
+                "SELECT id FROM stream_favorites WHERE track_name = ?",
+                (track_name,),
             ).fetchone()
             if fav:
                 favorited = 1
 
-    conn.execute(
-        f"INSERT OR REPLACE INTO library_tracks ({col_names}, favorited, scanned_at) "
-        f"VALUES ({placeholders}, ?, datetime('now'))",
-        vals + [favorited],
-    )
+        placeholders = ", ".join(["?"] * len(cols))
+        col_names = ", ".join(cols)
+        conn.execute(
+            f"INSERT INTO library_tracks ({col_names}, favorited, scanned_at) "
+            f"VALUES ({placeholders}, ?, datetime('now'))",
+            vals + [favorited],
+        )
+
     conn.commit()
     conn.close()
 
@@ -601,7 +629,7 @@ def add_to_playlist(playlist_id, track_ids):
     for tid in track_ids:
         pos += 1
         conn.execute(
-            "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
             (playlist_id, tid, pos),
         )
     conn.execute(
@@ -671,9 +699,10 @@ def rename_playlist(playlist_id, new_name):
 
 
 def delete_library_track_by_path(filepath):
-    """Delete a library track by filepath (for cleanup of removed files)."""
+    """Soft-delete a library track by filepath (mark trashed, preserve ID).
+    Playlist/cue links survive so the track can be revived later."""
     conn = get_db()
-    conn.execute("DELETE FROM library_tracks WHERE filepath = ?", (filepath,))
+    conn.execute("UPDATE library_tracks SET trashed = 1 WHERE filepath = ?", (filepath,))
     conn.commit()
     conn.close()
 

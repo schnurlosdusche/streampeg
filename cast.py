@@ -20,7 +20,8 @@ import urllib.error
 _devices = []           # list of dicts: {id, name, type, host, ...}
 _devices_lock = threading.Lock()
 _last_discovery = 0
-DISCOVERY_CACHE_SECS = 30  # re-discover at most every 30s
+DISCOVERY_CACHE_SECS = 15  # re-discover at most every 15s
+_lms_players_fallback = []  # last-known LMS players, used when discovery fails
 
 # Currently casting: device_id -> stream_id  (one device plays one stream,
 # but the same stream may be cast to multiple devices simultaneously)
@@ -35,16 +36,17 @@ _ICY_POLL_INTERVAL = 10  # seconds between ICY polls per stream
 
 # ===== LMS discovery & control =============================================
 
-def _discover_lms_server(timeout=3):
-    """Find LMS server via UDP broadcast on port 3483."""
-    msg = b"eJSON\0"
+_lms_server_cache = {"host": None, "ts": 0}
+
+
+def _lms_broadcast(timeout=2):
+    """Try a single UDP broadcast to find the LMS server IP."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(timeout)
     try:
-        sock.sendto(msg, ("<broadcast>", 3483))
+        sock.sendto(b"eJSON\0", ("<broadcast>", 3483))
         data, addr = sock.recvfrom(1024)
-        # Response starts with 'E' then JSON port info — but addr gives us the IP
         return addr[0]
     except (socket.timeout, OSError):
         return None
@@ -52,7 +54,7 @@ def _discover_lms_server(timeout=3):
         sock.close()
 
 
-def _lms_request(host, port, player_id, command):
+def _lms_request(host, port, player_id, command, timeout=3):
     """Send a JSON-RPC request to LMS. Returns parsed response or None."""
     url = f"http://{host}:{port}/jsonrpc.js"
     payload = json.dumps({
@@ -65,14 +67,15 @@ def _lms_request(host, port, player_id, command):
         headers={"Content-Type": "application/json"},
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=5)
+        resp = urllib.request.urlopen(req, timeout=timeout)
         return json.loads(resp.read())
     except Exception:
         return None
 
 
 def _discover_lms_players(host, port=9000):
-    """Query LMS server for connected players."""
+    """Query LMS server for connected players via HTTP.
+    This is the fast, reliable path (~50-200ms over LAN)."""
     result = _lms_request(host, port, "", ["players", "0", "100"])
     if not result:
         return []
@@ -106,11 +109,19 @@ def lms_play(device, stream_url):
 
 
 def lms_stop(device):
-    """Stop playback on an LMS player."""
-    _lms_request(
-        device["host"], device["port"], device["player_id"],
-        ["stop"],
-    )
+    """Stop playback on an LMS player and any sync-grouped partners."""
+    host, port, pid = device["host"], device["port"], device["player_id"]
+    # Stop the target player
+    _lms_request(host, port, pid, ["stop"])
+    # Also stop sync-group partners so they don't keep playing
+    result = _lms_request(host, port, pid, ["sync", "?"])
+    if result:
+        sync_ids = result.get("result", {}).get("_sync", "")
+        if sync_ids and sync_ids != "-":
+            for partner in sync_ids.split(","):
+                partner = partner.strip()
+                if partner and partner != pid:
+                    _lms_request(host, port, partner, ["stop"])
 
 
 def lms_pause(device):
@@ -204,6 +215,83 @@ def get_device_playback_mode(device_id):
     return None
 
 
+# ===== External playback detection (Sonos / LMS playing something that
+# streampeg did NOT initiate). Short cache to avoid hammering devices. ====
+_ext_nowplaying_cache = {}   # device_id -> (ts, dict)
+_EXT_CACHE_SECS = 5
+
+
+def _sonos_now_playing(device):
+    """Query a Sonos speaker for current transport state + track info."""
+    try:
+        sp = soco.SoCo(device["host"])
+        tinfo = sp.get_current_transport_info() or {}
+        state = tinfo.get("current_transport_state", "")
+        if state == "PLAYING":
+            mode = "play"
+        elif state == "PAUSED_PLAYBACK":
+            mode = "pause"
+        else:
+            mode = "stop"
+        tr = sp.get_current_track_info() or {}
+        return {
+            "mode": mode,
+            "artist": tr.get("artist", "") or "",
+            "title": tr.get("title", "") or "",
+            "album": tr.get("album", "") or "",
+            "cover_url": tr.get("album_art", "") or None,
+            "position": tr.get("position", "") or "",
+            "duration": tr.get("duration", "") or "",
+        }
+    except Exception:
+        return None
+
+
+def get_device_now_playing(device):
+    """Return {mode, artist, title, cover_url, ...} for an LMS / Sonos / Slim
+    device, or None on failure. Used by the player-bar activity endpoint to
+    surface playback that streampeg itself did NOT initiate."""
+    now = time.time()
+    cached = _ext_nowplaying_cache.get(device["id"])
+    if cached and (now - cached[0]) < _EXT_CACHE_SECS:
+        return cached[1]
+
+    result = None
+    if device["type"] == "sonos":
+        result = _sonos_now_playing(device)
+    elif device["type"] == "lms":
+        track, cover_url, mode = lms_get_current_track(device)
+        if mode is not None:
+            artist, title = "", track or ""
+            if track and " - " in track:
+                # Try to split "Artist - Title" back apart for nicer display.
+                parts = track.split(" - ", 1)
+                artist, title = parts[0], parts[1]
+            result = {
+                "mode": mode,
+                "artist": artist,
+                "title": title,
+                "album": "",
+                "cover_url": cover_url,
+                "position": "",
+                "duration": "",
+            }
+    elif device["type"] == "slim":
+        try:
+            import slimproto
+            mode = slimproto.get_state(device["player_id"])
+            if mode is not None:
+                result = {
+                    "mode": mode, "artist": "", "title": "", "album": "",
+                    "cover_url": None, "position": "", "duration": "",
+                }
+        except Exception:
+            pass
+
+    _ext_nowplaying_cache[device["id"]] = (now, result)
+    return result
+
+
 def _find_device(device_id):
     """Find a device by its ID from discovered devices."""
     devices = discover_devices()
@@ -278,16 +366,46 @@ def discover_devices(force=False):
     # Collect SlimProto player IDs to avoid duplicates from LMS
     slim_player_ids = {d.get("player_id") for d in devices if d["type"] == "slim"}
 
-    # LMS
-    lms_host = _discover_lms_server()
+    # LMS — HTTP-first strategy for reliability.
+    #
+    # UDP broadcast is inherently unreliable (packet loss, firewall, busy
+    # network). Instead we:
+    #   1. If we know the server IP (cached), query it directly via HTTP
+    #      (~50-200ms, reliable TCP). This is the common/fast path.
+    #   2. Only fall back to UDP broadcast if we DON'T have a cached IP
+    #      or the HTTP query fails (server moved/down).
+    #   3. If everything fails, keep the last-known player list so devices
+    #      don't flicker in and out.
+    lms_players = []
+    lms_host = _lms_server_cache.get("host")
+
+    # Fast path: try cached host via HTTP directly
     if lms_host:
-        players = _discover_lms_players(lms_host)
-        for p in players:
-            # Skip players already connected via SlimProto
-            if p.get("player_id") in slim_player_ids:
-                continue
-            p["enabled"] = True
-            devices.append(p)
+        lms_players = _discover_lms_players(lms_host)
+        if lms_players:
+            _lms_server_cache["ts"] = time.time()
+
+    # Slow path: no cached host, or cached host failed → UDP broadcast
+    if not lms_players:
+        broadcast_host = _lms_broadcast()
+        if broadcast_host:
+            _lms_server_cache["host"] = broadcast_host
+            _lms_server_cache["ts"] = time.time()
+            lms_players = _discover_lms_players(broadcast_host)
+
+    lms_found = []
+    for p in lms_players:
+        if p.get("player_id") in slim_player_ids:
+            continue
+        p["enabled"] = True
+        lms_found.append(p)
+
+    if lms_found:
+        devices.extend(lms_found)
+        _lms_players_fallback[:] = lms_found
+    elif _lms_players_fallback:
+        # All discovery failed — keep showing last-known LMS players.
+        devices.extend(_lms_players_fallback)
 
     # Sonos (discovery only)
     devices.extend(_discover_sonos())

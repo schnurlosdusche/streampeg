@@ -483,6 +483,8 @@ def _collect_mp3s(base_dir, subdir=None):
         except OSError:
             return files
         for entry in sorted(entries):
+            if entry == "_playlists":
+                continue  # Playlist copies are not independent tracks
             entry_path = os.path.join(base_dir, entry)
             if not os.path.isdir(entry_path):
                 continue
@@ -506,20 +508,21 @@ def _scan_files(files):
         _scan_status["progress"] = 0
         _scan_status["phase"] = "new"
 
-    # Build a map of filepath -> mtime from DB for skip check and cleanup
-    # Only consider tracks from the same subdirs being scanned
+    # Build a map of filepath -> mtime from DB for skip check and cleanup.
+    # Include trashed tracks so they get revived (not re-inserted with new ID).
     scan_subdirs = set(subdir for _, subdir in files) if files else set()
     conn = db.get_db()
     if scan_subdirs:
         placeholders = ",".join("?" for _ in scan_subdirs)
         rows = conn.execute(
-            f"SELECT filepath, mtime FROM library_tracks WHERE stream_subdir IN ({placeholders})",
+            f"SELECT filepath, mtime, trashed FROM library_tracks WHERE stream_subdir IN ({placeholders})",
             list(scan_subdirs),
         ).fetchall()
     else:
-        rows = conn.execute("SELECT filepath, mtime FROM library_tracks").fetchall()
+        rows = conn.execute("SELECT filepath, mtime, trashed FROM library_tracks").fetchall()
     conn.close()
     existing_mtimes = {r["filepath"]: r["mtime"] for r in rows}
+    existing_trashed = {r["filepath"] for r in rows if r["trashed"]}
     existing_paths = set(existing_mtimes.keys())
 
     scanned_paths = set()
@@ -534,7 +537,17 @@ def _scan_files(files):
         scanned_paths.add(filepath)
 
         if filepath in existing_mtimes:
-            # Already known, skip
+            if filepath in existing_trashed:
+                # Was trashed but file is back on disk — revive it (keeps ID)
+                db.upsert_library_track({
+                    "filepath": filepath,
+                    "filename": os.path.basename(filepath),
+                    "stream_subdir": stream_subdir,
+                    "size_bytes": 0,
+                    "mtime": existing_mtimes[filepath],
+                })
+                existing_trashed.discard(filepath)
+            # Already known (active or just revived), skip
             with _scan_lock:
                 _scan_status["files_scanned"] += 1
                 total = _scan_status["files_total"]
@@ -583,10 +596,80 @@ def _scan_files(files):
             total = _scan_status["files_total"]
             _scan_status["progress"] = int(_scan_status["files_scanned"] / total * 100) if total else 0
 
-    # Cleanup: remove DB entries for files that no longer exist on disk
-    removed = existing_paths - scanned_paths
-    for path in removed:
-        db.delete_library_track_by_path(path)
+    # --- Cleanup: handle DB entries for files no longer seen by the scan ---
+    #
+    # This used to blindly DELETE every row that wasn't seen this run, which
+    # cascade-wiped playlist_tracks + cue_points whenever an NAS subdir
+    # was momentarily empty/unmounted/half-listed. After 12k tracks vanished
+    # on 2026-04-09, this was hardened with three safeguards:
+    #   1. Double-check os.path.isfile() per row before doing anything — the
+    #      scan walker can miss files due to NAS hiccups, race conditions,
+    #      or the dir being briefly inaccessible.
+    #   2. Soft-delete (set trashed=1) instead of DELETE — playlist + cue
+    #      links survive, the row can be revived by a later scan that finds
+    #      the file again.
+    #   3. Per-subdir plausibility brake: if a single scan would touch more
+    #      than 10% of a subdir's tracks (and at least 5 rows), abort that
+    #      subdir's cleanup with a loud warning. This catches the failure
+    #      mode where a subdir's listing is partially or fully missing.
+    candidate_removed = existing_paths - scanned_paths
+    if candidate_removed:
+        # Group candidates by subdir, and load subdir totals from DB so we can
+        # compute the percentage of each subdir we'd be touching.
+        conn = db.get_db()
+        rows = conn.execute(
+            "SELECT id, filepath, stream_subdir FROM library_tracks WHERE filepath IN ("
+            + ",".join("?" * len(candidate_removed)) + ")",
+            list(candidate_removed),
+        ).fetchall()
+        candidates_by_subdir = {}
+        for r in rows:
+            candidates_by_subdir.setdefault(r["stream_subdir"], []).append(
+                (r["id"], r["filepath"])
+            )
+
+        subdir_totals = {}
+        for subdir in candidates_by_subdir:
+            tot = conn.execute(
+                "SELECT COUNT(*) c FROM library_tracks WHERE stream_subdir = ?",
+                (subdir,),
+            ).fetchone()
+            subdir_totals[subdir] = tot["c"] if tot else 0
+        conn.close()
+
+        for subdir, items in candidates_by_subdir.items():
+            total = subdir_totals.get(subdir, 0)
+            pct = (len(items) / total * 100) if total > 0 else 0
+            if len(items) >= 5 and pct > 10.0:
+                log.error(
+                    "Library cleanup REFUSED for subdir %r: would touch %d/%d "
+                    "rows (%.1f%%) — likely an NAS visibility problem, not real "
+                    "deletions. Skipping cleanup for this subdir.",
+                    subdir, len(items), total, pct,
+                )
+                continue
+            # Per-row physical re-check + soft delete
+            soft_deleted = 0
+            for tid, fp in items:
+                if os.path.isfile(fp):
+                    # Scan missed it but it's actually there. Don't touch.
+                    continue
+                try:
+                    c = db.get_db()
+                    c.execute(
+                        "UPDATE library_tracks SET trashed = 1 WHERE id = ?",
+                        (tid,),
+                    )
+                    c.commit()
+                    c.close()
+                    soft_deleted += 1
+                except Exception as e:
+                    log.error("Soft-delete failed for %s: %s", fp, e)
+            if soft_deleted:
+                log.info(
+                    "Library cleanup: soft-deleted %d missing file(s) in %r",
+                    soft_deleted, subdir,
+                )
 
     # Phase 1.5: Deduplicate by Artist+Title
     try:

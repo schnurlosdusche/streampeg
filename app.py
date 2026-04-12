@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.160a"
+VERSION = "0.0.168a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -611,12 +611,18 @@ def settings():
                            skip_unusable=skip_unusable,
                            languages=i18n.LANGUAGES,
                            backups=backup.list_backups(),
-                           crossfade_sec=int(db.get_setting("autodj_crossfade") or 10))
+                           crossfade_sec=int(db.get_setting("autodj_crossfade") or 10),
+                           outro_threshold_pct=int(db.get_setting("autodj_outro_threshold") or 30),
+                           outro_max_sec=int(db.get_setting("autodj_outro_max") or 15))
 
 
 @app.route("/api/settings/autodj")
 def api_settings_autodj():
-    return jsonify({"crossfade_sec": int(db.get_setting("autodj_crossfade") or 10)})
+    return jsonify({
+        "crossfade_sec": int(db.get_setting("autodj_crossfade") or 10),
+        "outro_threshold_pct": int(db.get_setting("autodj_outro_threshold") or 30),
+        "outro_max_sec": int(db.get_setting("autodj_outro_max") or 15),
+    })
 
 
 @app.route("/settings/skip-unusable/toggle", methods=["POST"])
@@ -631,6 +637,22 @@ def settings_autodj_fade():
     data = request.get_json() or {}
     sec = max(3, min(30, int(data.get("seconds", 10))))
     db.set_setting("autodj_crossfade", str(sec))
+    return jsonify({"ok": True, "seconds": sec})
+
+
+@app.route("/settings/autodj/outro-threshold", methods=["POST"])
+def settings_autodj_outro_threshold():
+    data = request.get_json() or {}
+    pct = max(5, min(95, int(data.get("percent", 30))))
+    db.set_setting("autodj_outro_threshold", str(pct))
+    return jsonify({"ok": True, "percent": pct})
+
+
+@app.route("/settings/autodj/outro-max", methods=["POST"])
+def settings_autodj_outro_max():
+    data = request.get_json() or {}
+    sec = max(3, min(60, int(data.get("seconds", 15))))
+    db.set_setting("autodj_outro_max", str(sec))
     return jsonify({"ok": True, "seconds": sec})
 
 
@@ -1124,6 +1146,17 @@ def api_cast_stop():
     return jsonify({"success": True, "message": f"Cast gestoppt"})
 
 
+@app.route("/api/cast/stop-external", methods=["POST"])
+def api_cast_stop_external():
+    """Stop an externally-playing device (not a streampeg-initiated cast)."""
+    data = request.get_json(silent=True) or {}
+    device_id = data.get("device_id")
+    if not device_id:
+        return jsonify({"success": False, "error": "device_id required"}), 400
+    ok, msg = cast.stop_cast(device_id)
+    return jsonify({"success": ok, "message": msg})
+
+
 @app.route("/api/cast/seek", methods=["POST"])
 def api_cast_seek():
     """Seek a cast device to a specific position in seconds."""
@@ -1160,11 +1193,67 @@ def api_cast_pause():
 def api_cast_player():
     """Return all data needed for the global player bar."""
     active = cast.get_active_casts()
-    if not active:
-        return jsonify({"active": False})
-
     devices = cast.discover_devices()
     dev_map = {d["id"]: d for d in devices}
+
+    # --- External playback: detect Sonos/LMS devices that are currently
+    # playing something streampeg did NOT initiate, and surface them in the
+    # player bar as read-only "external" players. ---
+    #
+    # Skip LMS devices that are sync-grouped with an active streampeg cast —
+    # they're not independent sources, just sync partners.
+    external_players = []
+    taken_device_ids = set(active.keys())
+    # Build set of LMS player_ids that are actively cast by streampeg,
+    # plus their sync-group partners.
+    _lms_cast_group = set()
+    for did in taken_device_ids:
+        dev = dev_map.get(did)
+        if dev and dev.get("type") == "lms":
+            pid = dev.get("player_id", "")
+            _lms_cast_group.add(pid)
+            # Query LMS for sync partners
+            result = cast._lms_request(
+                dev["host"], dev.get("port", 9000), pid, ["sync", "?"]
+            )
+            if result:
+                sync_ids = result.get("result", {}).get("_sync", "")
+                if sync_ids and sync_ids != "-":
+                    for partner in sync_ids.split(","):
+                        _lms_cast_group.add(partner.strip())
+
+    for d in devices:
+        if d["id"] in taken_device_ids:
+            continue
+        if d["type"] not in ("sonos", "lms"):
+            continue
+        if d["type"] == "sonos" and not d.get("enabled", False):
+            continue
+        # Skip LMS sync-group partners of active casts
+        if d["type"] == "lms" and d.get("player_id", "") in _lms_cast_group:
+            continue
+        np = cast.get_device_now_playing(d)
+        if not np or np.get("mode") != "play":
+            continue
+        artist = np.get("artist", "") or ""
+        title = np.get("title", "") or ""
+        track_name = (artist + " - " + title) if (artist and title) else (title or artist)
+        vol = cast.get_volume(d["id"])
+        external_players.append({
+            "stream_id": 0,
+            "stream_name": d["type"].upper(),
+            "device_id": d["id"],
+            "device_name": d.get("name", d["id"]),
+            "device_type": d.get("type", ""),
+            "current_track": track_name,
+            "cover_url": np.get("cover_url"),
+            "volume": vol,
+            "running": True,
+            "external": True,
+        })
+
+    if not active and not external_players:
+        return jsonify({"active": False})
 
     # Get stream status for active casts
     players = []
@@ -1275,6 +1364,9 @@ def api_cast_player():
             "volume": vol,
             "running": st.get("running", False),
         })
+
+    # Append external players (read-only, not tied to a streampeg cast)
+    players.extend(external_players)
 
     # All available speakers for multiroom toggle
     all_speakers = []
@@ -1921,7 +2013,10 @@ def api_stream_probe_bitrate(stream_id):
 
 @app.route("/api/library/track/<int:track_id>/rescan-bpmkey", methods=["POST"])
 def api_library_track_rescan_bpmkey(track_id):
-    """Re-run BPM/Key detection for a single track."""
+    """Re-run BPM/Key detection for a single track.
+    Uses the same backend (essentia/aubio) as the daemon scan so results
+    are consistent. Falls back to autotag.detect_key() only when the
+    configured backend has no key detection (aubio)."""
     track = db.get_library_track(track_id)
     if not track:
         return jsonify({"error": "not found"}), 404
@@ -1929,12 +2024,16 @@ def api_library_track_rescan_bpmkey(track_id):
     if not os.path.isfile(filepath):
         return jsonify({"error": "file not found"}), 404
     try:
-        bpm = autotag.detect_bpm(filepath)
-        key = autotag.detect_key(filepath)
+        import bpm_analyzer
+        backend = db.get_setting("bpm_backend") or "aubio"
+        bpm, key = bpm_analyzer._analyze_track(filepath, backend)
+        # aubio has no key detection — fall back to autotag
+        if not key or key == "-":
+            key = autotag.detect_key(filepath)
         conn = db.get_db()
         if bpm and bpm > 0:
             conn.execute("UPDATE library_tracks SET bpm = ? WHERE id = ?", (bpm, track_id))
-        if key:
+        if key and key != "-":
             conn.execute("UPDATE library_tracks SET key = ? WHERE id = ?", (key, track_id))
         conn.commit()
         conn.close()

@@ -800,6 +800,27 @@ function sortBy(col) {
 }
 
 function _applyPlaylistSortFilter() {
+    // Virtual-scroll refs are normally initialised by renderTracks(); when a
+    // user opens a playlist directly (without first viewing a folder) those
+    // refs are still null and _vsRenderVisible() bails out silently. Make
+    // sure they exist here too, and mirror renderTracks()'s reset steps.
+    _vsTbody = document.getElementById('lib-tbody');
+    _vsScrollWrap = document.querySelector('.lib-table-wrap');
+    var _noTracksEl = document.getElementById('lib-no-tracks');
+    var _pagEl = document.getElementById('lib-pagination');
+    if (_pagEl) _pagEl.innerHTML = '';
+    if (_vsScrollWrap && !_vsScrollWrap._vsListener) {
+        var _vsRaf = null;
+        _vsScrollWrap.addEventListener('scroll', function() {
+            if (_vsRaf || _vsScrollLock) return;
+            _vsRaf = requestAnimationFrame(function() {
+                _vsRaf = null;
+                _vsRenderVisible();
+            });
+        });
+        _vsScrollWrap._vsListener = true;
+    }
+
     var tracks = _playlistTracksRaw.slice();
     // Filter
     var search = (_libFilters.search || '').toLowerCase();
@@ -843,9 +864,20 @@ function _applyPlaylistSortFilter() {
         return 0;
     });
     _libTracks = tracks;
+    _libTotalTracks = tracks.length;
     for (var i = 0; i < tracks.length; i++) _libTrackCache[tracks[i].id] = tracks[i];
+    var countEl = document.getElementById('lib-track-count');
+    if (countEl) countEl.textContent = _libTotalTracks + ' ' + t('library.tracks_count');
+
+    if (_noTracksEl) _noTracksEl.style.display = tracks.length ? 'none' : 'block';
+    if (_vsTbody && !tracks.length) _vsTbody.innerHTML = '';
+
     _vsRenderedStart = -1;
+    _vsRenderedEnd = -1;
     _vsRenderVisible();
+    updateSelectAllCheckbox();
+    _loadListPlaylists();
+    setTimeout(function() { updatePlayButtons(); }, 200);
 }
 
 function updateSortIndicators() {
@@ -1209,6 +1241,12 @@ function _startCastPoll() {
                 var s = Math.floor(elapsed % 60);
                 timeEl.textContent = m + ':' + (s < 10 ? '0' : '') + s;
             }
+            var remEl = document.getElementById('seek-remaining');
+            if (remEl) {
+                var rem = _castTrackDuration - elapsed;
+                if (rem < 0) rem = 0;
+                remEl.textContent = '-' + _fmtTime(rem);
+            }
             // Redraw waveform with progress
             if (typeof _drawWaveform === 'function') _drawWaveform();
         }
@@ -1571,6 +1609,15 @@ function createPlaylist() {
 function _updateBreadcrumb() {
     var bcLink = document.querySelector('#lib-breadcrumb > a');
     var bcCurrent = document.getElementById('lib-bc-folder');
+    if (_isGlobalSearch) {
+        if (bcLink) {
+            bcLink.textContent = t('library.title');
+            bcLink.setAttribute('onclick', 'showFolderView()');
+        }
+        var q = (_libFilters && _libFilters.search) || '';
+        if (bcCurrent) bcCurrent.textContent = '\u2315 ' + q;
+        return;
+    }
     if (_selectedPlaylistId && _playlists) {
         var pl = _playlists.find(function(p) { return p.id === _selectedPlaylistId; });
         if (bcLink) {
@@ -1606,7 +1653,8 @@ function selectPlaylist(id) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             _playlistTracksRaw = (data.tracks || []).slice();
-            renderTracks(data);
+            // Apply current sort/filter (instead of raw position order)
+            _applyPlaylistSortFilter();
             _hideLibLoading();
         })
         .catch(function() { _hideLibLoading(); });
@@ -1945,58 +1993,50 @@ function bindFilters() {
 
 }
 
-/* --- Global search from folder view --- */
+/* --- Global search from folder / playlist overview ---
+   Renders results in the regular track view (same virtual scroll, same
+   row controls: play, edit, favorite, cue, add-to-playlist, cast, ...) */
 var _globalSearchTimer = null;
+var _isGlobalSearch = false;
+function _enterGlobalSearchMode(q) {
+    _isGlobalSearch = true;
+    _selectedPlaylistId = null;
+    _currentFolder = null;
+    _playlistTracksRaw = [];
+    _libFilters = {search: q};
+    _libPage = 1;
+    document.getElementById('lib-folder-view').style.display = 'none';
+    document.getElementById('lib-playlist-overview').style.display = 'none';
+    document.getElementById('lib-track-view').style.display = 'flex';
+    var results = document.getElementById('lib-global-results');
+    if (results) { results.style.display = 'none'; results.innerHTML = ''; }
+    // Keep lib-search-wrap visible so user can keep typing / clearing.
+    document.getElementById('lib-search-wrap').style.display = '';
+    // Mirror query into the in-list search input for consistency.
+    var inline = document.getElementById('lib-search');
+    if (inline) inline.value = q;
+    _updateBreadcrumb();
+    setTimeout(_resizeLibrary, 10);
+    loadTracks();
+}
+function _exitGlobalSearchMode() {
+    _isGlobalSearch = false;
+    _libFilters = {};
+    var inline = document.getElementById('lib-search');
+    if (inline) inline.value = '';
+    showFolderView();
+}
 function initGlobalSearch() {
     var input = document.getElementById('lib-global-search');
     if (!input) return;
     input.addEventListener('input', function() {
         clearTimeout(_globalSearchTimer);
         var q = input.value.trim();
-        var resultsDiv = document.getElementById('lib-global-results');
         if (q.length < 2) {
-            resultsDiv.style.display = 'none';
-            resultsDiv.innerHTML = '';
-            var fg = document.getElementById('lib-folders-grid');
-            var pg = document.getElementById('lib-playlists-grid');
-            if (fg) fg.style.display = '';
-            if (pg) pg.style.display = '';
+            if (_isGlobalSearch) _exitGlobalSearchMode();
             return;
         }
-        _globalSearchTimer = setTimeout(function() {
-            fetch('/api/library/tracks?search=' + encodeURIComponent(q) + '&per_page=50&sort=title&order=asc', {credentials: 'include'})
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    var tracks = data.tracks || [];
-                    if (!tracks.length) {
-                        resultsDiv.innerHTML = '<p style="text-align:center;color:#888;">No results</p>';
-                        resultsDiv.style.display = 'block';
-                        document.getElementById('lib-folders-grid').style.display = 'none';
-                        document.getElementById('lib-playlists-grid').style.display = 'none';
-                        return;
-                    }
-                    var html = '<table class="lib-search-results" style="width:100%;border-collapse:collapse;font-size:0.8rem;">'
-                        + '<thead><tr><th style="text-align:left;padding:0.3rem;">Title</th><th style="text-align:left;padding:0.3rem;">Artist</th><th style="text-align:left;padding:0.3rem;width:120px;">Stream</th><th style="width:50px;">BPM</th><th style="width:50px;">Key</th><th style="width:50px;">&#9201;</th></tr></thead><tbody>';
-                    for (var i = 0; i < tracks.length; i++) {
-                        var tr = tracks[i];
-                        _libTrackCache[tr.id] = tr;
-                        var dur = tr.duration_sec ? formatDuration(tr.duration_sec) : '-';
-                        html += '<tr style="cursor:pointer;" onclick="globalSearchPlay(' + tr.id + ')">'
-                            + '<td style="padding:0.3rem;">' + escHtml(tr.title || '') + '</td>'
-                            + '<td style="padding:0.3rem;">' + escHtml(tr.artist || '') + '</td>'
-                            + '<td style="padding:0.3rem;">' + escHtml(tr.stream_subdir || '') + '</td>'
-                            + '<td style="text-align:center;">' + (tr.bpm || '-') + '</td>'
-                            + '<td style="text-align:center;">' + fmtKey(tr.key) + '</td>'
-                            + '<td style="text-align:center;">' + dur + '</td>'
-                            + '</tr>';
-                    }
-                    html += '</tbody></table>';
-                    resultsDiv.innerHTML = html;
-                    resultsDiv.style.display = 'block';
-                    document.getElementById('lib-folders-grid').style.display = 'none';
-                    document.getElementById('lib-playlists-grid').style.display = 'none';
-                });
-        }, 300);
+        _globalSearchTimer = setTimeout(function() { _enterGlobalSearchMode(q); }, 300);
     });
 }
 
@@ -2164,8 +2204,9 @@ function _resetGlobalSearch() {
 
 function openFolder(subdir) {
     sessionStorage.removeItem('_selectedPlaylistId');
+    _isGlobalSearch = false;
     _currentFolder = subdir;
-    _libFilters.stream = subdir;
+    _libFilters = {stream: subdir};
     _libPage = 1;
 
     document.getElementById('lib-folder-view').style.display = 'none';
@@ -2182,6 +2223,7 @@ function openFolder(subdir) {
 }
 
 function showFolderView() {
+    _isGlobalSearch = false;
     _currentFolder = null;
     _libFilters = {};
     document.getElementById('lib-folder-view').style.display = '';
@@ -2195,6 +2237,7 @@ function showFolderView() {
 }
 
 function showPlaylistOverview() {
+    _isGlobalSearch = false;
     _currentFolder = null;
     _selectedPlaylistId = null;
     _libFilters = {};
@@ -2248,7 +2291,7 @@ function openPlaylist(id) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             _playlistTracksRaw = (data.tracks || []).slice();
-            renderTracks(data);
+            _applyPlaylistSortFilter();
             _hideLibLoading();
         })
         .catch(function() { _hideLibLoading(); });
