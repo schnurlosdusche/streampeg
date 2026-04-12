@@ -281,7 +281,7 @@ function _onPlayerEnded() {
             if (wasLibrary && typeof updatePlayButtons === 'function') updatePlayButtons();
 }
 
-function toggleListen(streamId, url) {
+function toggleListen(streamId, url, stationName) {
     _initBrowserAudio();
     if (_playerStreamId === streamId) {
         stopListen();
@@ -294,12 +294,14 @@ function toggleListen(streamId, url) {
     _isLibraryTrack = false;
     _playerStreamId = streamId;
     _playerStreamUrl = url;
+    _browseStreamName = stationName || '';
     _playerAudio.volume = _browserVolume;
     _playerAudio.src = url;
     _playerAudio.play();
     // Persist in localStorage
     localStorage.setItem('_listenStreamId', streamId);
     localStorage.setItem('_listenStreamUrl', url);
+    if (stationName) localStorage.setItem('_browseStreamName', stationName);
     _updateListenIcons(streamId);
     _refreshPlayerBar();
 }
@@ -375,6 +377,7 @@ function _restoreListenState() {
             _browseStreamName = localStorage.getItem('_browseStreamName') || '';
         } else if (savedId.indexOf('bm-') === 0) {
             _playerStreamId = savedId;
+            _browseStreamName = localStorage.getItem('_browseStreamName') || '';
         } else {
             _playerStreamId = parseInt(savedId);
         }
@@ -707,8 +710,8 @@ function _renderPlayerHTML(p, idx) {
         + '<div class="player-bar-inner">'
         + '<div class="player-cover-wrap">' + coverHtml + '</div>'
         + '<div class="player-info">'
-        + '<div class="player-track">' + (castHasTrack ? _escHtmlPlayer(castTrack) : t('player.waiting_track')) + '</div>'
         + '<div class="player-stream">' + _escHtmlPlayer(p.stream_name) + '</div>'
+        + '<div class="player-track">' + (castHasTrack ? _escHtmlPlayer(castTrack) : t('player.waiting_track')) + '</div>'
         + '</div>'
         + '<div class="player-volume">';
 
@@ -741,17 +744,15 @@ function _renderPlayerHTML(p, idx) {
         + '</div>'
         + '<div class="player-right">';
 
-    // Multiroom only on first player
-    if (idx === 0) {
-        html += '<div class="player-multiroom">'
-            + '<button class="player-btn player-multiroom-btn' + (_multiroomGroupCount > 1 ? ' has-group' : '') + '" onclick="toggleMultiroomPanel()" title="Multiroom">'
-            + '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M18.2 1C15.53 1 13.27 2.56 12.34 4.78l-1.55-.64C11.91 1.33 14.79-1 18.2-1c4.42 0 8 3.58 8 8 0 3.41-2.33 6.29-5.14 7.41l-.64-1.55C22.64 11.73 24.2 9.47 24.2 7c0-3.31-2.69-6-6-6z" transform="scale(0.7) translate(5,5)"/><circle cx="12" cy="12" r="3"/><path d="M7 12c0-2.76 2.24-5 5-5v-2c-3.87 0-7 3.13-7 7s3.13 7 7 7v-2c-2.76 0-5-2.24-5-5z"/></svg>'
-            + '</button>'
-            + '<div id="multiroom-panel" style="display:none;"></div>'
-            + '</div>';
+    // Bitrate above device list
+    var castBr = p.bitrate || _lastStreamStatus[p.stream_id] && _lastStreamStatus[p.stream_id].bitrate || 0;
+    if (castBr) {
+        html += '<div class="player-bitrate-label">' + castBr + ' kbit/s</div>';
     }
-
-    html += '<div class="player-device-name">' + _getActiveDevicesHTML() + '</div>'
+    // Cast button + device badges
+    html += '<div class="player-devices-row">'
+        + '<div class="player-device-badges" data-cast-trigger="1" style="cursor:pointer;">' + _getActiveDevicesHTML() + '</div>'
+        + '</div>'
         + '</div>'
         + '</div></div>';
     return html;
@@ -892,7 +893,7 @@ function _renderBrowserPlayerHTML() {
         // Use cover from _loadLibraryCover (embedded or iTunes), fallback to embedded endpoint
         if (!coverUrl) coverUrl = '/api/library/track/' + _libPlayingTrackId + '/cover';
     }
-    var streamName = (_playerStreamId === 'browse') ? _browseStreamName : (st.stream_name || ('Stream ' + _playerStreamId));
+    var streamName = _browseStreamName || ((_playerStreamId === 'browse') ? '' : (st.stream_name || ('Stream ' + _playerStreamId)));
     var volPct = Math.round(_browserVolume * 100);
 
     var coverHtml = coverUrl
@@ -940,7 +941,9 @@ function _renderBrowserPlayerHTML() {
             + cueMarkers
             + '</div>'
             + '<span class="player-seek-time" id="seek-dur">' + _fmtTime(dur) + '</span>'
-            + '<div class="player-seek-devices">' + _getActiveDevicesHTML() + '</div>'
+            + '<div class="player-seek-devices">'
+            + '<div class="player-device-badges" data-cast-trigger="1" style="cursor:pointer;">' + _getActiveDevicesHTML() + '</div>'
+            + '</div></div>'
             + '</div>';
 
         // Cue buttons row — only for library tracks in browser mode (not for browse/cast)
@@ -996,8 +999,8 @@ function _renderBrowserPlayerHTML() {
         html += '<div class="player-bar-inner">'
             + '<div class="player-cover-wrap">' + coverHtml + '</div>'
             + '<div class="player-info">'
-            + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
             + '<div class="player-stream">' + _escHtmlPlayer(streamName) + '</div>'
+            + '<div class="player-track">' + (hasTrack ? _escHtmlPlayer(trackName) : t('player.waiting_track')) + '</div>'
             + '</div>'
             + '<div class="player-volume">';
     }
@@ -1049,19 +1052,23 @@ function _renderBrowserPlayerHTML() {
         })()
 
         + _renderRepeatButton()
-        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerCastBtn() + _renderPlayerTrashBtn()
+        + (_isLibraryTrack ? _renderHeartBtn() + _renderStarRating() + _renderPlayerPlaylistBtn() + _renderPlayerTrashBtn()
             : _renderStreamHeartBtn())
         + '</div>'
-        + '<div class="player-right">'
-        + _renderPlayerBitrate()
-        + (_isLibraryTrack ? '' : '<div class="player-device-name">' + _getActiveDevicesHTML() + '</div>')
-        + '</div>';
+        + '<div class="player-right">';
 
     if (_isLibraryTrack) {
-        // Close top row, add cue buttons then seek bar as grid rows
-        html += '</div>' + cueHtml + seekHtml + '</div>';
+        html += _renderPlayerBitrate()
+            + '</div>'
+            + '</div>' + cueHtml + seekHtml + '</div>';
     } else {
-        html += '</div></div>';
+        // Stream/browse player: bitrate above, cast button + device badges
+        html += '<div class="player-stream-right">'
+            + _renderPlayerBitrate()
+            + '<div class="player-device-badges" data-cast-trigger="1" style="cursor:pointer;">' + _getActiveDevicesHTML() + '</div>'
+            + '</div>'
+            + '</div>'
+            + '</div></div>';
     }
     return html;
 }
@@ -1527,7 +1534,11 @@ function _showPlayerCastMenu(btn) {
     if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; return; }
 
     var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
-    if (!trackId) return;
+    var streamId = _playerStreamId || (_castStreamBackup ? _castStreamBackup.streamId : null);
+    var hasCastActive = (_playerData && _playerData.players && _playerData.players.length > 0)
+        || (_libCastDeviceIds && _libCastDeviceIds.length > 0) || _castStreamBackup;
+    // Need either a library track, a stream, or an active cast
+    if (!trackId && !streamId && !hasCastActive) return;
 
     var menu = document.createElement('div');
     menu.className = 'cast-menu';
@@ -1535,31 +1546,225 @@ function _showPlayerCastMenu(btn) {
     menu.style.zIndex = '3000';
 
     var rect = btn.getBoundingClientRect();
-    menu.style.left = rect.left + 'px';
+    menu.style.right = (window.innerWidth - rect.left) + 'px';
     menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
 
     var html = '';
-    var isBrowser = !_libCastDeviceIds || _libCastDeviceIds.length === 0;
+    // Determine which devices are active (direct cast + sync/group partners)
+    var activeDeviceIds = {};
+    if (_libCastDeviceIds) _libCastDeviceIds.forEach(function(id) { activeDeviceIds[id] = true; });
+    if (_playerData && _playerData.speakers) {
+        _playerData.speakers.forEach(function(s) { if (s.active_for) activeDeviceIds[s.id] = true; });
+    }
+
+    var isBrowser = !Object.keys(activeDeviceIds).length;
+    var browserAction = trackId ? "castLibraryTrack('browser')" : "_switchToBrowser()";
+    var activeType = (hasCastActive && _playerData && _playerData.players && _playerData.players.length > 0)
+        ? _playerData.players[0].device_type : null;
+
     // Browser option
-    html += '<button class="cast-menu-item' + (isBrowser ? ' cast-menu-active' : '') + '" onclick="castLibraryTrack(\'browser\')">'
-        + '&#9654; Browser <span class="cast-device-badge" style="background:#666;">Local</span></button>';
+    html += '<button class="cast-menu-item' + (isBrowser ? ' cast-menu-active' : '') + '" data-action="' + browserAction + '">'
+        + (isBrowser ? '&#9654; ' : '&#9654; ') + 'Browser <span class="cast-device-badge" style="background:#666;">Local</span></button>';
     if (_castDevicesCache && _castDevicesCache.length > 0) {
         _castDevicesCache.forEach(function(d) {
             if (d.enabled === false) return;
-            var isActive = _libCastDeviceIds && _libCastDeviceIds.indexOf(d.id) !== -1;
+            var isActive = !!activeDeviceIds[d.id];
             var badge = d.type === 'lms'
                 ? '<span class="cast-device-badge badge-lms">LMS</span>'
                 : '<span class="cast-device-badge badge-sonos">Sonos</span>';
-            // Click on active device = stop that device, click on inactive = add it
-            var onclick = isActive ? 'castLibraryTrackStop(\'' + d.id + '\')' : 'castLibraryTrack(\'' + d.id + '\')';
-            html += '<button class="cast-menu-item' + (isActive ? ' cast-menu-active' : '') + '" onclick="' + onclick + '">'
+            var action;
+            if (isActive) {
+                // Active device: stop/remove it
+                if (trackId) {
+                    action = 'castLibraryTrackStop(\'' + d.id + '\')';
+                } else {
+                    action = '_removeDeviceFromGroup(\'' + d.id + '\')';
+                }
+            } else if (trackId) {
+                action = 'castLibraryTrack(\'' + d.id + '\')';
+            } else {
+                // Same type as active cast: add to group. Different type: switch.
+                if (activeType && d.type === activeType) {
+                    var masterId = _playerData.players[0].device_id;
+                    action = '_addDeviceToGroup(\'' + masterId + '\', \'' + d.id + '\')';
+                } else {
+                    action = '_castStreamToDevice(\'' + d.id + '\', ' + JSON.stringify(String(streamId)) + ')';
+                }
+            }
+            html += '<button class="cast-menu-item' + (isActive ? ' cast-menu-active' : '') + '" data-action="' + action.replace(/"/g, '&quot;') + '">'
                 + (isActive ? '&#9632; ' : '&#9654; ') + d.name + badge + '</button>';
         });
     }
 
     menu.innerHTML = html;
+    // Attach click handlers directly (onclick attributes can fail in some contexts)
+    menu.querySelectorAll('.cast-menu-item').forEach(function(item) {
+        var action = item.getAttribute('data-action');
+        if (action) {
+            item.addEventListener('click', function(e) {
+                e.stopPropagation();
+                eval(action);
+            });
+        }
+    });
     document.body.appendChild(menu);
     _playerCastMenu = menu;
+    // Close on outside click
+    setTimeout(function() {
+        document.addEventListener('click', _closePlayerCastMenuOutside);
+    }, 10);
+}
+
+function _closePlayerCastMenuOutside(e) {
+    if (_playerCastMenu && !_playerCastMenu.contains(e.target) && !e.target.closest('[data-cast-trigger]')) {
+        _playerCastMenu.remove();
+        _playerCastMenu = null;
+        document.removeEventListener('click', _closePlayerCastMenuOutside);
+    }
+}
+
+var _castStreamBackup = null; // saved stream info when switching from browser to cast
+
+function _switchToBrowser() {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; }
+    // Stop all active cast devices
+    if (_playerData && _playerData.players) {
+        _playerData.players.forEach(function(p) {
+            fetch('/api/cast/stop', {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({device_id: p.device_id})
+            }).catch(function() {});
+        });
+    }
+    _libCastDeviceIds = [];
+    _libCastDeviceId = null;
+    if (_playerData && _playerData.speakers) {
+        _playerData.speakers.forEach(function(s) { s.active_for = null; });
+    }
+    // Restore browser playback from backup — show player immediately with loading state
+    if (_castStreamBackup && _castStreamBackup.streamUrl) {
+        var backup = _castStreamBackup;
+        _castStreamBackup = null;
+        _playerStreamId = backup.streamId;
+        _playerStreamUrl = backup.streamUrl;
+        _browseStreamName = backup.streamName || '';
+        _browserPaused = true; // show as "loading" until audio plays
+        _browserIcyTrack = '';
+        localStorage.setItem('_listenStreamId', String(backup.streamId));
+        localStorage.setItem('_listenStreamUrl', backup.streamUrl);
+    }
+    // Clear cast player data so the cast bar disappears
+    if (_playerData) {
+        _playerData.active = false;
+        _playerData.players = [];
+    }
+    _lastPlayerKey = '';
+    _refreshPlayerBar();
+
+    // Start audio — player bar is already visible
+    if (_playerStreamUrl) {
+        _initBrowserAudio();
+        _playerAudio.src = _playerStreamUrl;
+        _playerAudio.addEventListener('playing', function _onPlaying() {
+            _playerAudio.removeEventListener('playing', _onPlaying);
+            _browserPaused = false;
+            _lastPlayerKey = '';
+            _refreshPlayerBar();
+        }, {once: true});
+        _playerAudio.play().catch(function() {});
+    }
+}
+
+function _removeDeviceFromGroup(deviceId) {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; }
+    // Stop this device and remove from sync/group
+    fetch('/api/cast/multiroom/remove', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: deviceId})
+    }).then(function() {
+        fetch('/api/cast/stop', {
+            method: 'POST', credentials: 'include',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({device_id: deviceId})
+        }).then(function() { _updatePlayerBar(); });
+    }).catch(function() {});
+}
+
+function _addDeviceToGroup(masterDeviceId, slaveDeviceId) {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; }
+    fetch('/api/cast/multiroom/add', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({master_device_id: masterDeviceId, slave_device_id: slaveDeviceId})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            _updatePlayerBar();
+        } else {
+            alert(data.message || data.error || 'Failed');
+        }
+    }).catch(function() {});
+}
+
+function _castStreamToDevice(deviceId, streamId) {
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; }
+    var castUrl = _playerStreamUrl || (_playerAudio && _playerAudio.src ? _playerAudio.src : '') || '';
+    if (!castUrl) return;
+
+    // Stop browser playback completely — stream switches to the cast device.
+    // Save stream info for switching back to browser later.
+    _castStreamBackup = {streamId: _playerStreamId, streamUrl: _playerStreamUrl, streamName: _browseStreamName};
+    if (_playerAudio) {
+        _playerAudio.pause();
+        _playerAudio.removeAttribute('src');
+        _playerAudio.load();
+    }
+    _playerStreamId = null;
+    _playerStreamUrl = null;
+    _browserPaused = false;
+    _isLibraryTrack = false;
+    localStorage.removeItem('_listenStreamId');
+    localStorage.removeItem('_listenStreamUrl');
+
+    // Resolve the real stream URL for the cast device.
+    // Browser uses proxy URLs (/api/listen?url=... or /stream/X/listen)
+    // but the LMS/Sonos device needs the actual stream URL.
+    var realUrl = castUrl;
+    if (castUrl.indexOf('/api/listen?url=') >= 0) {
+        // Bookmark proxy: extract encoded URL
+        var urlParam = castUrl.split('/api/listen?url=')[1];
+        if (urlParam) realUrl = decodeURIComponent(urlParam.split('&')[0]);
+    } else if (/\/stream\/\d+\/listen/.test(castUrl)) {
+        // Recording stream proxy: resolve via API (need actual stream URL)
+        var sid = castUrl.match(/\/stream\/(\d+)\/listen/)[1];
+        fetch('/api/cast/play', {
+            method: 'POST', credentials: 'include',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({stream_id: parseInt(sid), device_id: deviceId})
+        }).then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) _updatePlayerBar();
+            else alert(data.message || data.error || 'Cast failed');
+        }).catch(function() {});
+        return;
+    }
+
+    // Bookmark cast
+    var bookmarkId = 0;
+    if (String(streamId).indexOf('bm-') === 0) {
+        bookmarkId = parseInt(String(streamId).replace('bm-', ''));
+    }
+    fetch('/api/cast/play-url', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: realUrl, device_id: deviceId, bookmark_id: bookmarkId})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) _updatePlayerBar();
+        else alert(data.message || data.error || 'Cast failed');
+    }).catch(function() {});
 }
 
 function castLibraryTrack(deviceId) {
@@ -1591,26 +1796,38 @@ function castLibraryTrack(deviceId) {
         _castTrackDuration = 0;
         sessionStorage.removeItem('_libCastDeviceIds');
         sessionStorage.removeItem('_castPlayStart');
+        // Clear speaker active states immediately (optimistic)
+        if (_playerData && _playerData.speakers) {
+            _playerData.speakers.forEach(function(s) { s.active_for = null; });
+        }
         // Resume browser audio at the cast position
         if (_playerAudio && _libPlayingTrackId) {
             var trackUrl = '/api/library/track/' + _libPlayingTrackId + '/play';
-            if (!_playerAudio.src || !_playerAudio.src.includes('/play')) {
-                _initBrowserAudio();
-                _playerAudio.src = trackUrl;
-            }
-            _playerAudio.currentTime = castPosition;
-            _playerAudio.play().catch(function() {});
+            _initBrowserAudio();
+            _playerAudio.src = trackUrl;
+            // Seek after enough data is loaded, then play
+            var _seekPos = castPosition;
+            _playerAudio.addEventListener('loadedmetadata', function _onMeta() {
+                _playerAudio.removeEventListener('loadedmetadata', _onMeta);
+                if (_seekPos > 0) _playerAudio.currentTime = _seekPos;
+                _playerAudio.play().catch(function() {});
+            }, {once: true});
+            _playerAudio.load();
             _browserPaused = false;
         }
+        _lastPlayerKey = ''; // Force re-render
         _refreshPlayerBar();
         return;
     }
+
+    // Pass current browser position so the cast device continues mid-song
+    var curPos = (_playerAudio && _playerAudio.currentTime > 0) ? _playerAudio.currentTime : 0;
 
     // Add cast device (don't stop previous — allow multi-cast)
     fetch('/api/cast/play-library', {
         method: 'POST', credentials: 'include',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({track_id: trackId, device_id: deviceId})
+        body: JSON.stringify({track_id: trackId, device_id: deviceId, position: curPos})
     }).then(function(r) { return r.json(); })
     .then(function(data) {
         if (!data.success) { alert(data.message || data.error); return; }
@@ -1637,7 +1854,7 @@ function castLibraryTrack(deviceId) {
         _startCastPoll();
         var _tid = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
         var _tr = (_tid && typeof _libTrackCache !== 'undefined') ? _libTrackCache[_tid] : null;
-        _castPlayStart = Date.now() / 1000;
+        _castPlayStart = (Date.now() / 1000) - curPos; // offset by browser position
         _castTrackDuration = (_tr && _tr.duration_sec) ? _tr.duration_sec : 0;
         // Persist cast state for page reload
         sessionStorage.setItem('_libCastDeviceIds', JSON.stringify(_libCastDeviceIds));
@@ -1674,7 +1891,7 @@ function _getLibCastNames() {
     return names.join(', ');
 }
 
-var _speakerIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;flex-shrink:0;"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
+var _speakerIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;flex-shrink:0;"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
 
 function _getActiveDevicesHTML() {
     var devices = [];
@@ -2498,7 +2715,7 @@ function _refreshPlayerBarNow() {
 
     if (_multiroomOpen && hasCast) {
         _renderMultiroomPanel(_playerData);
-        var _mrPanel = document.getElementById('multiroom-panel');
+        var _mrPanel = _findVisibleMultiroomPanel();
         if (_mrPanel) _mrPanel.style.display = '';
     }
 }
@@ -2672,16 +2889,32 @@ document.addEventListener('touchend', function() {
 });
 
 // Multiroom panel
+function _findVisibleMultiroomPanel() {
+    // Find the multiroom-panel that's inside a visible player bar
+    var panels = document.querySelectorAll('.multiroom-panel');
+    for (var i = 0; i < panels.length; i++) {
+        var bar = panels[i].closest('.player-bar');
+        if (bar && bar.offsetParent !== null) return panels[i];
+    }
+    return panels[0] || null;
+}
+
 function toggleMultiroomPanel() {
     _multiroomOpen = !_multiroomOpen;
-    var panel = document.getElementById('multiroom-panel');
-    if (_multiroomOpen && _playerData) {
-        _renderMultiroomPanel(_playerData);
+    var panel = _findVisibleMultiroomPanel();
+    if (_multiroomOpen && panel) {
+        _renderMultiroomPanel(_playerData || {});
+        // Position panel above the button that triggered it
+        var btn = document.querySelector('.player-multiroom-btn') || document.querySelector('.player-cast-btn');
+        if (btn) {
+            var rect = btn.getBoundingClientRect();
+            panel.style.right = (window.innerWidth - rect.right) + 'px';
+            panel.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+        }
         panel.style.display = '';
     } else if (panel) {
         panel.style.display = 'none';
     }
-    // Close on outside click — use class-based check since DOM may be re-rendered
     if (_multiroomOpen) {
         setTimeout(function() {
             document.addEventListener('click', _closeMultiroomOutside);
@@ -2692,26 +2925,30 @@ function toggleMultiroomPanel() {
 }
 
 function _closeMultiroomOutside(e) {
-    // Check by class/id since the actual DOM elements may have been re-rendered
-    if (e.target.closest('#multiroom-panel') || e.target.closest('.player-multiroom-btn')) return;
+    if (e.target.closest('.multiroom-panel') || e.target.closest('.player-multiroom-btn') || e.target.closest('.player-device-badges') || e.target.closest('.cast-menu')) return;
     _multiroomOpen = false;
-    var panel = document.getElementById('multiroom-panel');
-    if (panel) panel.style.display = 'none';
+    document.querySelectorAll('.multiroom-panel').forEach(function(p) { p.style.display = 'none'; });
     document.removeEventListener('click', _closeMultiroomOutside);
 }
 
 function _renderMultiroomPanel(data) {
-    var panel = document.getElementById('multiroom-panel');
-    if (!panel || !data.players || data.players.length === 0) return;
+    var panel = _findVisibleMultiroomPanel();
+    if (!panel) return;
 
-    var masterDeviceId = data.players[0].device_id;
-    var masterType = data.players[0].device_type;
+    var masterDeviceId = (data.players && data.players.length > 0) ? data.players[0].device_id : null;
+    var masterType = (data.players && data.players.length > 0) ? data.players[0].device_type : null;
     var speakers = data.speakers || [];
+    // If no speakers from server data, use cached devices
+    if (!speakers.length && _castDevicesCache) {
+        speakers = _castDevicesCache.map(function(d) {
+            return {id: d.id, name: d.name, type: d.type, active_for: null};
+        });
+    }
 
     var html = '';
     speakers.forEach(function(s) {
-        // Only show speakers of the same type as master
-        if (s.type !== masterType) return;
+        // If we have a master, only show same type; if no master, show all
+        if (masterType && s.type !== masterType) return;
         var isActive = !!s.active_for;
         var isMaster = (s.id === masterDeviceId);
         var checkCls = 'multiroom-check' + (isActive ? ' checked' : '');
@@ -2732,7 +2969,20 @@ function _renderMultiroomPanel(data) {
 function toggleMultiroomSpeaker(speakerId, isActive, isMaster) {
     if (isMaster) return; // Can't remove master
 
-    var masterDeviceId = _playerData.players[0].device_id;
+    var masterDeviceId = (_playerData && _playerData.players && _playerData.players.length > 0)
+        ? _playerData.players[0].device_id : null;
+
+    // No active cast yet — cast the current stream/track to this device
+    if (!masterDeviceId) {
+        var trackId = (typeof _libPlayingTrackId !== 'undefined') ? _libPlayingTrackId : null;
+        if (trackId) {
+            castLibraryTrack(speakerId);
+        } else if (_playerStreamId && _playerStreamUrl) {
+            _castStreamToDevice(speakerId, String(_playerStreamId));
+        } else {
+        }
+        return;
+    }
 
     // Optimistic UI update: toggle the checkbox immediately
     if (_playerData && _playerData.speakers) {
@@ -2943,6 +3193,15 @@ _restoreListenState();
 
 // Initialize browser volume state for slider
 _getVolState('browser').value = Math.round(_browserVolume * 100);
+
+// Global click handler: open cast menu when clicking device badges
+document.addEventListener('click', function(e) {
+    var trigger = e.target.closest('[data-cast-trigger]');
+    if (trigger) {
+        e.stopPropagation();
+        _showPlayerCastMenu(trigger);
+    }
+});
 
 // Start polling (10s interval to reduce load)
 setInterval(updateStatus, 10000);

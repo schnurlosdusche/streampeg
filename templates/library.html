@@ -1167,6 +1167,7 @@ function playLibraryTrack(trackId, title, artist, streamSubdir) {
     sessionStorage.setItem('_libPlayingTrackId', trackId);
     sessionStorage.setItem('_browserLibStream', _browserLibStream);
     _refreshPlayerBar();
+    _updatePlayerBar(); // Fetch speaker data so device badges appear immediately
     updatePlayButtons();
 
     // Load cue points and rating for this track

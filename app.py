@@ -1059,10 +1059,11 @@ def api_cast_play_url():
 
 @app.route("/api/cast/play-library", methods=["POST"])
 def api_cast_play_library():
-    """Cast a library track to a device."""
+    """Cast a library track to a device, optionally starting at a position."""
     data = request.get_json() or {}
     track_id = data.get("track_id")
     device_id = data.get("device_id")
+    position = float(data.get("position", 0) or 0)
     if not track_id or not device_id:
         return jsonify({"success": False, "error": "track_id and device_id required"}), 400
 
@@ -1087,6 +1088,14 @@ def api_cast_play_library():
     ok, msg = cast.cast_stream(track_url, device_id)
     if ok:
         cast.set_active_cast(-int(track_id), device_id)  # negative ID = library track
+        # Seek to the browser's current position so playback continues mid-song.
+        # Delayed slightly so LMS has time to start the stream before seeking.
+        if position > 1:
+            def _delayed_seek(did, pos):
+                import time as _t
+                _t.sleep(0.5)
+                cast.seek_device(did, pos)
+            threading.Thread(target=_delayed_seek, args=(device_id, position), daemon=True).start()
     return jsonify({"success": ok, "message": msg})
 
 

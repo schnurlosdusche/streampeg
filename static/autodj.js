@@ -9,6 +9,8 @@ var AutoDJ = {
     set enabled(v) { localStorage.setItem('_autoDJEnabled', v ? '1' : '0'); },
     _history: [],
     _fadeDuration: parseInt(localStorage.getItem('_autoDJFade') || '10') * 1000,
+    _outroThreshold: parseFloat(localStorage.getItem('_autoDJOutroThreshold') || '0.3'),
+    _outroMaxSec: parseInt(localStorage.getItem('_autoDJOutroMax') || '15'),
     _fading: false,
     _originalVolume: null,
     _fadeInterval: null,
@@ -192,11 +194,12 @@ var AutoDJ = {
             ? _playerAudio.duration : (typeof _libTrackDuration !== 'undefined' ? _libTrackDuration : 0);
         if (!dur || dur <= 0) return AutoDJ._fadeDuration / 1000;
 
-        // Scan from the end backwards — find where volume drops below 30% of track average
+        // Scan from the end backwards — find where volume drops below the configured
+        // percentage of the track average (default 30%).
         var sum = 0;
         for (var i = 0; i < bars; i++) sum += _waveformData[i];
         var avg = sum / bars;
-        var threshold = avg * 0.3;
+        var threshold = avg * AutoDJ._outroThreshold;
 
         // Find the point where the track starts getting quiet near the end
         var outroBar = bars;
@@ -213,8 +216,8 @@ var AutoDJ = {
         }
 
         var outroSec = dur - (outroBar / bars * dur);
-        // Clamp between 5s and 15s
-        outroSec = Math.max(5, Math.min(15, outroSec));
+        // Clamp between 5s and the configured max restzeit (default 15s)
+        outroSec = Math.max(5, Math.min(AutoDJ._outroMaxSec, outroSec));
         return outroSec;
     },
 
@@ -484,6 +487,14 @@ function _initAutoDJ() {
             if (data.crossfade_sec) {
                 AutoDJ._fadeDuration = data.crossfade_sec * 1000;
                 localStorage.setItem('_autoDJFade', data.crossfade_sec);
+            }
+            if (data.outro_threshold_pct) {
+                AutoDJ._outroThreshold = data.outro_threshold_pct / 100;
+                localStorage.setItem('_autoDJOutroThreshold', AutoDJ._outroThreshold);
+            }
+            if (data.outro_max_sec) {
+                AutoDJ._outroMaxSec = data.outro_max_sec;
+                localStorage.setItem('_autoDJOutroMax', data.outro_max_sec);
             }
         }).catch(function() {});
 }
