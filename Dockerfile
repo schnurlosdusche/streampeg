@@ -8,7 +8,7 @@ RUN apt-get update && \
         rsync \
         procps \
         curl \
-        ionice \
+        util-linux \
         libchromaprint-tools \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,9 +18,13 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 WORKDIR /app
 
-# Python dependencies
+# Python dependencies (aubio needs gcc + dev headers to build)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc python3-dev pkg-config libffi-dev && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apt-get purge -y gcc python3-dev pkg-config libffi-dev && \
+    apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Application code
 COPY *.py ./
