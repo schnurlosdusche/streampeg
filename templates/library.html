@@ -2464,6 +2464,13 @@ function openTrackEditor(trackId) {
     if (slider) slider.value = 1;
     document.getElementById('ed-zoom-label').textContent = '1x';
 
+    // Pause main player while editing
+    if (_playerAudio && !_playerAudio.paused) {
+        _playerAudio.pause();
+        _browserPaused = true;
+        _refreshPlayerBar();
+    }
+
     // Show modal
     var modal = document.getElementById('track-editor-modal');
     modal.style.display = 'flex';

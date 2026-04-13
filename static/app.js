@@ -2472,6 +2472,12 @@ function _seekFromEvent(e) {
         if (dur > 0) {
             _lastSeekTime = Date.now();
             _playerAudio.currentTime = pct * dur;
+            // Auto-play after seek if paused (user clicked the waveform = intent to play)
+            if (_playerAudio.paused && _isLibraryTrack) {
+                _playerAudio.play().catch(function() {});
+                _browserPaused = false;
+                _refreshPlayerBar();
+            }
         }
     }
     var fill = document.getElementById('seek-fill');
