@@ -5,18 +5,18 @@ services:
     build: .
     container_name: streampeg
     restart: unless-stopped
-    ports:
-      - "5001:5000"
+    network_mode: host
     environment:
-      - SR_UI_SECRET=${SR_UI_SECRET:-change-me-in-production}
+      - SR_UI_SECRET=${SR_UI_SECRET:-streampeg-secret}
       - SR_LIBRARY_PATH=/library
+      - SR_UI_PASSWORD=${SR_UI_PASSWORD:-streaming}
     volumes:
-      - /mnt/user/appdata/streampeg:/data           # DB auf Unraid appdata
-      - /tmp/streampeg-recording:/recording          # temp Aufnahmen
-      - /mnt/user/streams:/library                   # Ziel-Share fuer Songs
+      - /mnt/user/appdata/streampeg:/data
+      - /tmp/streampeg-recording:/recording
+      - /mnt/user/streams:/library
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 3

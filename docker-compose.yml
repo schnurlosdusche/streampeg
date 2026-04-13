@@ -3,17 +3,20 @@ services:
     build: .
     container_name: streampeg
     restart: unless-stopped
-    ports:
-      - "5001:5000"
+    # Host network required for LMS/Sonos/SlimProto device discovery
+    # (UDP broadcast, mDNS, SlimProto on port 3483)
+    network_mode: host
     environment:
-      - SR_UI_SECRET=${SR_UI_SECRET:-change-me-in-production}
+      - SR_UI_SECRET=${SR_UI_SECRET:-streampeg-secret}
       - SR_LIBRARY_PATH=/library
+      - SR_UI_PASSWORD=${SR_UI_PASSWORD:-streaming}
     volumes:
       - ./data:/data                # DB + persistent state
-      - ./library:/library          # Music library (local storage)
+      - ./recording:/recording      # Temporary recordings (synced to library)
+      - ./library:/library          # Music library / NAS mount
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 3

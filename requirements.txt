@@ -4,3 +4,4 @@ mutagen
 aubio
 numpy
 requests
+aioslimproto
