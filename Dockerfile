@@ -10,6 +10,7 @@ RUN apt-get update && \
         curl \
         util-linux \
         libchromaprint-tools \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp: latest binary from GitHub (YouTube/SoundCloud downloads)
