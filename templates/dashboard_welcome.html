@@ -1,9 +1,71 @@
 {% extends "base.html" %}
 {% block title %}dashboard - streampeg{% endblock %}
 {% block content %}
-<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:50vh;text-align:center;">
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:40vh;text-align:center;">
     <img src="{{ url_for('static', filename='streampeg.svg') }}" alt="streampeg" style="height:120px;margin-bottom:1.5rem;opacity:0.8;">
     <h2 style="margin:0;font-size:1.4rem;color:#ccc;">welcome to streampeg</h2>
     <p style="color:#888;font-size:0.9rem;margin-top:0.5rem;">v{{ version }}</p>
+</div>
+
+<p style="max-width:700px;margin:2rem auto;padding:0 1rem;font-size:0.75rem;color:#888;line-height:1.8;text-align:center;">
+    powered by
+    <a href="https://ffmpeg.org" target="_blank" style="color:#bbb;">FFmpeg</a> &middot;
+    <a href="http://streamripper.sourceforge.net" target="_blank" style="color:#bbb;">Streamripper</a> &middot;
+    <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" style="color:#bbb;">yt-dlp</a> &middot;
+    <a href="https://essentia.upf.edu" target="_blank" style="color:#bbb;">Essentia</a> &middot;
+    <a href="https://aubio.org" target="_blank" style="color:#bbb;">aubio</a> &middot;
+    <a href="https://acoustid.org" target="_blank" style="color:#bbb;">AcoustID</a> &middot;
+    <a href="https://acoustid.org/chromaprint" target="_blank" style="color:#bbb;">Chromaprint</a> &middot;
+    <a href="https://musicbrainz.org" target="_blank" style="color:#bbb;">MusicBrainz</a> &middot;
+    <a href="https://coverartarchive.org" target="_blank" style="color:#bbb;">Cover Art Archive</a> &middot;
+    <a href="https://mutagen.readthedocs.io" target="_blank" style="color:#bbb;">Mutagen</a> &middot;
+    <a href="https://github.com/home-assistant-libs/aioslimproto" target="_blank" style="color:#bbb;">aioslimproto</a> &middot;
+    <a href="https://github.com/SoCo/SoCo" target="_blank" style="color:#bbb;">SoCo</a> &middot;
+    <a href="https://flask.palletsprojects.com" target="_blank" style="color:#bbb;">Flask</a> &middot;
+    <a href="https://picocss.com" target="_blank" style="color:#bbb;">Pico CSS</a> &middot;
+    <a href="https://numpy.org" target="_blank" style="color:#bbb;">NumPy</a> &middot;
+    <a href="https://docs.python-requests.org" target="_blank" style="color:#bbb;">Requests</a> &middot;
+    <a href="https://www.radio-browser.info" target="_blank" style="color:#bbb;">Radio Browser</a> &middot;
+    <a href="https://www.sqlite.org" target="_blank" style="color:#bbb;">SQLite</a>
+</p>
+
+<div style="max-width:700px;margin:3rem auto;padding:0 1rem;">
+    <h4 style="color:#999;font-size:0.85rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:1rem;text-align:center;">Licenses</h4>
+    <p style="font-size:0.75rem;color:#888;line-height:1.7;margin-bottom:1rem;">
+        streampeg is free software released under the
+        <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" style="color:#bbb;">GNU General Public License v3.0</a>.
+        You may copy, distribute and modify the software as long as you track changes in source files and keep all modifications under GPL v3.
+    </p>
+    <p style="font-size:0.7rem;color:#666;line-height:1.7;margin-bottom:0.5rem;">
+        This software incorporates or depends on the following open-source components:
+    </p>
+    <table style="width:100%;font-size:0.7rem;color:#666;border-collapse:collapse;">
+        <thead><tr style="border-bottom:1px solid #333;"><th style="text-align:left;padding:0.3rem 0.5rem;">Component</th><th style="text-align:left;padding:0.3rem 0.5rem;">License</th><th style="text-align:left;padding:0.3rem 0.5rem;">Usage</th></tr></thead>
+        <tbody>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://ffmpeg.org" target="_blank" style="color:#999;">FFmpeg</a></td><td style="padding:0.25rem 0.5rem;">LGPL 2.1 / GPL</td><td style="padding:0.25rem 0.5rem;">External binary</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="http://streamripper.sourceforge.net" target="_blank" style="color:#999;">Streamripper</a></td><td style="padding:0.25rem 0.5rem;">GPL v2</td><td style="padding:0.25rem 0.5rem;">External binary</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://github.com/yt-dlp/yt-dlp" target="_blank" style="color:#999;">yt-dlp</a></td><td style="padding:0.25rem 0.5rem;">Unlicense</td><td style="padding:0.25rem 0.5rem;">External binary</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://essentia.upf.edu" target="_blank" style="color:#999;">Essentia</a></td><td style="padding:0.25rem 0.5rem;">AGPL v3</td><td style="padding:0.25rem 0.5rem;">Subprocess</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://aubio.org" target="_blank" style="color:#999;">aubio</a></td><td style="padding:0.25rem 0.5rem;">GPL v3</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://mutagen.readthedocs.io" target="_blank" style="color:#999;">Mutagen</a></td><td style="padding:0.25rem 0.5rem;">GPL v2+</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://acoustid.org/chromaprint" target="_blank" style="color:#999;">Chromaprint / fpcalc</a></td><td style="padding:0.25rem 0.5rem;">LGPL 2.1</td><td style="padding:0.25rem 0.5rem;">External binary</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://flask.palletsprojects.com" target="_blank" style="color:#999;">Flask</a></td><td style="padding:0.25rem 0.5rem;">BSD 3-Clause</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://picocss.com" target="_blank" style="color:#999;">Pico CSS</a></td><td style="padding:0.25rem 0.5rem;">MIT</td><td style="padding:0.25rem 0.5rem;">CDN</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://numpy.org" target="_blank" style="color:#999;">NumPy</a></td><td style="padding:0.25rem 0.5rem;">BSD 3-Clause</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://docs.python-requests.org" target="_blank" style="color:#999;">Requests</a></td><td style="padding:0.25rem 0.5rem;">Apache 2.0</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://github.com/SoCo/SoCo" target="_blank" style="color:#999;">SoCo</a></td><td style="padding:0.25rem 0.5rem;">MIT</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://github.com/home-assistant-libs/aioslimproto" target="_blank" style="color:#999;">aioslimproto</a></td><td style="padding:0.25rem 0.5rem;">Apache 2.0</td><td style="padding:0.25rem 0.5rem;">Python import</td></tr>
+            <tr><td style="padding:0.25rem 0.5rem;"><a href="https://www.sqlite.org" target="_blank" style="color:#999;">SQLite</a></td><td style="padding:0.25rem 0.5rem;">Public Domain</td><td style="padding:0.25rem 0.5rem;">Python stdlib</td></tr>
+        </tbody>
+    </table>
+    <p style="font-size:0.7rem;color:#666;line-height:1.7;margin-top:1rem;">
+        Music metadata provided by <a href="https://musicbrainz.org" target="_blank" style="color:#999;">MusicBrainz</a> and
+        <a href="https://acoustid.org" target="_blank" style="color:#999;">AcoustID</a>.
+        Cover art from the <a href="https://coverartarchive.org" target="_blank" style="color:#999;">Cover Art Archive</a>.
+        Radio stations from <a href="https://www.radio-browser.info" target="_blank" style="color:#999;">Radio Browser</a> (community-maintained, CC0).
+    </p>
+    <p style="font-size:0.75rem;color:#888;line-height:1.7;margin-top:1.5rem;text-align:center;">
+        Source code: <a href="https://github.com/schnurlosdusche/streampeg" target="_blank" style="color:#bbb;">github.com/schnurlosdusche/streampeg</a>
+    </p>
 </div>
 {% endblock %}
