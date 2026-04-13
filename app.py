@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.169a"
+VERSION = "0.0.170a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -363,6 +363,10 @@ def stream_detail(stream_id):
         "stream_detail.html",
         stream=stream, status=status, tracks=tracks,
         events=events, sync_logs=sync_logs,
+        user_agents=USER_AGENTS, default_ua=DEFAULT_USER_AGENT,
+        module_options=module_manager.get_module_form_options(),
+        module_hints=module_manager.get_module_form_hints(),
+        module_hide_fields=module_manager.get_module_hide_fields(),
     )
 
 
@@ -2217,15 +2221,31 @@ def api_library_track_find():
     if not track_str:
         return jsonify({"found": False})
     conn = db.get_db()
-    # Try matching by filename (most reliable)
+    # Parse "Artist - Title" from ICY string
+    artist_q, title_q = "", track_str
+    if " - " in track_str:
+        parts = track_str.split(" - ", 1)
+        artist_q = parts[0].strip()
+        title_q = parts[1].strip()
+    # Try matching by artist+title first, then filename, then title alone
     fname = track_str.replace(" - ", " - ").replace("/", "_")
-    row = conn.execute(
-        """SELECT id, favorited FROM library_tracks
-           WHERE trashed=0 AND (filename LIKE ? OR title LIKE ?)
-           ORDER BY CASE WHEN stream_subdir=? THEN 0 ELSE 1 END
-           LIMIT 1""",
-        (f"%{fname}%", f"%{track_str}%", stream_subdir),
-    ).fetchone()
+    row = None
+    if artist_q:
+        row = conn.execute(
+            """SELECT id, favorited FROM library_tracks
+               WHERE trashed=0 AND LOWER(artist) LIKE ? AND LOWER(title) LIKE ?
+               ORDER BY CASE WHEN stream_subdir=? THEN 0 ELSE 1 END
+               LIMIT 1""",
+            (f"%{artist_q.lower()}%", f"%{title_q.lower()}%", stream_subdir),
+        ).fetchone()
+    if not row:
+        row = conn.execute(
+            """SELECT id, favorited FROM library_tracks
+               WHERE trashed=0 AND (filename LIKE ? OR title LIKE ?)
+               ORDER BY CASE WHEN stream_subdir=? THEN 0 ELSE 1 END
+               LIMIT 1""",
+            (f"%{fname}%", f"%{track_str}%", stream_subdir),
+        ).fetchone()
     conn.close()
     if row:
         return jsonify({"found": True, "id": row["id"], "favorited": row["favorited"], "mode": "library"})

@@ -50,6 +50,18 @@
     <div id="version-info">v{{ version }}</div>
     <div id="player-container"></div>
 
+    <!-- Stream Test Modal (shared by browse + streams-home) -->
+    <dialog id="test-modal">
+        <article style="max-width:550px;">
+            <header><h3 style="margin:0;">{{ t('test.title') }}</h3></header>
+            <div id="test-log"></div>
+            <footer style="display:flex;gap:8px;justify-content:flex-end;">
+                <a id="test-add" role="button" class="contrast" style="display:none;" href="#">{{ t('browse.add') }}</a>
+                <button id="test-close" class="outline" style="display:none;" onclick="document.getElementById('test-modal').removeAttribute('open')">{{ t('test.close') }}</button>
+            </footer>
+        </article>
+    </dialog>
+
     <script>
     var _t = {{ all_translations_json|tojson }};
     function t(key) { return _t[key] || key; }

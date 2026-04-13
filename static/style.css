@@ -57,7 +57,7 @@ main.container {
 }
 
 .status-skipping {
-    color: #ff9800;
+    color: #9a7040;
     font-weight: normal;
 }
 
@@ -85,7 +85,18 @@ main.container {
     min-width: 0 !important;
 }
 
+.rec-cell .btn-icon { font-size: 14px !important; }
 .actions-cell { white-space: nowrap; }
+.actions-cell .btn-icon {
+    border: none !important;
+    background: none !important;
+    box-shadow: none !important;
+    font-size: 1.35rem !important;
+    padding: 0.1rem 0.25rem !important;
+    opacity: 0.7;
+}
+.actions-cell .btn-icon:hover { opacity: 1; }
+.actions-cell .btn-delete-sm { font-size: 0.85rem !important; }
 
 .btn-start {
     --pico-background-color: #2d6a2d;
@@ -129,14 +140,42 @@ main.container {
     padding: 0.35rem 0.5rem;
     white-space: nowrap;
 }
-#streams-table td:nth-child(1) { white-space: nowrap; }                          /* Name */
-#streams-table td:nth-child(2) { text-align: center; }                          /* Mode */
-#streams-table td:nth-child(4) { white-space: normal; word-break: break-word; } /* Track — wraps */
-#streams-table th:nth-child(5),
-#streams-table td:nth-child(5) { text-align: right; width: 50px; }              /* Tracks */
+#streams-table th:nth-child(1),
+#streams-table td:nth-child(1) { min-width: 30px; max-width: 30px; width: 30px; text-align: center; } /* Mode */
+#streams-table th:nth-child(2),
+#streams-table td:nth-child(2) { width: 25px; text-align: center; }             /* Rec */
+#streams-table td:nth-child(5) { white-space: normal; word-break: break-word; } /* Track info */
 #streams-table th:nth-child(6),
-#streams-table td:nth-child(6) { text-align: right; width: 55px; }              /* Size */
-#streams-table td:nth-child(7) { white-space: nowrap; }                         /* Actions — never wraps */
+#streams-table td:nth-child(6) { min-width: 55px; width: 55px; text-align: right; }  /* Tracks */
+#streams-table th:nth-child(7),
+#streams-table td:nth-child(7) { min-width: 65px; width: 65px; text-align: right; white-space: nowrap; } /* Size */
+#streams-table th:nth-child(8),
+#streams-table td:nth-child(8) { text-align: right; padding-right: 20px; white-space: nowrap; } /* Actions */
+
+/* Bookmarks table (streams home) */
+#bookmarks-table {
+    font-size: 0.78rem;
+    table-layout: auto;
+    width: 100%;
+}
+#bookmarks-table th,
+#bookmarks-table td {
+    padding: 0.35rem 0.5rem;
+    white-space: nowrap;
+}
+#bookmarks-table td:nth-child(4) { white-space: normal; word-break: break-word; } /* Tags */
+#bookmarks-table th:nth-child(5),
+#bookmarks-table td:nth-child(5) { text-align: right; padding-right: 20px; white-space: nowrap; } /* Actions */
+#bookmarks-table .btn-icon {
+    border: none !important;
+    background: none !important;
+    box-shadow: none !important;
+    font-size: 1.35rem !important;
+    padding: 0.1rem 0.25rem !important;
+    opacity: 0.7;
+}
+#bookmarks-table .btn-icon:hover { opacity: 1; }
+#bookmarks-table .btn-delete { font-size: 0.85rem !important; }
 
 button.btn-listen {
     --pico-color: #888 !important;
@@ -153,6 +192,12 @@ button.btn-listen.listening:focus {
 }
 button.btn-listen .listen-waves { display: none; }
 button.btn-listen.listening .listen-waves { display: inline; }
+
+/* Active stream row highlight */
+#streams-table tr.stream-active {
+    outline: 1px solid rgba(255,255,255,0.5);
+    outline-offset: -1px;
+}
 
 /* Cast button & dropdown */
 button.btn-cast {

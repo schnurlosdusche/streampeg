@@ -5,7 +5,7 @@
 {% if not bookmarks %}
 <p style="color:#888;font-size:0.85rem;">no bookmarks yet. add streams from the <a href="{{ url_for('browse') }}">radio browser</a>.</p>
 {% else %}
-<table id="streams-table">
+<table id="bookmarks-table">
     <thead>
         <tr>
             <th>name</th>
@@ -38,7 +38,6 @@
 {% endif %}
 <script>
 function addToRecordings(bookmarkId, btn) {
-    // Get bookmark URL from the row's listen link
     var row = btn.closest('tr');
     var link = row ? row.querySelector('a[onclick]') : null;
     if (!link) return;
@@ -47,56 +46,27 @@ function addToRecordings(bookmarkId, btn) {
     if (!urlMatch) return;
     var streamUrl = decodeURIComponent(urlMatch[1]);
 
-    btn.disabled = true;
-    btn.textContent = '...';
-    btn.title = 'testing stream...';
-
-    // Step 1: Run stream test via SSE
-    var evtSource = new EventSource('/api/test-stream?url=' + encodeURIComponent(streamUrl));
-    evtSource.onmessage = function(e) {
-        var data = JSON.parse(e.data);
-        if (data.step) {
-            btn.textContent = data.step + '/7';
-        }
-        if (data.done) {
-            evtSource.close();
-            if (data.suitable && data.best_mode) {
-                // Step 2: Create recording stream with recommended mode
-                fetch('/api/stream-bookmarks/' + bookmarkId + '/record', {
-                    method: 'POST', credentials: 'include',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({record_mode: data.best_mode})
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(res) {
-                    if (res.success) {
-                        btn.style.color = '#4caf50';
-                        btn.title = 'added (' + data.best_mode + ')';
-                        btn.textContent = '\u2713';
-                    } else if (res.error === 'Stream already exists') {
-                        btn.style.color = '#ff9800';
-                        btn.title = 'already in recordings';
-                        btn.textContent = '\u2713';
-                    } else {
-                        btn.disabled = false;
-                        btn.textContent = '\u25CF';
-                        alert(res.error || 'failed');
-                    }
-                });
-            } else {
-                btn.disabled = false;
+    openTestModal(streamUrl, function(bestMode) {
+        fetch('/api/stream-bookmarks/' + bookmarkId + '/record', {
+            method: 'POST', credentials: 'include',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({record_mode: bestMode})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+            if (res.success) {
+                btn.style.color = '#4caf50';
+                btn.title = 'added (' + bestMode + ')';
+                btn.innerHTML = '\u2713';
+            } else if (res.error === 'Stream already exists') {
                 btn.style.color = '#ff9800';
-                btn.textContent = '!';
-                btn.title = 'stream not suitable for recording';
+                btn.title = 'already in recordings';
+                btn.innerHTML = '\u2713';
+            } else {
+                alert(res.error || 'failed');
             }
-        }
-    };
-    evtSource.onerror = function() {
-        evtSource.close();
-        btn.disabled = false;
-        btn.textContent = '\u25CF';
-        btn.title = 'test failed';
-    };
+        });
+    });
 }
 </script>
 {% endblock %}

@@ -2428,6 +2428,13 @@ function initLibrary() {
 
     loadPlaylists();
 
+    // Direct folder open via ?stream=subdir parameter
+    var streamParam = urlParams.get('stream');
+    if (streamParam) {
+        openFolder(streamParam);
+        return;
+    }
+
     // Default: show folder overview
     document.getElementById('lib-folder-view').style.display = '';
     document.getElementById('lib-track-view').style.display = 'none';

@@ -292,9 +292,17 @@
 <hr>
 
 <h4>Auto-DJ</h4>
-<p><small style="color:var(--pico-muted-color,#888);">Crossfade-Dauer beim automatischen Übergang zwischen Tracks.</small></p>
+<p><small style="color:var(--pico-muted-color,#888);">Crossfade-Dauer beim automatischen Übergang zwischen Tracks (Fallback wenn kein Waveform verfügbar).</small></p>
 <label for="autodj-fade" style="font-size:0.85rem;">Crossfade: <span id="autodj-fade-val">{{ crossfade_sec }}s</span></label>
 <input type="range" id="autodj-fade" min="3" max="30" step="1" value="{{ crossfade_sec }}" oninput="document.getElementById('autodj-fade-val').textContent=this.value+'s'" onchange="saveAutoDJFade(this.value)" style="max-width:300px;">
+
+<p style="margin-top:16px;"><small style="color:var(--pico-muted-color,#888);">Übergangslautstärke: Der Outro-Start wird erkannt, wenn die Trackspur unter diesen Prozentsatz der Durchschnittslautstärke fällt. Niedriger = später einsetzender Crossfade.</small></p>
+<label for="autodj-threshold" style="font-size:0.85rem;">Übergangslautstärke: <span id="autodj-threshold-val">{{ outro_threshold_pct }}%</span></label>
+<input type="range" id="autodj-threshold" min="5" max="95" step="1" value="{{ outro_threshold_pct }}" oninput="document.getElementById('autodj-threshold-val').textContent=this.value+'%'" onchange="saveAutoDJThreshold(this.value)" style="max-width:300px;">
+
+<p style="margin-top:16px;"><small style="color:var(--pico-muted-color,#888);">Max. Restzeit beim alten Song: Spätestens so viele Sekunden vor Track-Ende beginnt der Crossfade (Obergrenze der Waveform-Outro-Erkennung).</small></p>
+<label for="autodj-outro-max" style="font-size:0.85rem;">Max. Restzeit: <span id="autodj-outro-max-val">{{ outro_max_sec }}s</span></label>
+<input type="range" id="autodj-outro-max" min="3" max="60" step="1" value="{{ outro_max_sec }}" oninput="document.getElementById('autodj-outro-max-val').textContent=this.value+'s'" onchange="saveAutoDJOutroMax(this.value)" style="max-width:300px;">
 
 <table>
     <tbody>
@@ -589,6 +597,20 @@ pollBpmStatus();
 // --- Auto-DJ ---
 function saveAutoDJFade(val) {
     fetch('/settings/autodj/fade', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({seconds: parseInt(val)})
+    });
+}
+function saveAutoDJThreshold(val) {
+    fetch('/settings/autodj/outro-threshold', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({percent: parseInt(val)})
+    });
+}
+function saveAutoDJOutroMax(val) {
+    fetch('/settings/autodj/outro-max', {
         method: 'POST', credentials: 'include',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({seconds: parseInt(val)})

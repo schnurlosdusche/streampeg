@@ -107,18 +107,35 @@ function updateStatus() {
                     sizeCell.innerHTML = s.disk_usage_mb > 0 ? (s.disk_usage_mb / 1024).toFixed(1) + ' <small style="opacity:0.6">GB</small>' : '-';
                 }
 
-                // Update start/stop button
-                const actions = row.querySelector('.actions-cell');
-                if (actions) {
-                    var startForm = actions.querySelector('.btn-start');
-                    var stopForm = actions.querySelector('.btn-stop');
-                    if (s.running && startForm) {
-                        startForm.closest('form').outerHTML = '<form method="post" action="/stream/' + s.id + '/stop" class="inline"><button type="submit" class="btn-icon btn-stop outline" title="Stop">Stop</button></form>';
-                    } else if (!s.running && stopForm) {
-                        stopForm.closest('form').outerHTML = '<form method="post" action="/stream/' + s.id + '/start" class="inline"><button type="submit" class="btn-icon btn-start" title="Start">Start</button></form>';
+                // Update rec button in rec-cell
+                var recCell = row.querySelector('.rec-cell');
+                if (recCell) {
+                    var recBtn = recCell.querySelector('button');
+                    if (recBtn) {
+                        if (s.running) {
+                            recBtn.innerHTML = '&#9679;';
+                            recBtn.setAttribute('data-running', '1');
+                            recBtn.style.color = '#f44336';
+                            recBtn.title = t('detail.stop');
+                        } else {
+                            recBtn.innerHTML = '&#9679;';
+                            recBtn.setAttribute('data-running', '0');
+                            recBtn.style.color = '#555';
+                            recBtn.title = t('detail.start');
+                        }
                     }
                 }
             });
+            // Update header rec icon based on any running
+            var anyRunning = data.streams.some(function(s){ return s.running; });
+            var recTh = document.querySelector('#streams-table thead th:nth-child(2)');
+            if (recTh) {
+                if (anyRunning) {
+                    recTh.innerHTML = '<span onclick="stopAll(this)" title="' + t('dash.stop_all_title') + '" style="cursor:pointer;font-size:14px;color:#f44336;">&#9679;</span>';
+                } else {
+                    recTh.innerHTML = '<span onclick="startAll(this)" title="' + t('dash.start_all_title') + '" style="cursor:pointer;font-size:14px;color:#555;">&#9679;</span>';
+                }
+            }
         }
         // Refresh player bar with latest stream data
         _refreshPlayerBar();
@@ -421,7 +438,6 @@ function _updateListenIcons(activeId) {
     document.querySelectorAll('.btn-listen').forEach(function(el) {
         var sid = el.getAttribute('data-stream-id');
         if (sid) sid = parseInt(sid);
-        // Also check bookmark buttons (data-bookmark-id on parent tr)
         if (!sid) {
             var tr = el.closest('tr[data-bookmark-id]');
             if (tr) sid = 'bm-' + tr.dataset.bookmarkId;
@@ -430,6 +446,15 @@ function _updateListenIcons(activeId) {
             el.classList.add('listening');
         } else {
             el.classList.remove('listening');
+        }
+    });
+    // Highlight the active stream row on the dashboard
+    document.querySelectorAll('#streams-table tr[data-stream-id]').forEach(function(tr) {
+        var sid = parseInt(tr.getAttribute('data-stream-id'));
+        if (sid == activeId) {
+            tr.classList.add('stream-active');
+        } else {
+            tr.classList.remove('stream-active');
         }
     });
 }
@@ -450,29 +475,61 @@ document.addEventListener('submit', function(e) {
 // --- Start All / Stop All ---
 function startAll(btn) {
     btn.disabled = true;
-    btn.textContent = '...';
+    btn.style.opacity = '0.4';
     fetch('/api/start-all', {method: 'POST', credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest'}})
         .then(r => r.json())
         .then(data => {
-            btn.textContent = data.started + ' ' + t('dash.started');
-            setTimeout(() => { btn.textContent = 'Start All'; btn.disabled = false; }, 2000);
+            btn.innerHTML = '&#9679;';
+            btn.style.color = '#555';
+            btn.disabled = false;
+            btn.style.opacity = '1';
             updateStatus();
         })
-        .catch(() => { btn.textContent = 'Start All'; btn.disabled = false; });
+        .catch(() => { btn.disabled = false; btn.style.opacity = '1'; });
 }
 
 function stopAll(btn) {
-    if (!confirm(t('dash.stop_all_confirm'))) return;
     btn.disabled = true;
-    btn.textContent = '...';
+    btn.style.opacity = '0.4';
     fetch('/api/stop-all', {method: 'POST', credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest'}})
         .then(r => r.json())
         .then(data => {
-            btn.textContent = data.stopped + ' ' + t('dash.stopped');
-            setTimeout(() => { btn.textContent = 'Stop All'; btn.disabled = false; }, 2000);
+            btn.innerHTML = '&#9679;';
+            btn.style.color = '#f44336';
+            btn.disabled = false;
+            btn.style.opacity = '1';
             updateStatus();
         })
-        .catch(() => { btn.textContent = 'Stop All'; btn.disabled = false; });
+        .catch(() => { btn.disabled = false; btn.style.opacity = '1'; });
+}
+
+function toggleRec(streamId, btn) {
+    var running = btn.getAttribute('data-running') === '1';
+    var url = '/stream/' + streamId + '/' + (running ? 'stop' : 'start');
+    btn.disabled = true;
+    btn.style.opacity = '0.4';
+    fetch(url, {method: 'POST', credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+        .then(function() {
+            // Toggle state
+            if (running) {
+                btn.innerHTML = '&#9679;';
+                btn.setAttribute('data-running', '0');
+                btn.style.color = '#555';
+                btn.title = t('detail.start');
+            } else {
+                btn.innerHTML = '&#9679;';
+                btn.setAttribute('data-running', '1');
+                btn.style.color = '#f44336';
+                btn.title = t('detail.stop');
+            }
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            updateStatus();
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        });
 }
 
 // --- Cast to device ---
@@ -1431,7 +1488,18 @@ function _toggleHeartCommon(mode, trackId, track, streamName, streamId, coverUrl
         fetch('/api/library/track/' + trackId + '/favorite', {
             method: 'POST', credentials: 'include'
         }).then(function(r) { return r.json(); })
-        .then(function(data) { callback(!!data.favorited); })
+        .then(function(data) {
+            // Update library track cache so the heart shows in library view
+            if (typeof _libTrackCache !== 'undefined' && _libTrackCache[trackId]) {
+                _libTrackCache[trackId].favorited = data.favorited ? 1 : 0;
+            }
+            // Re-render library rows if visible
+            if (typeof _vsRenderedStart !== 'undefined') {
+                _vsRenderedStart = -1;
+                if (typeof _vsRenderVisible === 'function') _vsRenderVisible();
+            }
+            callback(!!data.favorited);
+        })
         .catch(function() {});
     } else {
         fetch('/api/stream-favorites/toggle', {
@@ -3206,8 +3274,183 @@ document.addEventListener('click', function(e) {
     if (trigger) {
         e.stopPropagation();
         _showPlayerCastMenu(trigger);
+        return;
+    }
+    // Stream play link on dashboard (recordings page)
+    var playLink = e.target.closest('.stream-play-link');
+    if (playLink) {
+        e.preventDefault();
+        e.stopPropagation();
+        openStreamCastMenu(playLink,
+            parseInt(playLink.getAttribute('data-stream-id')),
+            playLink.getAttribute('data-listen-url'),
+            playLink.getAttribute('data-stream-name'));
     }
 });
+
+// --- Stream play menu for dashboard (click on stream name) ---
+function openStreamCastMenu(link, streamId, listenUrl, streamName) {
+    // Close existing menu
+    if (_playerCastMenu) { _playerCastMenu.remove(); _playerCastMenu = null; return; }
+
+    var menu = document.createElement('div');
+    menu.className = 'cast-menu';
+    menu.style.position = 'fixed';
+    menu.style.zIndex = '3000';
+
+    var rect = link.getBoundingClientRect();
+    menu.style.left = rect.left + 'px';
+    menu.style.top = (rect.bottom + 4) + 'px';
+
+    var html = '<button class="cast-menu-item" data-action="toggleListen(' + streamId + ', \'' + listenUrl + '\', \'' + streamName.replace(/'/g, "\\'") + '\')">'
+        + '&#9654; Browser <span class="cast-device-badge" style="background:#666;">Local</span></button>';
+
+    if (_castDevicesCache && _castDevicesCache.length > 0) {
+        _castDevicesCache.forEach(function(d) {
+            if (d.enabled === false) return;
+            var badge = d.type === 'lms'
+                ? '<span class="cast-device-badge badge-lms">LMS</span>'
+                : '<span class="cast-device-badge badge-sonos">Sonos</span>';
+            html += '<button class="cast-menu-item" data-action="_castRecordingStream(' + streamId + ', \'' + d.id + '\')">'
+                + '&#9654; ' + d.name + badge + '</button>';
+        });
+    }
+
+    menu.innerHTML = html;
+    menu.querySelectorAll('.cast-menu-item').forEach(function(item) {
+        var action = item.getAttribute('data-action');
+        if (action) {
+            item.addEventListener('click', function(e) {
+                e.stopPropagation();
+                _playerCastMenu.remove(); _playerCastMenu = null;
+                document.removeEventListener('click', _closePlayerCastMenuOutside);
+                eval(action);
+            });
+        }
+    });
+    document.body.appendChild(menu);
+    _playerCastMenu = menu;
+    setTimeout(function() {
+        document.addEventListener('click', _closePlayerCastMenuOutside);
+    }, 10);
+}
+
+function _castRecordingStream(streamId, deviceId) {
+    fetch('/api/cast/play', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({stream_id: streamId, device_id: deviceId})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            _updatePlayerBar();
+            _updateListenIcons(streamId);
+        }
+        else alert(data.message || data.error || 'Cast failed');
+    }).catch(function() {});
+}
+
+// --- Stream Test Modal (shared by browse + streams-home) ---
+var _testBestMode = null;
+
+function openTestModal(url, onSuccess) {
+    var modal = document.getElementById('test-modal');
+    var log = document.getElementById('test-log');
+    var closeBtn = document.getElementById('test-close');
+    var addBtn = document.getElementById('test-add');
+    log.innerHTML = '';
+    closeBtn.style.display = 'none';
+    addBtn.style.display = 'none';
+    _testBestMode = null;
+    modal.setAttribute('open', '');
+
+    var stepLabels = {1:t('test.http'), 2:t('test.icy'), 3:t('test.shoutcast'), 4:t('test.icecast'), 5:t('test.tunein'), 6:t('test.streamripper'), 7:t('test.ffmpeg')};
+
+    for (var i = 1; i <= 7; i++) {
+        var row = document.createElement('div');
+        row.id = 'test-step-' + i;
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--pico-muted-border-color,#333);';
+        row.innerHTML = '<span class="test-icon" style="width:22px;text-align:center;font-size:16px;">&#9711;</span>'
+            + '<span class="test-label" style="flex:1;">' + stepLabels[i] + '</span>'
+            + '<span class="test-status" style="min-width:60px;text-align:right;font-size:13px;color:var(--pico-muted-color,#888);">' + t('test.waiting') + '</span>';
+        log.appendChild(row);
+    }
+
+    var resultDiv = document.createElement('div');
+    resultDiv.id = 'test-result-area';
+    resultDiv.style.cssText = 'margin-top:16px;padding:12px;border-radius:6px;';
+    log.appendChild(resultDiv);
+
+    var source = new EventSource('/api/test-stream?url=' + encodeURIComponent(url));
+
+    source.onmessage = function(e) {
+        var data = JSON.parse(e.data);
+
+        if (data.step && data.label) {
+            var row = document.getElementById('test-step-' + data.step);
+            if (row) {
+                row.querySelector('.test-icon').innerHTML = '<span aria-busy="true" style="display:inline-block;width:16px;height:16px;"></span>';
+                row.querySelector('.test-label').textContent = data.label;
+                row.querySelector('.test-status').textContent = t('test.running');
+                row.querySelector('.test-status').style.color = 'var(--pico-muted-color,#888)';
+            }
+        }
+
+        if (data.step && data.result) {
+            var row = document.getElementById('test-step-' + data.step);
+            if (row) {
+                var icon = data.ok ? '&#9989;' : (data.result === 'Teilweise' ? '&#9888;' : '&#10060;');
+                row.querySelector('.test-icon').innerHTML = icon;
+                row.querySelector('.test-label').textContent = stepLabels[data.step];
+                var statusEl = row.querySelector('.test-status');
+                statusEl.innerHTML = '<strong>' + data.result + '</strong>';
+                statusEl.style.color = data.ok ? 'var(--pico-color-green-500,green)' : 'var(--pico-color-red-500,red)';
+                if (data.detail) {
+                    var detail = document.createElement('small');
+                    detail.style.cssText = 'display:block;color:var(--pico-muted-color,#888);font-size:12px;margin-top:2px;';
+                    detail.textContent = data.detail;
+                    row.querySelector('.test-label').appendChild(detail);
+                }
+            }
+        }
+
+        if (data.done) {
+            source.close();
+            closeBtn.style.display = '';
+            var area = document.getElementById('test-result-area');
+
+            if (data.suitable) {
+                _testBestMode = data.best_mode;
+                area.style.background = 'rgba(76,175,80,0.1)';
+                area.style.border = '1px solid rgba(76,175,80,0.4)';
+                var html = '<strong style="color:var(--pico-color-green-500,green);">' + t('test.recommendation') + '</strong><br>';
+                data.recommendation.forEach(function(r, i) {
+                    var star = i === 0 ? ' &#11088;' : '';
+                    html += '<div style="padding:4px 0;' + (i === 0 ? 'font-weight:bold;' : '') + '">'
+                        + r.mode + star + ' <small style="color:var(--pico-muted-color,#888);">(Score ' + r.score + ')</small><br>'
+                        + '<small>' + r.reason + '</small></div>';
+                });
+                area.innerHTML = html;
+                addBtn.style.display = '';
+                addBtn.textContent = t('browse.add_as') + ' "' + _testBestMode + '"';
+                addBtn.onclick = function() {
+                    modal.removeAttribute('open');
+                    if (onSuccess) onSuccess(_testBestMode);
+                };
+                addBtn.removeAttribute('href');
+            } else {
+                area.style.background = 'rgba(244,67,54,0.1)';
+                area.style.border = '1px solid rgba(244,67,54,0.4)';
+                area.innerHTML = '<strong style="color:var(--pico-color-red-500,red);">' + data.recommendation + '</strong>';
+            }
+        }
+    };
+
+    source.onerror = function() {
+        source.close();
+        closeBtn.style.display = '';
+    };
+}
 
 // Start polling (10s interval to reduce load)
 setInterval(updateStatus, 10000);

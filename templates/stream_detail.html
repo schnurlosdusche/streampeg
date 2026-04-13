@@ -63,13 +63,17 @@
             <form method="post" action="{{ url_for('api_sync', stream_id=stream.id) }}" class="inline sync-form">
                 <button type="submit" class="outline btn-small">{{ t('detail.sync_now') }}</button>
             </form>
-            <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" role="button" class="outline secondary btn-small">{{ t('detail.edit') }}</a>
+            <button type="button" class="outline secondary btn-small" onclick="document.getElementById('edit-section').style.display = document.getElementById('edit-section').style.display === 'none' ? '' : 'none'">{{ t('detail.edit') }}</button>
             <div class="inline" style="position:relative;">
                 <button type="button" class="outline btn-small btn-cast-detail" onclick="toggleCastMenu(this, {{ stream.id }})">{{ t('detail.cast_to_device') }}</button>
             </div>
             <button type="button" class="outline btn-small" id="autotag-btn" onclick="startAutotag({{ stream.id }})">{{ t('detail.auto_tag') }}</button>
         </footer>
     </article>
+</div>
+
+<div id="edit-section" style="display:none;">
+    {% include "stream_form_body.html" %}
 </div>
 
 <h3>{{ t('detail.recorded_tracks') }}</h3>
