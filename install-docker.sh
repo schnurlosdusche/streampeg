@@ -33,7 +33,7 @@ services:
     container_name: streampeg
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "5001:5000"
       - "3483:3483"
       - "9000:9000"
       - "9090:9090"
@@ -50,7 +50,7 @@ docker compose up -d
 
 echo ""
 echo "=== streampeg is running ==="
-echo "Open http://localhost:5000"
+echo "Open http://localhost:5001"
 echo ""
 echo "Commands:"
 echo "  docker compose logs -f    # View logs"
