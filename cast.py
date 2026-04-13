@@ -614,9 +614,13 @@ def _persist_casts():
 def _load_casts():
     """Load active casts from DB on startup.
     Stored format is device_id -> stream_id (string keys in JSON).
-    Migrates old format (stream_id -> device_id) automatically."""
+    Migrates old format (stream_id -> device_id) automatically.
+    Silently does nothing if DB is not yet initialized (first run)."""
     from db import get_setting
-    raw = get_setting("active_casts")
+    try:
+        raw = get_setting("active_casts")
+    except Exception:
+        return  # DB not initialized yet — will be called again after init
     if raw:
         try:
             data = json.loads(raw)
