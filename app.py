@@ -136,8 +136,12 @@ def api_stream_bookmark_record(bookmark_id):
     for s in db.get_all_streams():
         if s["url"] == url:
             return jsonify({"success": False, "error": "Stream already exists", "stream_id": s["id"]}), 409
+    data = request.get_json() or {}
+    record_mode = data.get("record_mode", "ffmpeg_icy")
+    if record_mode not in module_manager.get_all_record_modes():
+        record_mode = "ffmpeg_icy"
     db.create_stream(name, url, dest, DEFAULT_MIN_SIZE_MB, DEFAULT_USER_AGENT,
-                     "ffmpeg_icy", "", 0, 0, 0, "", 0)
+                     record_mode, "", 0, 0, 0, "", 0)
     return jsonify({"success": True, "message": f"Recording stream '{name}' created"})
 
 
