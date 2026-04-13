@@ -121,30 +121,22 @@ main.container {
 /* Dashboard table */
 #streams-table {
     font-size: 0.78rem;
-    table-layout: fixed;
-    width: calc(100vw - 200px);
-    margin-left: calc((100% - (100vw - 200px)) / 2);
+    table-layout: auto;
+    width: 100%;
 }
 #streams-table th,
 #streams-table td {
-    overflow: hidden;
-    text-overflow: ellipsis;
     padding: 0.35rem 0.5rem;
+    white-space: nowrap;
 }
-#streams-table th:nth-child(1),
-#streams-table td:nth-child(1) { width: 20%; max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }     /* Name */
-#streams-table th:nth-child(2),
-#streams-table td:nth-child(2) { width: 6%; text-align: center; }  /* Modus */
-#streams-table th:nth-child(3),
-#streams-table td:nth-child(3) { width: 8%; }       /* Status */
-#streams-table th:nth-child(4),
-#streams-table td:nth-child(4) { width: 30%; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  /* Track */
+#streams-table td:nth-child(1) { white-space: nowrap; }                          /* Name */
+#streams-table td:nth-child(2) { text-align: center; }                          /* Mode */
+#streams-table td:nth-child(4) { white-space: normal; word-break: break-word; } /* Track — wraps */
 #streams-table th:nth-child(5),
-#streams-table td:nth-child(5) { width: 75px; text-align: right; }  /* Tracks */
+#streams-table td:nth-child(5) { text-align: right; width: 50px; }              /* Tracks */
 #streams-table th:nth-child(6),
-#streams-table td:nth-child(6) { width: 85px; text-align: right; }  /* Size */
-#streams-table th:nth-child(7) { width: 200px; white-space: nowrap; overflow: visible; }  /* Actions header */
-#streams-table td:nth-child(7) { width: 200px; white-space: nowrap; }  /* Actions */
+#streams-table td:nth-child(6) { text-align: right; width: 55px; }              /* Size */
+#streams-table td:nth-child(7) { white-space: nowrap; }                         /* Actions — never wraps */
 
 button.btn-listen {
     --pico-color: #888 !important;

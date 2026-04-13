@@ -711,7 +711,7 @@ function _renderTrackRow(tr, idx) {
         }
     }
     h += '<td class="col-playlists" id="lib-pl-' + tr.id + '">' + plTags + '</td>';
-    h += '<td class="col-trim"><button class="lib-trim-btn" onclick="openTrackEditor(' + tr.id + ')" title="Edit / Trim">&#9986;</button></td>';
+    h += '<td class="col-trim"><button class="lib-trim-btn" onclick="openTrackEditor(' + tr.id + ')" title="Edit / Trim"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button></td>';
     h += '<td class="col-trash"><button class="lib-trash-btn" onclick="showTrashMenu(event, ' + tr.id + ')" title="Delete">&#128465;</button></td>';
     h += '</tr>';
     return h;
@@ -2323,6 +2323,9 @@ function initLibrary() {
     _selectedPlaylistId = null;
     _currentFolder = null;
 
+    // If a track is already playing (PJAX re-init), skip restore — just refresh UI
+    var _alreadyPlaying = _playerAudio && !_playerAudio.paused && !_playerAudio.ended;
+
     // Restore playing track from session if available
     var savedTrackId = sessionStorage.getItem('_libPlayingTrackId');
     var savedStream = sessionStorage.getItem('_browserLibStream');
@@ -2365,8 +2368,9 @@ function initLibrary() {
         } catch(e) {}
     }
 
-    // Restore browser playback after page reload (no cast active)
-    if (savedTrackId && !(_libCastDeviceIds && _libCastDeviceIds.length > 0)) {
+    // Restore browser playback after page reload (no cast active).
+    // Skip if audio is already playing (PJAX re-init — don't interrupt).
+    if (savedTrackId && !_alreadyPlaying && !(_libCastDeviceIds && _libCastDeviceIds.length > 0)) {
         var savedPos = parseFloat(sessionStorage.getItem('_browserPlayPosition') || '0');
         var wasPaused = sessionStorage.getItem('_browserPlayPaused') === '1';
         _isLibraryTrack = true;
