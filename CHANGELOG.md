@@ -1,5 +1,111 @@
 # Changelog
 
+## 0.0.172a
+- Welcome-Seite: Komplette Credits-Liste mit Lizenzen (GPL v3), Komponenten-Übersicht und GitHub-Link
+- LICENSE-Datei (GPL v3) hinzugefügt
+- Cover-Art Cache in `data/covers/` — vermeidet NAS-Zugriffe bei wiederholten Abrufen
+
+## 0.0.171a
+- Library: Sprung zum laufenden Track über Dashboard-Icon (bei skipping → Track markiert + scrollt hin)
+- Markierung bleibt bestehen bis Song wechselt oder manuell abgespielt wird
+- Einheitliche Key-Erkennung: Essentia überall (Autotag, Rescan, Daemon)
+- Stündliches Cleanup alter Dateien im `incomplete/` Verzeichnis (Files >10min alt)
+
+## 0.0.170a
+- Dashboard: Rec-Buttons per AJAX (Player läuft beim Start/Stop ohne Unterbrechung weiter)
+- Rec-Icons: roter Kreis = aktiv, grauer Kreis = gestoppt (Zustandsanzeige)
+- Separate CSS-IDs für Recordings- und Bookmarks-Tabelle (unabhängige Styles)
+- Action-Buttons: rahmenlos, Edit-Icon vergrößert, Delete-Icon verkleinert
+- Streams-Home: eigene Tabelle mit unabhängigem Styling
+
+## 0.0.169a
+- Multiroom-Player mit Device-Badges (blaue Kacheln mit Speaker-Symbol)
+- LMS-Geräte: persistenter Cache (DB) für zuverlässige Erkennung trotz UDP-Unzuverlässigkeit
+- HTTP-first LMS-Discovery (schneller als Broadcast)
+- Sync-Group-Erkennung serverseitig (keine doppelten Player mehr)
+
+## 0.0.168a
+- Library-Scan: Soft-Delete statt CASCADE DELETE (verhindert Datenverlust bei fehlerhaftem Scan)
+- Plausibilitätsbremse: bei >10% neuen Löschungen Scan-Abbruch
+- `_playlists/` Verzeichnis vom Scan ausgeschlossen
+- UNIQUE-Index auf `filepath` und `playlist_tracks(playlist_id, track_id)`
+- Stream-Casting zwischen Browser/LMS/Sonos möglich
+- PJAX-Navigation hält Audio am Leben beim Seitenwechsel
+
+## 0.0.160a
+- Atomic YouTube-Downloads mit Verifikation (keine abgeschnittenen Dateien mehr)
+- Camelot-Wheel Farben gemäß Standard-Referenz
+- Real-Bitrate via ffprobe (unabhängig von Titel)
+
+## 0.0.155a
+- Neue Seite "streams home" für Bookmarks (Radio-Stationen)
+- Dashboard in Dashboard (Welcome) + Recordings aufgeteilt
+- Kleinschreibung durchgängig in UI
+- Record-Button in streams-home: läuft Stream-Test vor dem Hinzufügen
+- Shared Stream-Test Modal (Radio Browser + Streams Home)
+
+## 0.0.151a
+- Cast-Player: Seek-Funktion über Slider
+- Waveform zeigt Progress live
+- Track-Editor: Metadaten bearbeiten + Audio trimmen
+- BPM/Key Rescan pro Track
+
+## 0.0.143a
+- Docker-Setup komplett (host networking, alle Dependencies, aubio-Build mit gcc)
+- One-Command Docker-Installer für macOS/Linux
+- ca-certificates für HTTPS-API-Calls (radio-browser.info)
+
+## 0.0.141a
+- Auto-DJ Modul: Endlos-Wiedergabe mit Crossfade und History
+- Filename-Normalisierung, Deduplizierung
+- DB-Backup/Restore Funktion
+
+## 0.0.139a
+- Auto-DJ: erste Version mit Crossfade
+- Autotag Phase 3: MusicBrainz-Enrichment
+- Waveform-Cache (DB) für schnelleren Library-Aufruf
+- Scan-Verbesserungen: Loudness-Normalisierung im Hintergrund
+
+## 0.0.134a
+- Playlist-Folders mit Dateisynchronisation
+- ZIP-Export für Playlists
+- Favorites (Herz-Icon)
+- MusicBrainz-Enrichment per Track
+
+## 0.0.101a
+- Bitrate-Spalte in der Library
+- Scroll-to-active-track (aktuelle Wiedergabe zentriert)
+- Heart-SVG für Favorites
+- UI-Polish durchgängig
+
+## 0.0.60a
+- Music Library: Folder-Grid-Ansicht
+- Logs in Settings verschoben
+- Playlist-Manager mit Camelot-Wheel
+- Library-Scan: Zwei-Phasen (Registrierung + lazy ID3)
+- In-Memory mtime-Cache für schnelleren Scan
+
+## 0.0.56a
+- Persistent Browser-Player am unteren Bildschirmrand
+- Pause-Button im Browser-Player
+- ICY Track-Polling auch bei nicht-aufnehmenden Streams
+- Cover-Art via iTunes-Lookup wenn nicht aufgenommen
+- PJAX-Navigation für durchgehende Audiowiedergabe
+
+## 0.0.55a
+- Cast-Player: vollständige Unterstützung für Sonos, LMS (Max2Play)
+- DLNA-Server startet mit App
+- Cover-Art-Integration für alle Player
+- Auto-Tagging nach Aufnahme (AcoustID + MusicBrainz + Cover Art Archive)
+- Multi-Room-Support für Sonos-Gruppen
+
+## 0.0.53a
+- Stream-Tester mit Self-Learning (ICY, FFmpeg, Shoutcast, Icecast, TuneIn)
+- Sync settings
+- ICY-Metadata Fixes
+- Browse-Preview für Stationen
+- SVG-Logo
+
 ## 0.0.52a
 - Library: Spaltenbreiten fixiert (table-layout: fixed) — Title bekommt verbleibende Breite, Papierkorb/+ minimal (28px), Playlist 120px, Datum 100px (dd.mm.YY HH:mm)
 - Library: Datum-Format auf dd.mm.YY HH:mm erweitert
