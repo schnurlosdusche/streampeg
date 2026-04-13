@@ -25,7 +25,8 @@
             <td style="text-align:center;">{{ bm.codec or '-' }}</td>
             <td style="text-align:center;">{% if bm.bitrate %}{{ bm.bitrate }}{% else %}-{% endif %}</td>
             <td style="font-size:0.75rem;color:#888;">{{ bm.tags }}</td>
-            <td>
+            <td style="white-space:nowrap;">
+                <button type="button" class="outline btn-icon" title="add to recordings" style="color:#f44336;margin-right:2px;" onclick="addToRecordings({{ bm.id }}, this)">&#9679;</button>
                 <form method="post" action="/api/stream-bookmarks/{{ bm.id }}/delete" class="inline" onsubmit="return confirm('remove bookmark?')">
                     <button type="submit" class="outline btn-icon btn-delete" title="remove">&#10005;</button>
                 </form>
@@ -35,4 +36,31 @@
     </tbody>
 </table>
 {% endif %}
+<script>
+function addToRecordings(bookmarkId, btn) {
+    btn.disabled = true;
+    fetch('/api/stream-bookmarks/' + bookmarkId + '/record', {
+        method: 'POST', credentials: 'include'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            btn.style.color = '#4caf50';
+            btn.title = 'added';
+            btn.textContent = '\u2713';
+        } else {
+            btn.disabled = false;
+            if (data.error === 'Stream already exists') {
+                btn.style.color = '#ff9800';
+                btn.title = 'already in recordings';
+                btn.textContent = '\u2713';
+                btn.disabled = true;
+            } else {
+                alert(data.error || 'failed');
+            }
+        }
+    })
+    .catch(function() { btn.disabled = false; });
+}
+</script>
 {% endblock %}

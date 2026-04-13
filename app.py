@@ -119,6 +119,28 @@ def api_stream_bookmark_add():
     return jsonify({"success": True})
 
 
+@app.route("/api/stream-bookmarks/<int:bookmark_id>/record", methods=["POST"])
+def api_stream_bookmark_record(bookmark_id):
+    """Create a recording stream from a bookmark."""
+    bm = None
+    for b in db.get_stream_bookmarks():
+        if b["id"] == bookmark_id:
+            bm = b
+            break
+    if not bm:
+        return jsonify({"success": False, "error": "Bookmark not found"}), 404
+    name = bm["name"]
+    url = bm["url"]
+    dest = _sanitize_subdir(name)
+    # Check if stream with this URL already exists
+    for s in db.get_all_streams():
+        if s["url"] == url:
+            return jsonify({"success": False, "error": "Stream already exists", "stream_id": s["id"]}), 409
+    db.create_stream(name, url, dest, DEFAULT_MIN_SIZE_MB, DEFAULT_USER_AGENT,
+                     "ffmpeg_icy", "", 0, 0, 0, "", 0)
+    return jsonify({"success": True, "message": f"Recording stream '{name}' created"})
+
+
 @app.route("/api/stream-bookmarks/<int:bookmark_id>/delete", methods=["POST"])
 def api_stream_bookmark_delete(bookmark_id):
     db.delete_stream_bookmark(bookmark_id)
