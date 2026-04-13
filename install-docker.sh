@@ -15,7 +15,7 @@ cd "$INSTALL_DIR"
 if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q '^streampeg:latest$'; then
     echo "Downloading streampeg Docker image..."
     TMPFILE=$(mktemp)
-    curl -L -o "$TMPFILE" "http://192.168.1.57:3000/attachments/598d421d-e62b-4e05-9ecc-b2d46a88051e"
+    curl -L -o "$TMPFILE" "http://192.168.1.57:3000/martin/streampeg/releases/download/v0.0.171a/streampeg-docker.tar"
     echo "Loading image into Docker..."
     docker load -i "$TMPFILE"
     docker tag 192.168.1.57:3000/martin/streampeg:latest streampeg:latest
