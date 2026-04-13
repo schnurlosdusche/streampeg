@@ -48,7 +48,7 @@ def is_client_active():
 import i18n
 from scheduler import SyncScheduler
 
-VERSION = "0.0.170a"
+VERSION = "0.0.172a"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -2105,7 +2105,7 @@ def api_library_track_rescan_bpmkey(track_id):
         return jsonify({"error": "file not found"}), 404
     try:
         import bpm_analyzer
-        backend = db.get_setting("bpm_backend") or "aubio"
+        backend = db.get_setting("bpm_backend") or "essentia"
         bpm, key = bpm_analyzer._analyze_track(filepath, backend)
         # aubio has no key detection — fall back to autotag
         if not key or key == "-":
@@ -2528,8 +2528,16 @@ def api_library_track_trim(track_id):
         return jsonify({"error": str(e)}), 500
 
 
+_COVER_CACHE_DIR = os.path.join(os.path.dirname(__file__), "data", "covers")
+os.makedirs(_COVER_CACHE_DIR, exist_ok=True)
+
 @app.route("/api/library/track/<int:track_id>/cover")
 def api_library_track_cover(track_id):
+    # Serve from cache if available
+    cache_path = os.path.join(_COVER_CACHE_DIR, f"{track_id}.jpg")
+    if os.path.isfile(cache_path):
+        return send_file(cache_path, mimetype="image/jpeg")
+
     track = db.get_library_track(track_id)
     if not track:
         return "", 404
@@ -2542,6 +2550,12 @@ def api_library_track_cover(track_id):
         for key in tags:
             if key.startswith("APIC"):
                 apic = tags[key]
+                # Write to cache
+                try:
+                    with open(cache_path, "wb") as cf:
+                        cf.write(apic.data)
+                except OSError:
+                    pass
                 return Response(apic.data, mimetype=apic.mime or "image/jpeg")
     except Exception:
         pass
@@ -2582,6 +2596,12 @@ def api_library_track_autotag(track_id):
         )
         conn.commit()
         conn.close()
+        # Invalidate cover cache
+        cache_path = os.path.join(_COVER_CACHE_DIR, f"{track_id}.jpg")
+        try:
+            os.remove(cache_path)
+        except OSError:
+            pass
         # Return updated track info
         updated = db.get_library_track(track_id)
         return jsonify({"success": True, "track": updated})
@@ -3361,5 +3381,8 @@ if __name__ == "__main__":
 
     # Start background ICY metadata poller for cast players
     cast.start_icy_poller()
+
+    # Start periodic incomplete directory cleanup (hourly)
+    process_manager.start_incomplete_cleanup_timer()
 
     app.run(host=HOST, port=PORT, threaded=True)

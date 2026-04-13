@@ -1182,6 +1182,7 @@ tr:hover .list-unusable:hover { color: #e53935; }
 #lib-table tbody tr.lib-playing-row td { background: rgba(66,165,245,0.1) !important; }
 #lib-table tbody tr.lib-playing,
 #lib-table tbody tr.lib-playing-row { outline: 1px solid #fff; outline-offset: -1px; }
+#lib-table tbody tr.lib-highlight-row { outline: 1px solid rgba(255,255,255,0.5); outline-offset: -1px; }
 
 /* Column widths */
 #lib-table th:nth-child(1),

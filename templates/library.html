@@ -522,6 +522,8 @@ var _selectedPlaylistId = null;
 if (typeof _libPlayingTrackId === 'undefined') _libPlayingTrackId = null;
 if (typeof _libTrackCache === 'undefined') _libTrackCache = {};
 var _scanPollTimer = null;
+var _libHighlightTrack = null;
+var _libHighlightTrackId = null;
 var _searchTimer = null;
 
 /* --- Track loading --- */
@@ -630,6 +632,11 @@ function renderTracks(data) {
     // !! DO NOT MODIFY - triggers scroll-to-active-track after layout settles !!
     setTimeout(function() {
         updatePlayButtons();
+        // Highlight track from ?track= parameter (e.g. skipping track from dashboard)
+        if (_libHighlightTrack) {
+            _scrollToHighlightTrack(_libHighlightTrack);
+            _libHighlightTrack = null;
+        }
     }, 200);
 }
 
@@ -686,8 +693,10 @@ function _renderTrackRow(tr, idx) {
     var isPlaying = _libPlayingTrackId === tr.id;
     var dur = tr.duration_sec ? formatDuration(tr.duration_sec) : '-';
     var isPlayed = (typeof AutoDJ !== 'undefined' && AutoDJ.enabled && AutoDJ._history.indexOf(tr.id) >= 0);
+    var isHighlight = _libHighlightTrackId === tr.id;
     var cls = isSelected ? ' class="selected"' : '';
     if (isPlaying) cls = ' class="' + (isSelected ? 'selected lib-playing-row' : 'lib-playing-row') + '"';
+    else if (isHighlight) cls = ' class="' + (isSelected ? 'selected lib-highlight-row' : 'lib-highlight-row') + '"';
     var rowStyle = 'height:' + _ROW_HEIGHT + 'px;' + (isPlayed && !isPlaying ? 'color:#555;' : '');
     var h = '<tr data-track-id="' + tr.id + '"' + cls + ' style="' + rowStyle + '">';
     h += '<td class="lib-clickable" onclick="playLibraryTrackById(' + tr.id + ')" title="' + escAttr(tr.title || '') + '">' + (isPlaying ? '<svg class="lib-now-playing" width="12" height="12" viewBox="0 0 12 12" style="vertical-align:middle;margin-right:4px;"><polygon points="2,0 12,6 2,12" fill="#4a9eff"/></svg>&nbsp;' : '') + escHtml(tr.title || '') + '</td>';
@@ -1074,6 +1083,12 @@ function _loadLibraryCover(trackId, artist, title) {
 }
 
 function playLibraryTrackById(trackId) {
+    if (_libHighlightTrackId) {
+        _libHighlightTrackId = null;
+        sessionStorage.removeItem('_libHighlightStreamId');
+        _vsRenderedStart = -1;
+        _vsRenderVisible();
+    }
     var tr = _libTrackCache[trackId] || {};
     playLibraryTrack(trackId, tr.title || '', tr.artist || '', tr.stream_subdir || '');
 }
@@ -1299,6 +1314,78 @@ function updatePlayButtons() {
 function scrollToPlayingTrack() {
     if (!_libPlayingTrackId) return;
     _scrollToTrackAttempt(0);
+}
+
+function _scrollToHighlightTrack(trackName) {
+    if (!trackName || !_libTracks.length) return;
+    var lower = trackName.toLowerCase();
+    var idx = -1;
+    for (var i = 0; i < _libTracks.length; i++) {
+        var t = _libTracks[i];
+        var full = ((t.artist || '') + ' - ' + (t.title || '')).toLowerCase();
+        if (full.indexOf(lower) >= 0 || (t.title || '').toLowerCase().indexOf(lower) >= 0) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return;
+    var trackId = _libTracks[idx].id;
+    _libHighlightTrackId = trackId;
+    _vsScrollWrap = document.querySelector('.lib-table-wrap');
+    if (!_vsScrollWrap) return;
+
+    // Scroll to track (reuse same logic as scrollToPlayingTrack)
+    var viewH = _vsScrollWrap.clientHeight;
+    var approxScroll = Math.max(0, (idx * _ROW_HEIGHT) - viewH / 2);
+    _vsScrollLock = true;
+    _vsScrollWrap.scrollTop = approxScroll;
+    _vsRenderedStart = -1;
+    _vsRenderVisible();
+
+    requestAnimationFrame(function() {
+        var row = _vsScrollWrap.querySelector('tr[data-track-id="' + trackId + '"]');
+        if (row) {
+            var rowRect = row.getBoundingClientRect();
+            var wrapRect = _vsScrollWrap.getBoundingClientRect();
+            var rowCenter = rowRect.top + rowRect.height / 2;
+            var wrapCenter = wrapRect.top + wrapRect.height / 2;
+            _vsScrollWrap.scrollTop += (rowCenter - wrapCenter);
+            _vsRenderedStart = -1;
+            _vsRenderVisible();
+            // Apply highlight
+            row = _vsScrollWrap.querySelector('tr[data-track-id="' + trackId + '"]');
+            if (row) row.classList.add('lib-highlight-row');
+        }
+        setTimeout(function() { _vsScrollLock = false; }, 200);
+    });
+}
+
+function _updateHighlightForTrack(trackName) {
+    if (!_libTracks.length) { _libHighlightTrackId = null; return; }
+    if (!trackName || trackName.trim() === '') {
+        _libHighlightTrackId = null;
+        _vsRenderedStart = -1;
+        _vsRenderVisible();
+        return;
+    }
+    var lower = trackName.toLowerCase();
+    var idx = -1;
+    for (var i = 0; i < _libTracks.length; i++) {
+        var t = _libTracks[i];
+        var full = ((t.artist || '') + ' - ' + (t.title || '')).toLowerCase();
+        if (full.indexOf(lower) >= 0 || (t.title || '').toLowerCase().indexOf(lower) >= 0) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        _libHighlightTrackId = null;
+        _vsRenderedStart = -1;
+        _vsRenderVisible();
+        return;
+    }
+    _libHighlightTrackId = _libTracks[idx].id;
+    _scrollToHighlightTrack(trackName);
 }
 
 function _scrollToTrackAttempt(attempt) {
@@ -2431,6 +2518,7 @@ function initLibrary() {
     // Direct folder open via ?stream=subdir parameter
     var streamParam = urlParams.get('stream');
     if (streamParam) {
+        _libHighlightTrack = urlParams.get('track') || null;
         openFolder(streamParam);
         return;
     }

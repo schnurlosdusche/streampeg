@@ -396,9 +396,14 @@ def process_file(filepath, api_key=None):
     if _has_tags(filepath):
         if _has_bpm_key(filepath):
             return True, "already_tagged"
-        # Add BPM/key to existing tags
-        bpm = detect_bpm(filepath)
-        key = detect_key(filepath)
+        # Add BPM/key to existing tags (use essentia via bpm_analyzer for accuracy)
+        try:
+            import bpm_analyzer
+            from db import get_setting
+            _backend = get_setting("bpm_backend") or "essentia"
+            bpm, key = bpm_analyzer._analyze_track(filepath, _backend)
+        except Exception:
+            bpm, key = detect_bpm(filepath), detect_key(filepath)
         if bpm or key:
             try:
                 tags = ID3(filepath)
@@ -437,9 +442,14 @@ def process_file(filepath, api_key=None):
         metadata = _parse_filename(filepath)
         method = "filename"
 
-    # BPM and key detection (always attempt, even for already-tagged files)
-    bpm = detect_bpm(filepath)
-    key = detect_key(filepath)
+    # BPM and key detection (use essentia via bpm_analyzer for accuracy)
+    try:
+        import bpm_analyzer
+        from db import get_setting
+        _backend = get_setting("bpm_backend") or "essentia"
+        bpm, key = bpm_analyzer._analyze_track(filepath, _backend)
+    except Exception:
+        bpm, key = detect_bpm(filepath), detect_key(filepath)
     if metadata:
         if bpm:
             metadata["bpm"] = bpm

@@ -169,6 +169,35 @@ def cleanup_incomplete(streams):
                     pass
 
 
+def _periodic_incomplete_cleanup():
+    """Periodically delete old files from incomplete/ directories (hourly, skip files < 10 min old)."""
+    while True:
+        time.sleep(3600)
+        try:
+            if not os.path.isdir(RECORDING_BASE):
+                continue
+            now = time.time()
+            for subdir in os.listdir(RECORDING_BASE):
+                inc_dir = os.path.join(RECORDING_BASE, subdir, "incomplete")
+                if not os.path.isdir(inc_dir):
+                    continue
+                for f in glob.glob(os.path.join(inc_dir, "*")):
+                    try:
+                        age = now - os.path.getmtime(f)
+                        if age > 600:  # older than 10 minutes
+                            os.remove(f)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
+
+def start_incomplete_cleanup_timer():
+    """Start background thread for periodic incomplete cleanup."""
+    t = threading.Thread(target=_periodic_incomplete_cleanup, daemon=True)
+    t.start()
+
+
 def _count_audio_files(directory):
     """Count audio files and total size in a directory (excluding incomplete/)."""
     count = 0

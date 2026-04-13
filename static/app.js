@@ -28,6 +28,13 @@ function updateStatus() {
         // Update stream rows on dashboard
         if (data.streams) {
             data.streams.forEach(s => {
+                // Update library highlight when tracked stream's track changes
+                var prev = _lastStreamStatus[s.id];
+                if (_libHighlightStreamId === s.id && prev && s.current_track !== prev.current_track) {
+                    if (typeof _libPlayingTrackId !== 'undefined' && !_libPlayingTrackId && typeof _updateHighlightForTrack === 'function') {
+                        _updateHighlightForTrack(s.current_track || '');
+                    }
+                }
                 // Cache stream status for player bar
                 _lastStreamStatus[s.id] = {
                     current_track: s.current_track,
@@ -35,6 +42,7 @@ function updateStatus() {
                     stream_name: s.name,
                     running: s.running,
                     bitrate: s.bitrate || 0,
+                    rec_state: s.rec_state || '',
                 };
 
                 const row = document.querySelector('tr[data-stream-id="' + s.id + '"]');
@@ -530,6 +538,18 @@ function toggleRec(streamId, btn) {
             btn.disabled = false;
             btn.style.opacity = '1';
         });
+}
+
+var _libHighlightStreamId = parseInt(sessionStorage.getItem('_libHighlightStreamId')) || null;
+
+function openLibraryForStream(streamId, subdir) {
+    var st = _lastStreamStatus[streamId];
+    var url = '/library?stream=' + encodeURIComponent(subdir);
+    if (st && st.rec_state === 'skipping' && st.current_track && st.current_track.trim() !== '') {
+        url += '&track=' + encodeURIComponent(st.current_track.trim());
+        sessionStorage.setItem('_libHighlightStreamId', streamId);
+    }
+    window.location.href = url;
 }
 
 // --- Cast to device ---

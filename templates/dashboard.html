@@ -46,7 +46,7 @@
                 {% endif %}
             </td>
             <td>
-                <a href="#" class="stream-play-link" data-stream-id="{{ stream.id }}" data-listen-url="{{ url_for('stream_listen_proxy', stream_id=stream.id) }}" data-stream-name="{{ stream.name }}" style="cursor:pointer;">{{ stream.name }}</a>&nbsp;&nbsp;&nbsp;<a href="{{ url_for('library') }}?stream={{ stream.dest_subdir }}" title="Library" style="opacity:0.4;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+                <a href="#" class="stream-play-link" data-stream-id="{{ stream.id }}" data-listen-url="{{ url_for('stream_listen_proxy', stream_id=stream.id) }}" data-stream-name="{{ stream.name }}" style="cursor:pointer;">{{ stream.name }}</a>&nbsp;&nbsp;&nbsp;<a href="#" onclick="openLibraryForStream({{ stream.id }}, '{{ stream.dest_subdir }}');return false;" title="Library" style="opacity:0.4;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
             </td>
             {% set has_track = st.current_track and st.current_track.strip() not in ("recording", "-", "") and st.current_track.strip(" -") != "" %}
             {% set rs = st.rec_state if st.rec_state else "" %}
