@@ -2413,10 +2413,13 @@ function initLibrary() {
     // If a track is already playing (PJAX re-init), skip restore — just refresh UI
     var _alreadyPlaying = _playerAudio && !_playerAudio.paused && !_playerAudio.ended;
 
+    // Skip session restore if navigating from dashboard library link
+    var _fromDashboardLink = new URLSearchParams(window.location.search).has('stream');
+
     // Restore playing track from session if available
     var savedTrackId = sessionStorage.getItem('_libPlayingTrackId');
     var savedStream = sessionStorage.getItem('_browserLibStream');
-    if (savedTrackId && !_libPlayingTrackId) {
+    if (savedTrackId && !_libPlayingTrackId && !_fromDashboardLink) {
         _libPlayingTrackId = parseInt(savedTrackId);
         _browserLibStream = savedStream || '';
     }
@@ -2455,9 +2458,12 @@ function initLibrary() {
         } catch(e) {}
     }
 
+    // Skip playback restore if navigating from dashboard library link (?stream= in URL)
+    var _skipPlaybackRestore = new URLSearchParams(window.location.search).has('stream');
+
     // Restore browser playback after page reload (no cast active).
     // Skip if audio is already playing (PJAX re-init — don't interrupt).
-    if (savedTrackId && !_alreadyPlaying && !(_libCastDeviceIds && _libCastDeviceIds.length > 0)) {
+    if (savedTrackId && !_alreadyPlaying && !_skipPlaybackRestore && !(_libCastDeviceIds && _libCastDeviceIds.length > 0)) {
         var savedPos = parseFloat(sessionStorage.getItem('_browserPlayPosition') || '0');
         var wasPaused = sessionStorage.getItem('_browserPlayPaused') === '1';
         _isLibraryTrack = true;
